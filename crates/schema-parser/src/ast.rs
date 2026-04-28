@@ -23,8 +23,28 @@ pub enum AstFieldType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum DefaultFunc {
+    AutoIncrement,
+    Now,
+    Uuid,
+    Cuid,
+    Static(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FieldAttribute {
+    Id,
+    Unique,
+    UpdatedAt,
+    Ignore,
+    Map(String),
+    Default(DefaultFunc),
+    Relation { fields: Vec<String>, references: Vec<String>, on_delete: Option<String> },
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct FieldNode {
     pub name: String,
     pub field_type: AstFieldType,
-    pub attributes: Vec<String>,
+    pub attributes: Vec<FieldAttribute>,
 }

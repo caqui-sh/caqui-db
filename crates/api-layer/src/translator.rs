@@ -1,6 +1,6 @@
 use serde_json::Value;
 use query_compiler::ir::{QueryNode, SelectField};
-use schema_parser::ast::{SchemaAst, AstFieldType};
+use schema_parser::ast::{SchemaAst, AstFieldType, FieldAttribute};
 
 pub fn hydrate_payload_to_ir(
     ast: &SchemaAst,
@@ -25,6 +25,11 @@ pub fn hydrate_payload_to_ir(
         // Find field in AST
         let field_def = model_def.fields.iter().find(|f| &f.name == field_name)
             .ok_or_else(|| format!("Invalid field '{}' on '{}'.", field_name, model_name))?;
+
+        // SECURITY INTERCEPTOR
+        if field_def.attributes.iter().any(|a| matches!(a, FieldAttribute::Ignore)) {
+            return Err(format!("Security Exception: Prohibited access to ignored field '{}'", field_name));
+        }
 
         match &field_def.field_type {
             AstFieldType::Scalar(_) => selections.push(SelectField::Scalar(field_name.clone())),
@@ -100,6 +105,7 @@ mod tests {
             fields: vec![
                 FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
                 FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
+                FieldNode { name: "password".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![FieldAttribute::Ignore] },
                 FieldNode { name: "posts".to_string(), field_type: AstFieldType::RelationArray("Post".to_string()), attributes: vec![] },
             ]
         });
@@ -167,5 +173,15 @@ mod tests {
         
         let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap_err();
         assert!(err.contains("Invalid field 'hacker_field'"));
+    }
+
+    #[test]
+    fn test_hydrate_ignored_field() {
+        let ast = mock_ast();
+        let payload = json!({ "select": { "password": true } });
+        let mut alias_counter = 0;
+        
+        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap_err();
+        assert!(err.contains("Security Exception: Prohibited access to ignored field 'password'"));
     }
 }

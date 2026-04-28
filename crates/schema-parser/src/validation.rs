@@ -37,7 +37,7 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
         
         for field in &mut model.fields {
             // Check for @id attribute
-            let has_id = field.attributes.iter().any(|a| a == "@id");
+            let has_id = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Id));
             if has_id {
                 id_count += 1;
             }
@@ -100,7 +100,7 @@ mod tests {
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
-                    attributes: vec!["@id".to_string()],
+                    attributes: vec![FieldAttribute::Id],
                 }
             ]
         });
@@ -144,7 +144,7 @@ mod tests {
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
-                    attributes: vec!["@id".to_string()],
+                    attributes: vec![FieldAttribute::Id],
                 }
             ]
         });

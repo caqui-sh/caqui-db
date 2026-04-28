@@ -17,6 +17,7 @@ strip = true
 [workspace.dependencies]
 rusqlite = { git = "https://github.com/caqui-sh/rusqlite.git", features = ["bundled", "functions"] }
 deadpool-sqlite = "0.9"
+deadpool = "0.12"
 tokio = { version = "1.36", features = ["full", "test-util"] }
 pest = "2.7"
 pest_derive = "2.7"

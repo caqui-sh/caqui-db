@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 rusqlite = { workspace = true }
 deadpool-sqlite = { workspace = true }
+deadpool = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }
 query-compiler = { path = "../query-compiler" }
@@ -14,3 +15,4 @@ schema-parser = { path = "../schema-parser" }
 api-layer = { path = "../api-layer" }
 axum = { workspace = true }
 clap = { workspace = true }
+uuid = { version = "1.8", features = ["v7", "v4"] }

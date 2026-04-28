@@ -52,7 +52,66 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                         
                         let mut attributes = Vec::new();
                         for attr_rule in field_inner {
-                            attributes.push(attr_rule.as_str().trim().to_string());
+                            if attr_rule.as_rule() == Rule::field_attr {
+                                let mut attr_inner = attr_rule.into_inner();
+                                let attr_ident = attr_inner.next().unwrap().as_str();
+                                
+                                match attr_ident {
+                                    "id" => attributes.push(FieldAttribute::Id),
+                                    "unique" => attributes.push(FieldAttribute::Unique),
+                                    "updatedAt" => attributes.push(FieldAttribute::UpdatedAt),
+                                    "ignore" => attributes.push(FieldAttribute::Ignore),
+                                    "map" => {
+                                        if let Some(args_rule) = attr_inner.next() {
+                                            let arg_val = args_rule.into_inner().next().unwrap().into_inner().next().unwrap().as_str();
+                                            let clean_val = arg_val.trim_matches('"').to_string();
+                                            attributes.push(FieldAttribute::Map(clean_val));
+                                        }
+                                    },
+                                    "default" => {
+                                        if let Some(args_rule) = attr_inner.next() {
+                                            let arg_val = args_rule.into_inner().next().unwrap().into_inner().next().unwrap().as_str();
+                                            let default_func = match arg_val {
+                                                "autoincrement()" => DefaultFunc::AutoIncrement,
+                                                "now()" => DefaultFunc::Now,
+                                                "uuid()" => DefaultFunc::Uuid,
+                                                "cuid()" => DefaultFunc::Cuid,
+                                                _ => DefaultFunc::Static(arg_val.trim_matches('"').to_string()),
+                                            };
+                                            attributes.push(FieldAttribute::Default(default_func));
+                                        }
+                                    },
+                                    "relation" => {
+                                        let mut fields_vec = Vec::new();
+                                        let mut refs_vec = Vec::new();
+                                        let mut on_delete = None;
+                                        
+                                        if let Some(args_rule) = attr_inner.next() {
+                                            for param_rule in args_rule.into_inner() {
+                                                if param_rule.as_rule() == Rule::named_arg {
+                                                    let mut param_inner = param_rule.into_inner();
+                                                    let key = param_inner.next().unwrap().as_str();
+                                                    let val_rule = param_inner.next().unwrap().into_inner().next().unwrap();
+                                                    
+                                                    if key == "fields" {
+                                                        if val_rule.as_rule() == Rule::attr_array {
+                                                            fields_vec = val_rule.into_inner().map(|r| r.as_str().to_string()).collect();
+                                                        }
+                                                    } else if key == "references" {
+                                                        if val_rule.as_rule() == Rule::attr_array {
+                                                            refs_vec = val_rule.into_inner().map(|r| r.as_str().to_string()).collect();
+                                                        }
+                                                    } else if key == "onDelete" {
+                                                        on_delete = Some(val_rule.as_str().to_string());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        attributes.push(FieldAttribute::Relation { fields: fields_vec, references: refs_vec, on_delete });
+                                    },
+                                    _ => {}
+                                }
+                            }
                         }
 
                         fields.push(FieldNode {
@@ -114,7 +173,7 @@ mod tests {
         let user_model = ast.models.get("User").unwrap();
         assert_eq!(user_model.fields.len(), 3);
         assert_eq!(user_model.fields[0].name, "id");
-        assert_eq!(user_model.fields[0].attributes, vec!["@id"]);
+        assert_eq!(user_model.fields[0].attributes, vec![FieldAttribute::Id]);
         assert_eq!(user_model.fields[0].field_type, AstFieldType::Scalar("String".to_string()));
         
         assert_eq!(user_model.fields[2].name, "posts");

@@ -26,9 +26,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_compiled_read() {
-        let pool = deadpool_sqlite::Config::new("file::memory:?cache=shared")
-            .create_pool(deadpool_sqlite::Runtime::Tokio1)
-            .unwrap();
+        let pool = crate::pool::create_pool("file::memory:?cache=shared");
 
         let conn = pool.get().await.unwrap();
         conn.interact(|db| -> Result<(), rusqlite::Error> {

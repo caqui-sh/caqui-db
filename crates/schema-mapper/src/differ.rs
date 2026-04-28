@@ -91,7 +91,9 @@ mod tests {
                 name: "User".to_string(),
                 columns: vec![
                     PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
-                ]
+                ],
+                indexes: vec![],
+                triggers: vec![],
             }
         ];
         
@@ -110,7 +112,9 @@ mod tests {
                 columns: vec![
                     PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false },
                     PhysicalColumn { name: "name".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
-                ]
+                ],
+                indexes: vec![],
+                triggers: vec![],
             }
         ];
         
@@ -133,7 +137,9 @@ mod tests {
                 name: "User".to_string(),
                 columns: vec![
                     PhysicalColumn { name: "id".to_string(), sqlite_type: "INTEGER".to_string(), is_json_array: false }
-                ]
+                ],
+                indexes: vec![],
+                triggers: vec![],
             }
         ];
         

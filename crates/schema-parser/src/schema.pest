@@ -11,11 +11,24 @@ custom     = { ident }
 is_array   = { "[]" }
 field_type = { (scalar | custom) ~ is_array? }
 
-// Capture Prisma-like attributes (e.g., @id, @unique)
-attribute  = { "@" ~ ident ~ ("(" ~ (!")" ~ ANY)* ~ ")")? }
+// Values can be functions, strings, numbers, or array literals
+string_lit  = { "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+number      = { ASCII_DIGIT+ }
+attr_func   = { ident ~ "()" }
+attr_array  = { "[" ~ ident? ~ ("," ~ ident)* ~ "]" }
+attr_val    = { attr_func | attr_array | string_lit | number | "true" | "false" | ident }
 
-field_def  = { ident ~ field_type ~ attribute* }
-model_def  = { "model" ~ ident ~ "{" ~ field_def* ~ "}" }
+// Named arguments (e.g., fields: [authorId])
+named_arg   = { ident ~ ":" ~ attr_val }
+attr_param  = { named_arg | attr_val }
+attr_args   = { "(" ~ attr_param ~ ("," ~ attr_param)* ~ ")" }
+
+// Differentiate field-level (@) from block-level (@@)
+field_attr  = { "@" ~ ident ~ attr_args? }
+block_attr  = { "@@" ~ ident ~ attr_args? }
+
+field_def  = { ident ~ field_type ~ field_attr* }
+model_def  = { "model" ~ ident ~ "{" ~ field_def* ~ block_attr* ~ "}" }
 
 // Capture explicit Polymorphic Unions (e.g., union SearchResult = Article | User)
 union_def  = { "union" ~ ident ~ "=" ~ ident ~ ("|" ~ ident)* }

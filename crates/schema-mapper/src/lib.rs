@@ -13,9 +13,24 @@ pub struct PhysicalColumn {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct PhysicalIndex {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub unique: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PhysicalTrigger {
+    pub name: String,
+    pub sql: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct PhysicalTable {
     pub name: String,
     pub columns: Vec<PhysicalColumn>,
+    pub indexes: Vec<PhysicalIndex>,
+    pub triggers: Vec<PhysicalTrigger>,
 }
 
 pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
@@ -27,8 +42,38 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
 
     for model in models {
         let mut columns = Vec::new();
+        let mut indexes = Vec::new();
+        let mut triggers = Vec::new();
 
         for field in &model.fields {
+            let is_unique = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Unique));
+            if is_unique {
+                indexes.push(PhysicalIndex {
+                    name: format!("idx_{}_{}", model.name, field.name),
+                    columns: vec![field.name.clone()],
+                    unique: true,
+                });
+            }
+
+            let is_updated_at = field.attributes.iter().any(|a| matches!(a, FieldAttribute::UpdatedAt));
+            if is_updated_at {
+                let trigger_name = format!("trg_update_{}_{}", model.name, field.name);
+                let sql = format!(
+                    "CREATE TRIGGER IF NOT EXISTS {} \n\
+                     AFTER UPDATE ON {} \n\
+                     FOR EACH ROW \n\
+                     WHEN NEW.{} <= OLD.{} \n\
+                     BEGIN \n\
+                         UPDATE {} SET {} = CURRENT_TIMESTAMP WHERE id = OLD.id; \n\
+                     END;",
+                    trigger_name, model.name, field.name, field.name, model.name, field.name
+                );
+                triggers.push(PhysicalTrigger {
+                    name: trigger_name,
+                    sql,
+                });
+            }
+
             match &field.field_type {
                 AstFieldType::ScalarArray(_) | AstFieldType::RelationArray(_) => {
                     columns.push(PhysicalColumn {
@@ -51,15 +96,32 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                     });
                 },
                 AstFieldType::Scalar(t) => {
-                    let sql_type = match t.as_str() {
+                    let is_id = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Id));
+                    let is_autoincrement = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Default(DefaultFunc::AutoIncrement)));
+                    let is_uuid = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Default(DefaultFunc::Uuid)));
+                    
+                    let mut sql_type = match t.as_str() {
                         "Int" => "INTEGER",
                         "Float" => "REAL",
                         "Boolean" => "INTEGER",
                         _ => "TEXT",
-                    };
+                    }.to_string();
+                    
+                    if is_id {
+                        if sql_type == "INTEGER" && is_autoincrement {
+                            sql_type = "INTEGER PRIMARY KEY AUTOINCREMENT".to_string();
+                        } else {
+                            sql_type = format!("{} PRIMARY KEY", sql_type);
+                        }
+                        
+                        if is_uuid {
+                            sql_type = format!("{} DEFAULT (gen_uuid7())", sql_type);
+                        }
+                    }
+
                     columns.push(PhysicalColumn {
                         name: field.name.clone(),
-                        sqlite_type: sql_type.to_string(),
+                        sqlite_type: sql_type,
                         is_json_array: false,
                     });
                 },
@@ -68,7 +130,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                 }
             }
         }
-        physical_tables.push(PhysicalTable { name: model.name.clone(), columns });
+        physical_tables.push(PhysicalTable { name: model.name.clone(), columns, indexes, triggers });
     }
     physical_tables
 }
@@ -91,7 +153,7 @@ mod tests {
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
-                    attributes: vec!["@id".to_string()],
+                    attributes: vec![FieldAttribute::Id],
                 },
                 FieldNode {
                     name: "tags".to_string(),
@@ -116,9 +178,11 @@ mod tests {
         let table = &tables[0];
         assert_eq!(table.name, "User");
         assert_eq!(table.columns.len(), 5);
+        assert_eq!(table.indexes.len(), 0);
+        assert_eq!(table.triggers.len(), 0);
         
         let id_col = table.columns.iter().find(|c| c.name == "id").unwrap();
-        assert_eq!(id_col.sqlite_type, "TEXT");
+        assert_eq!(id_col.sqlite_type, "TEXT PRIMARY KEY");
         assert_eq!(id_col.is_json_array, false);
         
         let tags_col = table.columns.iter().find(|c| c.name == "tags").unwrap();

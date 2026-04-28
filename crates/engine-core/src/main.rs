@@ -30,9 +30,7 @@ async fn main() {
     let cli = Cli::parse();
     
     // 3. Spin up the SQLite connection pool using the Custom VFS & WAL pragmas
-    // Normally, this would use deadpool_sqlite with custom config, but we'll mock a simple setup for the architecture flow
-    let cfg = deadpool_sqlite::Config::new("file:app.db?vfs=git");
-    let db_pool = cfg.create_pool(deadpool_sqlite::Runtime::Tokio1).unwrap();
+    let db_pool = engine_core::pool::create_pool("file:app.db?vfs=git");
 
     match cli.command {
         Commands::DbPush => {
