@@ -1,0 +1,23 @@
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }
+
+ident      = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// Differentiate scalar primitives vs custom types
+scalar     = { "String" | "Int" | "Float" | "Boolean" }
+custom     = { ident }
+
+// Capture arrays natively (e.g., String[])
+is_array   = { "[]" }
+field_type = { (scalar | custom) ~ is_array? }
+
+// Capture Prisma-like attributes (e.g., @id, @unique)
+attribute  = { "@" ~ ident ~ ("(" ~ (!")" ~ ANY)* ~ ")")? }
+
+field_def  = { ident ~ field_type ~ attribute* }
+model_def  = { "model" ~ ident ~ "{" ~ field_def* ~ "}" }
+
+// Capture explicit Polymorphic Unions (e.g., union SearchResult = Article | User)
+union_def  = { "union" ~ ident ~ "=" ~ ident ~ ("|" ~ ident)* }
+
+schema     = { SOI ~ (model_def | union_def)* ~ EOI }

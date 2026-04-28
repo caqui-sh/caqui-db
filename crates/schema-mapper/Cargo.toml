@@ -1,0 +1,11 @@
+[package]
+name = "schema-mapper"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+schema-parser = { path = "../schema-parser" }
+rusqlite = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

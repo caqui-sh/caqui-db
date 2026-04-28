@@ -1,0 +1,31 @@
+[workspace]
+members = [
+    "crates/engine-core",
+    "crates/schema-parser",
+    "crates/schema-mapper",
+    "crates/query-compiler",
+    "crates/api-layer",
+]
+resolver = "2"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace.dependencies]
+rusqlite = { git = "https://github.com/caqui-sh/rusqlite.git", features = ["bundled", "functions"] }
+deadpool-sqlite = "0.9"
+tokio = { version = "1.36", features = ["full", "test-util"] }
+pest = "2.7"
+pest_derive = "2.7"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+axum = "0.7"
+clap = { version = "4.5", features = ["derive"] }
+tempfile = "3.10"
+tower = { version = "0.4", features = ["util"] }
+
+[patch.crates-io]
+rusqlite = { git = "https://github.com/caqui-sh/rusqlite.git" }

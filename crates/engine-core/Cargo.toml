@@ -1,0 +1,16 @@
+[package]
+name = "engine-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rusqlite = { workspace = true }
+deadpool-sqlite = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+query-compiler = { path = "../query-compiler" }
+schema-mapper = { path = "../schema-mapper" }
+schema-parser = { path = "../schema-parser" }
+api-layer = { path = "../api-layer" }
+axum = { workspace = true }
+clap = { workspace = true }

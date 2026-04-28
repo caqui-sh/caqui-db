@@ -1,0 +1,17 @@
+[package]
+name = "api-layer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+schema-parser = { path = "../schema-parser" }
+schema-mapper = { path = "../schema-mapper" }
+query-compiler = { path = "../query-compiler" }
+axum = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+deadpool-sqlite = { workspace = true }
+rusqlite = { workspace = true }
+
+[dev-dependencies]
+tower = { workspace = true }
