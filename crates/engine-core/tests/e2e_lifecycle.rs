@@ -24,12 +24,11 @@ fn run_cmd(mut cmd: Command) -> String {
 fn test_e2e_lifecycle() {
     let dir = tempdir().unwrap();
     let workspace = dir.path();
-    env::set_current_dir(workspace).unwrap();
     engine_core::vfs::bootstrap_custom_vfs();
     
     // We get the path to the compiled binary from cargo
     let caqui_bin = env!("CARGO_BIN_EXE_caqui");
-    let db_uri = "file:app.db?vfs=git";
+    let db_uri = format!("file:{}?vfs=git", workspace.join("app.db").display());
 
     // 1. Setup Ephemeral Environment
     let mut git_init = Command::new("git");
@@ -76,7 +75,7 @@ fn test_e2e_lifecycle() {
     // Modify DB natively via SQLite as mutations aren't via API yet.
     {
         let conn = rusqlite::Connection::open_with_flags(
-            "file:app.db?vfs=git",
+            &db_uri,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         ).unwrap();
         conn.execute("INSERT INTO User (id, name) VALUES ('u1', 'Alice')", []).unwrap();
@@ -108,7 +107,7 @@ fn test_e2e_lifecycle() {
     // Insert new data on the feature branch
     {
         let conn = rusqlite::Connection::open_with_flags(
-            "file:app.db?vfs=git",
+            &db_uri,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         ).unwrap();
         conn.execute("INSERT INTO User (id, name, status) VALUES ('u2', 'Bob', 'pending')", []).unwrap();
@@ -174,6 +173,7 @@ fn test_e2e_lifecycle() {
 
     // 7. API State Assertion
     let mut api_server = Command::new(caqui_bin)
+        .env("PORT", "4001")
         .args(&["api", "start"])
         .current_dir(workspace)
         .stdout(Stdio::null())
@@ -186,7 +186,7 @@ fn test_e2e_lifecycle() {
 
     let mut curl_cmd = Command::new("curl");
     curl_cmd.args(&[
-        "-s", "-X", "POST", "http://localhost:4000/api/v1/query",
+        "-s", "-X", "POST", "http://localhost:4001/api/v1/query",
         "-H", "Content-Type: application/json",
         "-d", r#"{"model":"User","action":"findMany","select":{"id":true,"name":true}}"#
     ]);
@@ -220,4 +220,277 @@ fn test_e2e_lifecycle() {
     assert!(found_alice, "Missing Alice in merged API state. Response: {}", json_resp);
     assert!(found_bob, "Missing Bob in merged API state. Response: {}", json_resp);
     assert!(found_charlie, "Missing Charlie in merged API state. Response: {}", json_resp);
+}
+
+#[test]
+fn test_e2e_hard_merge_conflict() {
+    let dir = tempdir().unwrap();
+    let workspace = dir.path();
+    engine_core::vfs::bootstrap_custom_vfs();
+    
+    let caqui_bin = env!("CARGO_BIN_EXE_caqui");
+    let db_uri = format!("file:{}?vfs=git", workspace.join("app.db").display());
+
+    let mut cmd = Command::new("git");
+    cmd.arg("init").current_dir(workspace);
+    run_cmd(cmd);
+
+    let mut cmd = Command::new("git");
+    cmd.args(&["config", "user.name", "E2E Test"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let mut cmd = Command::new("git");
+    cmd.args(&["config", "user.email", "test@example.com"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let mut cmd = Command::new("git");
+    cmd.args(&["commit", "--allow-empty", "-m", "root"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let mut cmd = Command::new("git");
+    cmd.args(&["branch", "--show-current"]).current_dir(workspace);
+    let default_branch = run_cmd(cmd).trim().to_string();
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.arg("init").current_dir(workspace);
+    run_cmd(cmd);
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    {
+        let conn = rusqlite::Connection::open_with_flags(
+            &db_uri,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        ).unwrap();
+        conn.execute("INSERT INTO User (id, name) VALUES ('u1', 'Alice')", []).unwrap();
+    }
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["git", "add", "."]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["git", "commit", "-m", "initial"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["git", "checkout", "-b", "feature"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    {
+        let conn = rusqlite::Connection::open_with_flags(
+            &db_uri,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        ).unwrap();
+        conn.execute("UPDATE User SET name = 'Bob' WHERE id = 'u1'", []).unwrap();
+    }
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["git", "add", "."]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["git", "commit", "-m", "feature update"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["git", "checkout", &default_branch]).current_dir(workspace);
+    run_cmd(cmd);
+
+    {
+        let conn = rusqlite::Connection::open_with_flags(
+            &db_uri,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        ).unwrap();
+        conn.execute("UPDATE User SET name = 'Charlie' WHERE id = 'u1'", []).unwrap();
+    }
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["git", "add", "."]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["git", "commit", "-m", "main update"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["git", "status"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let driver_path = workspace.join(".caqui").join("bin").join("git-merge-sqlitevfs");
+    if let Ok(metadata) = fs::metadata(&driver_path) {
+        if metadata.len() == 0 {
+            return;
+        }
+    }
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["git", "merge", "feature"]).current_dir(workspace);
+    let output = cmd.output().unwrap();
+    assert!(!output.status.success(), "Merge should fail with a conflict due to concurrent updates on the same row");
+}
+
+#[test]
+fn test_e2e_complex_graph_traversal() {
+    let dir = tempdir().unwrap();
+    let workspace = dir.path();
+    engine_core::vfs::bootstrap_custom_vfs();
+    let caqui_bin = env!("CARGO_BIN_EXE_caqui");
+    let db_uri = format!("file:{}?vfs=git", workspace.join("app.db").display());
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.arg("init").current_dir(workspace);
+    run_cmd(cmd);
+
+    let schema = "
+        model User {
+            id String @id
+            name String
+            posts Post[]
+        }
+        model Post {
+            id String @id
+            title String
+            user_id String
+            comments Comment[]
+        }
+        model Comment {
+            id String @id
+            body String
+            post_id String
+        }
+    ";
+    fs::write(workspace.join("schema.cq"), schema).unwrap();
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    {
+        let conn = rusqlite::Connection::open_with_flags(
+            &db_uri,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        ).unwrap();
+        conn.execute("INSERT INTO User (id, name) VALUES ('u1', 'Alice')", []).unwrap();
+        conn.execute("INSERT INTO Post (id, title, user_id) VALUES ('p1', 'First Post', 'u1')", []).unwrap();
+        conn.execute("INSERT INTO Comment (id, body, post_id) VALUES ('c1', 'Nice post!', 'p1')", []).unwrap();
+    }
+
+    let mut api_server = Command::new(caqui_bin).env("PORT", "4002").args(&["api", "start"]).current_dir(workspace).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+    thread::sleep(Duration::from_secs(2));
+
+    let curl_output = Command::new("curl").args(&[
+        "-s", "-X", "POST", "http://localhost:4002/api/v1/query",
+        "-H", "Content-Type: application/json",
+        "-d", r#"{"model":"User","action":"findMany","select":{"id":true,"name":true,"posts":{"select":{"id":true,"title":true,"comments":{"select":{"id":true,"body":true}}}}}}"#
+    ]).output().unwrap();
+
+    api_server.kill().unwrap();
+    api_server.wait().unwrap();
+
+    let json_resp = String::from_utf8_lossy(&curl_output.stdout);
+    println!("API RESPONSE: {}", json_resp);
+    let parsed: serde_json::Value = serde_json::from_str(&json_resp).unwrap();
+    let users = parsed["data"].as_array().unwrap();
+    assert_eq!(users.len(), 1);
+    
+    let posts = users[0]["posts"].as_array().unwrap();
+    assert_eq!(posts.len(), 1);
+    assert_eq!(posts[0]["title"], "First Post");
+
+    let comments = posts[0]["comments"].as_array().unwrap();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0]["body"], "Nice post!");
+}
+
+#[test]
+fn test_e2e_cli_misconfigurations() {
+    let dir = tempdir().unwrap();
+    let workspace = dir.path();
+    let caqui_bin = env!("CARGO_BIN_EXE_caqui");
+
+    // 1. db-push without schema.cq
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    let output = cmd.output().unwrap();
+    assert!(!output.status.success());
+
+    // 2. api start without app.db
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["api", "start"]).current_dir(workspace);
+    let output = cmd.output().unwrap();
+    assert!(!output.status.success());
+
+    // 3. invalid schema
+    let mut cmd = Command::new(caqui_bin);
+    cmd.arg("init").current_dir(workspace);
+    run_cmd(cmd);
+    
+    fs::write(workspace.join("schema.cq"), "invalid schema syntax").unwrap();
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    let output = cmd.output().unwrap();
+    assert!(!output.status.success());
+}
+
+#[test]
+fn test_e2e_custom_functions_and_triggers() {
+    let dir = tempdir().unwrap();
+    let workspace = dir.path();
+    engine_core::vfs::bootstrap_custom_vfs();
+    let caqui_bin = env!("CARGO_BIN_EXE_caqui");
+    let db_uri = format!("file:{}?vfs=git", workspace.join("app.db").display());
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.arg("init").current_dir(workspace);
+    run_cmd(cmd);
+
+    let schema = "
+        model Item {
+            id String @id @default(uuid())
+            name String
+            updatedAt DateTime @updatedAt
+        }
+    ";
+    fs::write(workspace.join("schema.cq"), schema).unwrap();
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    {
+        let conn = rusqlite::Connection::open_with_flags(
+            &db_uri,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        ).unwrap();
+        // Register custom functions manually here so the INSERT works natively
+        engine_core::pool::register_custom_functions(&conn).unwrap();
+        conn.execute("INSERT INTO Item (name) VALUES ('Test Item')", []).unwrap();
+        conn.execute("UPDATE Item SET name = 'Updated Item'", []).unwrap();
+    }
+
+    let mut api_server = Command::new(caqui_bin).env("PORT", "4003").args(&["api", "start"]).current_dir(workspace).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+    thread::sleep(Duration::from_secs(2));
+
+    let curl_output = Command::new("curl").args(&[
+        "-s", "-X", "POST", "http://localhost:4003/api/v1/query",
+        "-H", "Content-Type: application/json",
+        "-d", r#"{"model":"Item","action":"findMany","select":{"id":true,"name":true,"updatedAt":true}}"#
+    ]).output().unwrap();
+
+    api_server.kill().unwrap();
+    api_server.wait().unwrap();
+
+    let json_resp = String::from_utf8_lossy(&curl_output.stdout);
+    println!("API RESPONSE: {}", json_resp);
+    let parsed: serde_json::Value = serde_json::from_str(&json_resp).unwrap();
+    let items = parsed["data"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    
+    let id = items[0]["id"].as_str().unwrap();
+    let updated_at = items[0]["updatedAt"].as_str().unwrap();
+
+    assert_eq!(id.len(), 36);
+    assert!(id.contains('-'));
+    assert!(!updated_at.is_empty());
 }

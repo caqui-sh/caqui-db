@@ -76,8 +76,21 @@ union SearchResult = User | Post
     engine_core::vfs::bootstrap_custom_vfs();
 
     // 2. Phase 2: Parse the DSL into Memory dynamically
-    let schema_text = std::fs::read_to_string("schema.cq").unwrap_or_else(|_| "model User { id String @id }".to_string());
-    let desired_ast = parser::parse_schema(&schema_text).expect("Syntax Error in DSL");
+    let schema_text = match std::fs::read_to_string("schema.cq") {
+        Ok(text) => text,
+        Err(_) => {
+            eprintln!("Error: 'schema.cq' not found. Run `caqui init` to create one.");
+            std::process::exit(1);
+        }
+    };
+    
+    let desired_ast = match parser::parse_schema(&schema_text) {
+        Ok(ast) => ast,
+        Err(e) => {
+            eprintln!("Syntax Error in DSL:\n{}", e);
+            std::process::exit(1);
+        }
+    };
     
     // 3. Spin up the SQLite connection pool using the Custom VFS & WAL pragmas
     let db_pool = engine_core::pool::create_pool("file:app.db?vfs=git");
@@ -108,6 +121,11 @@ union SearchResult = User | Post
         },
         Commands::Api { command } => match command {
             ApiCommands::Start => {
+                if !std::path::Path::new("app.db").exists() {
+                    eprintln!("Error: 'app.db' not found. Run `caqui schema db-push` to initialize the database.");
+                    std::process::exit(1);
+                }
+
                 // Phase 5: Build Global Application State
                 let state = EngineState {
                     db_pool,
@@ -116,9 +134,11 @@ union SearchResult = User | Post
 
                 // Phase 5: Mount Dynamic API and Bind to Port
                 let app_router = router::build_dynamic_router(state);
-                let listener = tokio::net::TcpListener::bind("0.0.0.0:4000").await.unwrap();
+                let port = std::env::var("PORT").unwrap_or_else(|_| "4000".to_string());
+                let addr = format!("0.0.0.0:{}", port);
+                let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
                 
-                println!("SUCCESS: Unified Engine running on http://0.0.0.0:4000/api/v1/query");
+                println!("SUCCESS: Unified Engine running on http://{}/api/v1/query", addr);
                 axum::serve(listener, app_router).await.unwrap();
             }
         }

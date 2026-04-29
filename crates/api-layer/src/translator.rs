@@ -43,8 +43,8 @@ pub fn hydrate_payload_to_ir(
                 selections.push(SelectField::Relation {
                     field_name: field_name.clone(),
                     // In a production engine, foreign_key resolution is mapped from AST relation attributes
-                    // but for this phase we fall back to a simple convention based on the target model.
-                    foreign_key: format!("{}_id", target_model.to_lowercase()), 
+                    // but for this phase we fall back to a simple convention based on the parent model.
+                    foreign_key: format!("{}_id", model_name.to_lowercase()), 
                     is_list,
                     query: Box::new(child_node),
                 });

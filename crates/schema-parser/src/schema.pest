@@ -4,7 +4,7 @@ COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }
 ident      = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Differentiate scalar primitives vs custom types
-scalar     = { "String" | "Int" | "Float" | "Boolean" }
+scalar     = { "String" | "Int" | "Float" | "Boolean" | "DateTime" }
 custom     = { ident }
 
 // Capture arrays natively (e.g., String[])

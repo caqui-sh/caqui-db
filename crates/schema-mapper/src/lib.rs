@@ -62,11 +62,11 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                     "CREATE TRIGGER IF NOT EXISTS {} \n\
                      AFTER UPDATE ON {} \n\
                      FOR EACH ROW \n\
-                     WHEN NEW.{} <= OLD.{} \n\
+                     WHEN OLD.{} IS NULL OR NEW.{} <= OLD.{} \n\
                      BEGIN \n\
                          UPDATE {} SET {} = CURRENT_TIMESTAMP WHERE id = OLD.id; \n\
                      END;",
-                    trigger_name, model.name, field.name, field.name, model.name, field.name
+                    trigger_name, model.name, field.name, field.name, field.name, model.name, field.name
                 );
                 triggers.push(PhysicalTrigger {
                     name: trigger_name,
