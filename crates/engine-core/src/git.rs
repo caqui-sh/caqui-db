@@ -26,7 +26,66 @@ fn setup_merge_driver() -> PathBuf {
     bin_dir
 }
 
+pub fn parse_git_args(args: &[String]) -> Result<Vec<String>, String> {
+    let mut subcommand_idx = None;
+    let mut skip_next = false;
+
+    // Identify global flags that take arguments to skip over them
+    for (i, arg) in args.iter().enumerate() {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+
+        if arg.starts_with('-') {
+            // Check known git global flags that require a separate parameter
+            // e.g. git -c key=value, git -C path
+            if arg == "-C" 
+                || arg == "-c" 
+                || arg == "--exec-path" 
+                || arg == "--git-dir" 
+                || arg == "--work-tree" 
+                || arg == "--namespace" 
+                || arg == "--super-prefix" 
+            {
+                skip_next = true;
+            }
+        } else {
+            // First non-flag argument is the subcommand
+            subcommand_idx = Some(i);
+            break;
+        }
+    }
+
+    if let Some(idx) = subcommand_idx {
+        if args[idx] == "merge" {
+            // Check if user tries to override strategy
+            for arg in &args[idx + 1..] {
+                if arg == "-s" || arg == "--strategy" || arg.starts_with("--strategy=") {
+                    return Err("Error: caqui enforces the 'sqlitevfs' merge driver for database integrity. You cannot override it with a custom strategy.".to_string());
+                }
+            }
+
+            // Inject the sqlitevfs strategy immediately after 'merge'
+            let mut pass_args = args.to_vec();
+            pass_args.insert(idx + 1, "sqlitevfs".to_string());
+            pass_args.insert(idx + 1, "-s".to_string());
+            return Ok(pass_args);
+        }
+    }
+
+    Ok(args.to_vec())
+}
+
 pub fn proxy_git_command(args: Vec<String>) {
+    let pass_args = match parse_git_args(&args) {
+        Ok(args) => args,
+        Err(e) => {
+            eprintln!("{}", e);
+            exit(1);
+        }
+    };
+
     let bin_dir = setup_merge_driver();
 
     let mut git_cmd = Command::new("git");
@@ -39,23 +98,6 @@ pub fn proxy_git_command(args: Vec<String>) {
         git_cmd.env("PATH", new_path);
     } else {
         git_cmd.env("PATH", bin_dir);
-    }
-
-    let mut pass_args = Vec::new();
-    let mut is_merge = false;
-
-    if let Some(first_arg) = args.first() {
-        if first_arg == "merge" {
-            is_merge = true;
-        }
-    }
-
-    for (i, arg) in args.iter().enumerate() {
-        pass_args.push(arg.clone());
-        if i == 0 && is_merge {
-            pass_args.push("-s".to_string());
-            pass_args.push("sqlitevfs".to_string()); // Using 'sqlitevfs' as strategy name to match git-merge-sqlitevfs binary naming convention
-        }
     }
 
     git_cmd.args(&pass_args);
@@ -71,4 +113,51 @@ pub fn proxy_git_command(args: Vec<String>) {
     });
 
     exit(status.code().unwrap_or(1));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_git_args_simple_merge() {
+        let args = vec!["merge".to_string(), "branch".to_string()];
+        let parsed = parse_git_args(&args).unwrap();
+        assert_eq!(parsed, vec!["merge", "-s", "sqlitevfs", "branch"]);
+    }
+
+    #[test]
+    fn test_parse_git_args_with_global_flags() {
+        let args = vec![
+            "-c".to_string(), 
+            "core.editor=vim".to_string(), 
+            "-C".to_string(), 
+            "/path".to_string(), 
+            "merge".to_string(), 
+            "branch".to_string()
+        ];
+        let parsed = parse_git_args(&args).unwrap();
+        assert_eq!(parsed, vec!["-c", "core.editor=vim", "-C", "/path", "merge", "-s", "sqlitevfs", "branch"]);
+    }
+
+    #[test]
+    fn test_parse_git_args_override_error() {
+        let args = vec!["merge".to_string(), "-s".to_string(), "recursive".to_string(), "branch".to_string()];
+        let err = parse_git_args(&args).unwrap_err();
+        assert!(err.contains("You cannot override it with a custom strategy"));
+    }
+
+    #[test]
+    fn test_parse_git_args_override_error_equals() {
+        let args = vec!["merge".to_string(), "--strategy=recursive".to_string(), "branch".to_string()];
+        let err = parse_git_args(&args).unwrap_err();
+        assert!(err.contains("You cannot override it with a custom strategy"));
+    }
+
+    #[test]
+    fn test_parse_git_args_non_merge() {
+        let args = vec!["commit".to_string(), "-m".to_string(), "merge".to_string()];
+        let parsed = parse_git_args(&args).unwrap();
+        assert_eq!(parsed, vec!["commit", "-m", "merge"]);
+    }
 }
