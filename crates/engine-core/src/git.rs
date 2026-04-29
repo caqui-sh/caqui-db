@@ -86,6 +86,17 @@ pub fn proxy_git_command(args: Vec<String>) {
         }
     };
 
+    // If it's a diff command, intercept it
+    if let Some(idx) = pass_args.iter().position(|a| a == "diff") {
+        let mut old_ref = "HEAD".to_string();
+        if pass_args.len() > idx + 1 {
+            old_ref = pass_args[idx + 1].clone();
+        }
+        
+        crate::diff::run_diff(&old_ref);
+        return;
+    }
+
     let bin_dir = setup_merge_driver();
 
     let mut git_cmd = Command::new("git");
