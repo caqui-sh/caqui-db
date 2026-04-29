@@ -76,4 +76,41 @@ mod tests {
         assert_eq!(posts[0]["title"], "Hello World");
         assert_eq!(posts[1]["title"], "Another Post");
     }
+
+    #[tokio::test]
+    async fn test_execute_compiled_read_invalid_sql() {
+        let pool = crate::pool::create_pool("file::memory:?cache=shared");
+        let result = execute_compiled_read(&pool, "SELECT syntax error".to_string()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("syntax error"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_compiled_read_empty_result() {
+        let pool = crate::pool::create_pool("file::memory:?cache=shared");
+        // rusqlite's query_row returns Err(QueryReturnedNoRows) if zero rows found
+        let result = execute_compiled_read(&pool, "SELECT 1 WHERE 1=0".to_string()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Query returned no rows"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_compiled_read_invalid_json() {
+        let pool = crate::pool::create_pool("file::memory:?cache=shared");
+        let conn = pool.get().await.unwrap();
+        conn.interact(|db| -> Result<(), rusqlite::Error> {
+            db.execute("CREATE TABLE Test (val TEXT);", [])?;
+            db.execute("INSERT INTO Test (val) VALUES ('not a json');", [])?;
+            Ok(())
+        }).await.unwrap().unwrap();
+
+        let result = execute_compiled_read(&pool, "SELECT val FROM Test".to_string()).await;
+        assert!(result.is_err(), "Expected error for invalid JSON, got {:?}", result);
+        // serde_json error for "not a json" usually contains "expected value", "invalid character", or "expected ident"
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("expected value") || err.contains("invalid character") || err.contains("expected ident"), 
+            "Actual error: {}", err
+        );
+    }
 }

@@ -88,8 +88,10 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                                         
                                         if let Some(args_rule) = attr_inner.next() {
                                             for param_rule in args_rule.into_inner() {
-                                                if param_rule.as_rule() == Rule::named_arg {
-                                                    let mut param_inner = param_rule.into_inner();
+                                                // attr_param -> named_arg
+                                                let actual_param = param_rule.into_inner().next().unwrap();
+                                                if actual_param.as_rule() == Rule::named_arg {
+                                                    let mut param_inner = actual_param.into_inner();
                                                     let key = param_inner.next().unwrap().as_str();
                                                     let val_rule = param_inner.next().unwrap().into_inner().next().unwrap();
                                                     
@@ -181,5 +183,57 @@ mod tests {
         
         let search_result = ast.unions.get("SearchResult").unwrap();
         assert_eq!(search_result, &vec!["User".to_string(), "Post".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_advanced_attributes() {
+        let input = "
+            model User {
+                id String @id @map(\"user_id\")
+                email String @unique
+                bio String @default(\"no bio\")
+                createdAt DateTime @default(now())
+                token String @ignore
+                posts Post[] @relation(fields: [id], references: [authorId], onDelete: Cascade)
+            }
+            model Post {
+                id String @id
+                authorId String
+            }
+        ";
+        
+        let ast = parse_schema(input).unwrap();
+        let user = ast.models.get("User").unwrap();
+        
+        // @map
+        let id_field = user.fields.iter().find(|f| f.name == "id").unwrap();
+        assert!(id_field.attributes.contains(&FieldAttribute::Map("user_id".to_string())));
+        
+        // @unique
+        let email_field = user.fields.iter().find(|f| f.name == "email").unwrap();
+        assert!(email_field.attributes.contains(&FieldAttribute::Unique));
+        
+        // @default("string")
+        let bio_field = user.fields.iter().find(|f| f.name == "bio").unwrap();
+        assert!(bio_field.attributes.contains(&FieldAttribute::Default(DefaultFunc::Static("no bio".to_string()))));
+        
+        // @default(now())
+        let created_at_field = user.fields.iter().find(|f| f.name == "createdAt").unwrap();
+        assert!(created_at_field.attributes.contains(&FieldAttribute::Default(DefaultFunc::Now)));
+        
+        // @ignore
+        let token_field = user.fields.iter().find(|f| f.name == "token").unwrap();
+        assert!(token_field.attributes.contains(&FieldAttribute::Ignore));
+        
+        // @relation
+        let posts_field = user.fields.iter().find(|f| f.name == "posts").unwrap();
+        let relation = posts_field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })).unwrap();
+        if let FieldAttribute::Relation { fields, references, on_delete } = relation {
+            assert_eq!(fields, &vec!["id".to_string()]);
+            assert_eq!(references, &vec!["authorId".to_string()]);
+            assert_eq!(on_delete.as_deref(), Some("Cascade"));
+        } else {
+            panic!("Expected Relation attribute");
+        }
     }
 }

@@ -160,4 +160,26 @@ mod tests {
         let parsed = parse_git_args(&args).unwrap();
         assert_eq!(parsed, vec!["commit", "-m", "merge"]);
     }
+
+    #[test]
+    fn test_parse_git_args_merge_abort() {
+        // Current implementation injects strategy even for --abort
+        let args = vec!["merge".to_string(), "--abort".to_string()];
+        let parsed = parse_git_args(&args).unwrap();
+        assert_eq!(parsed, vec!["merge", "-s", "sqlitevfs", "--abort"]);
+    }
+
+    #[test]
+    fn test_parse_git_args_merge_continue() {
+        let args = vec!["merge".to_string(), "--continue".to_string()];
+        let parsed = parse_git_args(&args).unwrap();
+        assert_eq!(parsed, vec!["merge", "-s", "sqlitevfs", "--continue"]);
+    }
+
+    #[test]
+    fn test_parse_git_args_merge_squash() {
+        let args = vec!["merge".to_string(), "--squash".to_string(), "branch".to_string()];
+        let parsed = parse_git_args(&args).unwrap();
+        assert_eq!(parsed, vec!["merge", "-s", "sqlitevfs", "--squash", "branch"]);
+    }
 }

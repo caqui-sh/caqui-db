@@ -17,6 +17,16 @@ Simply write your schema, start the server, and instantly query your database vi
 
 ---
 
+## Concurrency & Performance Status
+
+The concurrency model of `caqui` is decentralized. Instead of scaling a single active database connection pool across thousands of parallel web requests, **each user/client operates on their own unique local copy of the repository and database.** 
+
+Users make changes in their isolated environments and push those changes to a remote repository, where the custom `git-merge-sqlitevfs` driver intelligently reconciles and merges the SQLite state globally.
+
+⚠️ **Note:** Full concurrent multi-writer support within a *single* local instance via the custom Git VFS is currently a **planned feature** and is not yet fully supported. While the local engine is configured with Write-Ahead Logging (WAL) and `busy_timeout` pragmas to handle contention gracefully, heavy parallel write operations on a single local database may still encounter locking limitations.
+
+---
+
 ## Getting Started
 
 `caqui` uses a single schema file (`schema.cq`) to define your database tables, relationships, and API security rules. The executable exposes four simple commands to manage your lifecycle:

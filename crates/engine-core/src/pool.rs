@@ -26,4 +26,29 @@ pub fn create_pool(path: &str) -> Pool {
         }))
         .build()
         .unwrap()
-}
+        }
+
+        #[cfg(test)]
+        mod tests {
+        use super::*;
+
+        #[tokio::test]
+        async fn test_register_custom_functions_uuid7() {
+        // Use an in-memory database for testing
+        let pool = create_pool("file::memory:?cache=shared");
+        let conn = pool.get().await.unwrap();
+
+        let uuid: String = conn.interact(|db| {
+            db.query_row("SELECT gen_uuid7()", [], |row| row.get(0))
+        }).await.unwrap().unwrap();
+
+        // Basic validation that it looks like a UUID
+        assert_eq!(uuid.len(), 36);
+        assert!(uuid.contains('-'));
+
+        // Verify version 7 (the 13th character should be '7')
+        // UUID format: xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx
+        // Version M is at index 14 (8+1+4+1)
+        assert_eq!(uuid.chars().nth(14).unwrap(), '7');
+        }
+        }

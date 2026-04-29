@@ -212,4 +212,92 @@ mod tests {
             "SELECT json_group_array(json_object('id', t0.id, 'posts', (SELECT json_group_array(json_object('id', t1.id, 'comments', (SELECT json_group_array(json_object('id', t2.id, 'body', t2.body)) FROM Comment AS t2 WHERE t2.post_id = t1.id))) FROM Post AS t1 WHERE t1.author_id = t0.id))) AS payload FROM User AS t0;"
         );
     }
+
+    #[test]
+    fn test_compile_scalar_array() {
+        let query = QueryNode {
+            target_model: "User".to_string(),
+            alias: "t0".to_string(),
+            selections: vec![
+                SelectField::Scalar("id".to_string()),
+                SelectField::ScalarArray("tags".to_string()),
+            ],
+            filters: None,
+            limit: None,
+        };
+        let sql = compile_select(&query, None);
+        assert_eq!(sql, "SELECT json_group_array(json_object('id', t0.id, 'tags', json(t0.tags))) AS payload FROM User AS t0;");
+    }
+
+    #[test]
+    fn test_compile_single_relation() {
+        let child_query = QueryNode {
+            target_model: "Profile".to_string(),
+            alias: "t1".to_string(),
+            selections: vec![
+                SelectField::Scalar("bio".to_string()),
+            ],
+            filters: None,
+            limit: None,
+        };
+        
+        let query = QueryNode {
+            target_model: "User".to_string(),
+            alias: "t0".to_string(),
+            selections: vec![
+                SelectField::Scalar("id".to_string()),
+                SelectField::Relation {
+                    field_name: "profile".to_string(),
+                    foreign_key: "user_id".to_string(),
+                    is_list: false,
+                    query: Box::new(child_query),
+                }
+            ],
+            filters: None,
+            limit: None,
+        };
+        let sql = compile_select(&query, None);
+        assert_eq!(
+            sql, 
+            "SELECT json_group_array(json_object('id', t0.id, 'profile', (SELECT json_object('bio', t1.bio) FROM Profile AS t1 WHERE t1.user_id = t0.id LIMIT 1))) AS payload FROM User AS t0;"
+        );
+    }
+
+    #[test]
+    fn test_compile_multi_fragment_polymorphic_union() {
+        let article_fragment = QueryNode {
+            target_model: "Article".to_string(),
+            alias: "t1".to_string(),
+            selections: vec![SelectField::Scalar("title".to_string())],
+            filters: None, limit: None,
+        };
+        let video_fragment = QueryNode {
+            target_model: "Video".to_string(),
+            alias: "t2".to_string(),
+            selections: vec![SelectField::Scalar("duration".to_string())],
+            filters: None, limit: None,
+        };
+        
+        let mut fragments = HashMap::new();
+        // Insert in reverse alphabetical to verify sorting
+        fragments.insert("Video".to_string(), video_fragment);
+        fragments.insert("Article".to_string(), article_fragment);
+        
+        let query = QueryNode {
+            target_model: "User".to_string(),
+            alias: "t0".to_string(),
+            selections: vec![
+                SelectField::PolymorphicUnion {
+                    field_name: "content".to_string(),
+                    target_fragments: fragments,
+                }
+            ],
+            filters: None,
+            limit: None,
+        };
+        let sql = compile_select(&query, None);
+        
+        // Assert sorting: Article (t1) should come before Video (t2)
+        assert!(sql.contains("WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.id = t0.content_id) WHEN 'Video' THEN (SELECT json_object('duration', t2.duration) FROM Video AS t2 WHERE t2.id = t0.content_id)"));
+    }
 }

@@ -53,6 +53,8 @@ The core binary orchestrates five distinct sub-systems in milliseconds upon boot
 `crates/engine-core`
 SQLite allows developers to override its low-level OS interface. Before any connections are opened, `caqui` bootstraps a custom VFS via C-FFI. This layer intercepts file locking, journaling, and memory mapping. By controlling the VFS, `caqui` ensures that asynchronous `Tokio` thread workers do not fatally collide with SQLite's synchronous C-locks.
 
+**Concurrency Note:** Full multi-writer concurrency support within this custom VFS is currently a **planned enhancement**. While we enforce `journal_mode=WAL` and `busy_timeout=5000` to maximize safety and throughput, the current VFS implementation is optimized for single-writer consistency. Deep concurrent write support is a priority for the next major phase of development.
+
 During connection pool bootstrapping (`deadpool-sqlite`), `caqui` also injects native Rust closures directly into the SQLite runtime. For example, `@default(uuid())` is handled by compiling a Rust `uuid::Uuid::now_v7()` generator closure into the database connection, exposing it natively inside SQL expressions.
 
 ### Phase 2: The Schema Parser and DSL Engine

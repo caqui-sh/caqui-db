@@ -149,4 +149,59 @@ mod tests {
         let files: Vec<_> = fs::read_dir(&migrations_dir).unwrap().filter_map(Result::ok).collect();
         assert_eq!(files.len(), 2); // 001_init.sql + <timestamp>_auto_migration.sql
     }
+
+    #[test]
+    fn test_db_push_workflow() {
+        let conn = Connection::open_in_memory().unwrap();
+        
+        // Initial state: One table
+        let desired_1 = vec![
+            PhysicalTable {
+                name: "User".to_string(),
+                columns: vec![
+                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
+                ],
+                indexes: vec![],
+                triggers: vec![],
+            }
+        ];
+        
+        db_push(&conn, &desired_1).unwrap();
+        
+        // Verify table exists
+        let table_names = fetch_live_tables(&conn).unwrap();
+        assert!(table_names.contains(&"User".to_string()));
+        
+        // Update state: Add column and add new table
+        let desired_2 = vec![
+            PhysicalTable {
+                name: "User".to_string(),
+                columns: vec![
+                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
+                    PhysicalColumn { name: "age".to_string(), sqlite_type: "INTEGER".to_string(), is_json_array: false },
+                ],
+                indexes: vec![],
+                triggers: vec![],
+            },
+            PhysicalTable {
+                name: "Post".to_string(),
+                columns: vec![
+                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
+                    PhysicalColumn { name: "title".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false },
+                ],
+                indexes: vec![],
+                triggers: vec![],
+            }
+        ];
+        
+        db_push(&conn, &desired_2).unwrap();
+        
+        // Verify User table was updated
+        let user_cols = introspect_table_columns(&conn, "User").unwrap();
+        assert!(user_cols.contains_key("age"));
+        
+        // Verify Post table was created
+        let table_names_final = fetch_live_tables(&conn).unwrap();
+        assert!(table_names_final.contains(&"Post".to_string()));
+    }
 }

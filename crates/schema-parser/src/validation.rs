@@ -155,4 +155,122 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().0, "Union 'MyUnion' references target 'Post' which does not exist.");
     }
+
+    #[test]
+    fn test_multiple_ids() {
+        let mut ast = SchemaAst {
+            models: HashMap::new(),
+            unions: HashMap::new(),
+        };
+        
+        ast.models.insert("User".to_string(), ModelNode {
+            name: "User".to_string(),
+            fields: vec![
+                FieldNode {
+                    name: "id1".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    attributes: vec![FieldAttribute::Id],
+                },
+                FieldNode {
+                    name: "id2".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    attributes: vec![FieldAttribute::Id],
+                }
+            ]
+        });
+        
+        let result = validate_schema(ast);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, "Model 'User' must have exactly one field with the '@id' attribute, found 2.");
+    }
+
+    #[test]
+    fn test_invalid_relation_target() {
+        let mut ast = SchemaAst {
+            models: HashMap::new(),
+            unions: HashMap::new(),
+        };
+        
+        ast.models.insert("Post".to_string(), ModelNode {
+            name: "Post".to_string(),
+            fields: vec![
+                FieldNode {
+                    name: "id".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    attributes: vec![FieldAttribute::Id],
+                },
+                FieldNode {
+                    name: "author".to_string(),
+                    field_type: AstFieldType::Relation("UnknownModel".to_string()),
+                    attributes: vec![],
+                }
+            ]
+        });
+        
+        let result = validate_schema(ast);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, "Field 'author' in model 'Post' references unknown type 'UnknownModel'.");
+    }
+
+    #[test]
+    fn test_unsupported_union_array() {
+        let mut ast = SchemaAst {
+            models: HashMap::new(),
+            unions: HashMap::new(),
+        };
+        
+        ast.models.insert("Query".to_string(), ModelNode {
+            name: "Query".to_string(),
+            fields: vec![
+                FieldNode {
+                    name: "id".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    attributes: vec![FieldAttribute::Id],
+                },
+                FieldNode {
+                    name: "results".to_string(),
+                    field_type: AstFieldType::RelationArray("SearchResult".to_string()),
+                    attributes: vec![],
+                }
+            ]
+        });
+        
+        ast.unions.insert("SearchResult".to_string(), vec![]);
+        
+        let result = validate_schema(ast);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, "Field 'results' in model 'Query' is an array of union 'SearchResult'. Array of unions is currently unsupported.");
+    }
+
+    #[test]
+    fn test_polymorphic_union_fixup() {
+        let mut ast = SchemaAst {
+            models: HashMap::new(),
+            unions: HashMap::new(),
+        };
+        
+        ast.models.insert("Post".to_string(), ModelNode {
+            name: "Post".to_string(),
+            fields: vec![
+                FieldNode {
+                    name: "id".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    attributes: vec![FieldAttribute::Id],
+                },
+                FieldNode {
+                    name: "result".to_string(),
+                    field_type: AstFieldType::Relation("SearchResult".to_string()),
+                    attributes: vec![],
+                }
+            ]
+        });
+        
+        ast.unions.insert("SearchResult".to_string(), vec!["Post".to_string()]);
+        
+        let validated_ast = validate_schema(ast).unwrap();
+        let post_model = validated_ast.models.get("Post").unwrap();
+        let result_field = post_model.fields.iter().find(|f| f.name == "result").unwrap();
+        
+        assert_eq!(result_field.field_type, AstFieldType::PolymorphicUnion("SearchResult".to_string()));
+    }
 }

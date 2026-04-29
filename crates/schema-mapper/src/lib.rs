@@ -198,4 +198,63 @@ mod tests {
         let age_col = table.columns.iter().find(|c| c.name == "age").unwrap();
         assert_eq!(age_col.sqlite_type, "INTEGER");
     }
+
+    #[test]
+    fn test_lower_ast_to_physical_advanced() {
+        let mut ast = SchemaAst {
+            models: HashMap::new(),
+            unions: HashMap::new(),
+        };
+        
+        ast.models.insert("Device".to_string(), ModelNode {
+            name: "Device".to_string(),
+            fields: vec![
+                FieldNode {
+                    name: "id".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)],
+                },
+                FieldNode {
+                    name: "serial".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    attributes: vec![FieldAttribute::Unique],
+                },
+                FieldNode {
+                    name: "updated_at".to_string(),
+                    field_type: AstFieldType::Scalar("DateTime".to_string()),
+                    attributes: vec![FieldAttribute::UpdatedAt],
+                },
+            ]
+        });
+
+        ast.models.insert("Counter".to_string(), ModelNode {
+            name: "Counter".to_string(),
+            fields: vec![
+                FieldNode {
+                    name: "id".to_string(),
+                    field_type: AstFieldType::Scalar("Int".to_string()),
+                    attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::AutoIncrement)],
+                },
+            ]
+        });
+        
+        let tables = lower_ast_to_physical(&ast);
+        assert_eq!(tables.len(), 2);
+        
+        let device = tables.iter().find(|t| t.name == "Device").unwrap();
+        let id_col = device.columns.iter().find(|c| c.name == "id").unwrap();
+        assert_eq!(id_col.sqlite_type, "TEXT PRIMARY KEY DEFAULT (gen_uuid7())");
+        
+        assert_eq!(device.indexes.len(), 1);
+        assert_eq!(device.indexes[0].name, "idx_Device_serial");
+        assert!(device.indexes[0].unique);
+        
+        assert_eq!(device.triggers.len(), 1);
+        assert!(device.triggers[0].name.contains("trg_update_Device_updated_at"));
+        assert!(device.triggers[0].sql.contains("CREATE TRIGGER"));
+
+        let counter = tables.iter().find(|t| t.name == "Counter").unwrap();
+        let c_id_col = counter.columns.iter().find(|c| c.name == "id").unwrap();
+        assert_eq!(c_id_col.sqlite_type, "INTEGER PRIMARY KEY AUTOINCREMENT");
+    }
 }

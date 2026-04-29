@@ -105,8 +105,11 @@ mod tests {
             fields: vec![
                 FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
                 FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
+                FieldNode { name: "tags".to_string(), field_type: AstFieldType::ScalarArray("String".to_string()), attributes: vec![] },
                 FieldNode { name: "password".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![FieldAttribute::Ignore] },
                 FieldNode { name: "posts".to_string(), field_type: AstFieldType::RelationArray("Post".to_string()), attributes: vec![] },
+                FieldNode { name: "profile".to_string(), field_type: AstFieldType::Relation("Profile".to_string()), attributes: vec![] },
+                FieldNode { name: "content".to_string(), field_type: AstFieldType::PolymorphicUnion("SearchContent".to_string()), attributes: vec![] },
             ]
         });
 
@@ -117,6 +120,15 @@ mod tests {
                 FieldNode { name: "title".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
             ]
         });
+
+        ast.models.insert("Profile".to_string(), ModelNode {
+            name: "Profile".to_string(),
+            fields: vec![
+                FieldNode { name: "bio".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
+            ]
+        });
+
+        ast.unions.insert("SearchContent".to_string(), vec!["Post".to_string(), "User".to_string()]);
 
         ast
     }
@@ -153,6 +165,97 @@ mod tests {
         } else {
             panic!("Expected Relation");
         }
+    }
+
+    #[test]
+    fn test_hydrate_polymorphic_union() {
+        let ast = mock_ast();
+        let payload = json!({
+            "select": {
+                "content": {
+                    "Post": { "select": { "title": true } },
+                    "User": { "select": { "name": true } }
+                }
+            }
+        });
+        let mut alias_counter = 0;
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        
+        let union_field = ir.selections.iter().find(|s| matches!(s, SelectField::PolymorphicUnion { .. })).unwrap();
+        if let SelectField::PolymorphicUnion { field_name, target_fragments } = union_field {
+            assert_eq!(field_name, "content");
+            assert_eq!(target_fragments.len(), 2);
+            assert!(target_fragments.contains_key("Post"));
+            assert!(target_fragments.contains_key("User"));
+        } else {
+            panic!("Expected PolymorphicUnion");
+        }
+    }
+
+    #[test]
+    fn test_hydrate_polymorphic_union_invalid_target() {
+        let ast = mock_ast();
+        let payload = json!({
+            "select": {
+                "content": {
+                    "UnknownModel": { "select": { "id": true } }
+                }
+            }
+        });
+        let mut alias_counter = 0;
+        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap_err();
+        assert!(err.contains("Invalid union target 'UnknownModel'"));
+    }
+
+    #[test]
+    fn test_hydrate_limit_parsed() {
+        let ast = mock_ast();
+        let payload = json!({
+            "select": { "id": true },
+            "limit": 10
+        });
+        let mut alias_counter = 0;
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        assert_eq!(ir.limit, Some(10));
+    }
+
+    #[test]
+    fn test_hydrate_single_relation() {
+        let ast = mock_ast();
+        let payload = json!({
+            "select": {
+                "profile": { "select": { "bio": true } }
+            }
+        });
+        let mut alias_counter = 0;
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        
+        let relation = ir.selections.first().unwrap();
+        if let SelectField::Relation { is_list, .. } = relation {
+            assert!(!*is_list);
+        } else {
+            panic!("Expected Relation");
+        }
+    }
+
+    #[test]
+    fn test_hydrate_scalar_array() {
+        let ast = mock_ast();
+        let payload = json!({
+            "select": { "tags": true }
+        });
+        let mut alias_counter = 0;
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        assert!(matches!(ir.selections[0], SelectField::ScalarArray(_)));
+    }
+
+    #[test]
+    fn test_hydrate_missing_select_block() {
+        let ast = mock_ast();
+        let payload = json!({ "not_select": {} });
+        let mut alias_counter = 0;
+        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap_err();
+        assert!(err.contains("Missing 'select' projection block"));
     }
 
     #[test]

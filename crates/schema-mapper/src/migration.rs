@@ -77,7 +77,7 @@ pub fn generate_sql(op: &MigrationOp) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PhysicalColumn;
+    use crate::{PhysicalColumn, PhysicalIndex, PhysicalTrigger};
 
     #[test]
     fn test_generate_create_table_sql() {
@@ -124,5 +124,45 @@ mod tests {
         assert!(sql.contains("INSERT INTO _engine_new_User (id, age) SELECT id, age FROM User;"));
         assert!(sql.contains("DROP TABLE User;"));
         assert!(sql.contains("ALTER TABLE _engine_new_User RENAME TO User;"));
+    }
+
+    #[test]
+    fn test_generate_sql_drop_table() {
+        let op = MigrationOp::DropTable { name: "OldTable".to_string() };
+        let sql = generate_sql(&op);
+        assert_eq!(sql, "DROP TABLE OldTable;\n");
+    }
+
+    #[test]
+    fn test_generate_sql_create_index() {
+        let op = MigrationOp::CreateIndex { 
+            table: "User".to_string(), 
+            columns: vec!["email".to_string()], 
+            unique: true 
+        };
+        let sql = generate_sql(&op);
+        assert_eq!(sql, "CREATE UNIQUE INDEX idx_User_email ON User (email);\n");
+    }
+
+    #[test]
+    fn test_generate_create_table_with_auxiliary() {
+        let table = PhysicalTable {
+            name: "Device".to_string(),
+            columns: vec![
+                PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
+            ],
+            indexes: vec![
+                PhysicalIndex { name: "idx_Device_id".to_string(), columns: vec!["id".to_string()], unique: true }
+            ],
+            triggers: vec![
+                PhysicalTrigger { name: "trg_test".to_string(), sql: "CREATE TRIGGER trg_test AFTER INSERT ON Device BEGIN SELECT 1; END;".to_string() }
+            ],
+        };
+        let op = MigrationOp::CreateTable { table };
+        let sql = generate_sql(&op);
+        
+        assert!(sql.contains("CREATE TABLE Device"));
+        assert!(sql.contains("CREATE UNIQUE INDEX idx_Device_id ON Device (id);"));
+        assert!(sql.contains("CREATE TRIGGER trg_test"));
     }
 }
