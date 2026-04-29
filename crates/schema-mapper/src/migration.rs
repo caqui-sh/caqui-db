@@ -119,11 +119,20 @@ mod tests {
         let op = MigrationOp::RebuildTable { table, live_cols };
         let sql = generate_sql(&op);
         
-        assert!(sql.contains("PRAGMA foreign_keys=OFF;"));
-        assert!(sql.contains("CREATE TABLE _engine_new_User"));
-        assert!(sql.contains("INSERT INTO _engine_new_User (id, age) SELECT id, age FROM User;"));
-        assert!(sql.contains("DROP TABLE User;"));
-        assert!(sql.contains("ALTER TABLE _engine_new_User RENAME TO User;"));
+        let expected_sql = "PRAGMA foreign_keys=OFF;\n\
+                            BEGIN TRANSACTION;\n\
+                            CREATE TABLE _engine_new_User (\n    \
+                                id TEXT PRIMARY KEY,\n    \
+                                age TEXT\n\
+                            );\n\
+                            INSERT INTO _engine_new_User (id, age) SELECT id, age FROM User;\n\
+                            DROP TABLE User;\n\
+                            ALTER TABLE _engine_new_User RENAME TO User;\n\
+                            PRAGMA foreign_key_check;\n\
+                            COMMIT;\n\
+                            PRAGMA foreign_keys=ON;\n";
+        
+        assert_eq!(sql, expected_sql);
     }
 
     #[test]

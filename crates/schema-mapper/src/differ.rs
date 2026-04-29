@@ -168,4 +168,27 @@ mod tests {
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], MigrationOp::DropTable { name } if name == "User"));
     }
+
+    #[test]
+    fn test_compute_diff_no_op() {
+        let desired = vec![
+            PhysicalTable {
+                name: "User".to_string(),
+                columns: vec![
+                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
+                ],
+                indexes: vec![],
+                triggers: vec![],
+            }
+        ];
+        
+        let mut live = HashMap::new();
+        let mut live_cols = HashMap::new();
+        live_cols.insert("id".to_string(), LiveColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: true });
+        live.insert("User".to_string(), LiveTable { name: "User".to_string(), columns: live_cols });
+        
+        let ops = compute_diff(&desired, &live);
+        
+        assert!(ops.is_empty(), "Differ should be idempotent and return empty ops for identical schemas");
+    }
 }

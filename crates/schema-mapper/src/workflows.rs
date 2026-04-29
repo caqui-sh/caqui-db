@@ -204,4 +204,46 @@ mod tests {
         let table_names_final = fetch_live_tables(&conn).unwrap();
         assert!(table_names_final.contains(&"Post".to_string()));
     }
+
+    #[test]
+    fn test_migrate_dev_no_changes() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("app.db");
+        let migrations_dir = dir.path().join("migrations");
+        
+        // Create an initial legacy migration
+        fs::create_dir_all(&migrations_dir).unwrap();
+        let old_migration = migrations_dir.join("001_init.sql");
+        fs::write(
+            &old_migration, 
+            "CREATE TABLE User (id TEXT PRIMARY KEY, name TEXT);"
+        ).unwrap();
+
+        // The developer's desired AST perfectly matches the historical state
+        let desired = vec![
+            PhysicalTable {
+                name: "User".to_string(),
+                columns: vec![
+                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false },
+                    PhysicalColumn { name: "name".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false },
+                ],
+                indexes: vec![],
+                triggers: vec![],
+            }
+        ];
+
+        // Initialize live database with old schema
+        let live_conn = Connection::open(&db_path).unwrap();
+        live_conn.execute("CREATE TABLE User (id TEXT PRIMARY KEY, name TEXT);", []).unwrap();
+
+        // Run the workflow
+        let generated_sql = migrate_dev(&desired, db_path.to_str().unwrap(), migrations_dir.to_str().unwrap()).unwrap();
+        
+        // Ensure no SQL was generated (early exit path taken)
+        assert!(generated_sql.is_none());
+        
+        // Ensure no new migration file was written
+        let files: Vec<_> = fs::read_dir(&migrations_dir).unwrap().filter_map(Result::ok).collect();
+        assert_eq!(files.len(), 1, "Expected only the 001_init.sql to exist");
+    }
 }
