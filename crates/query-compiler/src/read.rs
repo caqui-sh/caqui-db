@@ -287,6 +287,7 @@ mod tests {
             target_model: "User".to_string(),
             alias: "t0".to_string(),
             selections: vec![
+                SelectField::Scalar("id".to_string()),
                 SelectField::PolymorphicUnion {
                     field_name: "content".to_string(),
                     target_fragments: fragments,
@@ -297,7 +298,9 @@ mod tests {
         };
         let sql = compile_select(&query, None);
         
-        // Assert sorting: Article (t1) should come before Video (t2)
-        assert!(sql.contains("WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.id = t0.content_id) WHEN 'Video' THEN (SELECT json_object('duration', t2.duration) FROM Video AS t2 WHERE t2.id = t0.content_id)"));
+        assert_eq!(
+            sql,
+            "SELECT json_group_array(json_object('id', t0.id, 'content', CASE t0.content_type WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.id = t0.content_id) WHEN 'Video' THEN (SELECT json_object('duration', t2.duration) FROM Video AS t2 WHERE t2.id = t0.content_id) ELSE NULL END)) AS payload FROM User AS t0;"
+        );
     }
 }
