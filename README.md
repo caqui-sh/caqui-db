@@ -42,11 +42,11 @@ The safe, historical deployment workflow. This command reads your `schema.cq`, c
 caqui migrate-dev
 ```
 
-### 4. Start the API Server (`caqui start`)
+### 4. Start the API Server (`caqui api start`)
 Starts the database connection pool and mounts the universal dynamic execution router to `http://0.0.0.0:4000`.
 
 ```bash
-caqui start
+caqui api start
 ```
 
 ---
@@ -143,4 +143,4 @@ curl -X POST http://localhost:4000/api/v1/query \
   }'
 ```
 
-If your schema is valid, `caqui` returns exactly what you asked for, fully formatted as a JSON graph.
+If your schema is valid, `caqui` returns exactly what you asked for, fully formatted as a JSON graph.graph.

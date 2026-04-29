@@ -41,7 +41,7 @@ Execute the following commands from the root directory:
   The safe deployment workflow. Invokes `cargo run --release --bin caqui -- migrate-dev`. Boots a transient, ephemeral "Shadow Database" in memory. It plays the existing `/migrations/*.sql` history files, diffs the historical state against your current `schema.cq`, and writes an automated `_auto_migration.sql` file safely to disk before executing it on your live database.
 
 - **`cargo start`**
-  Initializes the engine. Invokes `cargo run --release --bin caqui -- start`. Bootstraps the custom Virtual File System (VFS), creates the SQLite connection pool, and mounts the universal dynamic execution router to `http://0.0.0.0:4000`.
+  Initializes the engine. Invokes `cargo run --release --bin caqui -- api start`. Bootstraps the custom Virtual File System (VFS), creates the SQLite connection pool, and mounts the universal dynamic execution router to `http://0.0.0.0:4000`.
 
 ---
 
@@ -81,4 +81,4 @@ Built heavily on `Axum` and `Tokio`.
 Incoming dynamic HTTP JSON payloads are evaluated Just-In-Time (JIT) against the AST. If a user requests a field that doesn't exist, the router returns a fast $O(1)$ Hash Map rejection. 
 It acts as a physical barrier implementing the **Security Interceptor**—if a user requests a column tagged with `@ignore` (like password hashes), the API layer throws a Security Exception before the SQL query is even compiled, ensuring absolute boundary protection.
 
-When validated, the payload is compiled by Phase 4, thrown into the thread-safe `deadpool-sqlite` background worker pool via `.interact()` (to prevent starving `Tokio` async workers), and the returned JSON bytes are pushed out to the HTTP client natively.
+When validated, the payload is compiled by Phase 4, thrown into the thread-safe `deadpool-sqlite` background worker pool via `.interact()` (to prevent starving `Tokio` async workers), and the returned JSON bytes are pushed out to the HTTP client natively.ly.

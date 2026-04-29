@@ -15,9 +15,27 @@ struct Cli {
 #[command(rename_all = "kebab-case")]
 enum Commands {
     Init,
-    Start,
+    Schema {
+        #[command(subcommand)]
+        command: SchemaCommands,
+    },
+    Api {
+        #[command(subcommand)]
+        command: ApiCommands,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum SchemaCommands {
     DbPush,
     MigrateDev,
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum ApiCommands {
+    Start,
 }
 
 #[tokio::main]
@@ -45,7 +63,7 @@ union SearchResult = User | Post
 "#;
             std::fs::write("schema.cq", default_schema).unwrap();
             println!("SUCCESS: Created default schema.cq!");
-            println!("Next steps: run `caqui db-push` or `caqui migrate-dev` to apply the schema.");
+            println!("Next steps: run `caqui schema db-push` or `caqui schema migrate-dev` to apply the schema.");
         }
         return;
     }
@@ -62,33 +80,37 @@ union SearchResult = User | Post
 
     match cli.command {
         Commands::Init => unreachable!(),
-        Commands::DbPush => {
-            // Phase 3: Push non-destructive Schema Diffs directly to SQLite
-            let desired_ir = schema_mapper::lower_ast_to_physical(&desired_ast);
-            let conn = rusqlite::Connection::open("file:app.db?vfs=git").unwrap();
-            
-            workflows::db_push(&conn, &desired_ir).unwrap();
-            println!("SUCCESS: Database schema synced.");
-        }
-        Commands::MigrateDev => {
-            // Phase 3: Spawn Shadow Database, Introspect, and generate safe .sql files
-            let desired_ir = schema_mapper::lower_ast_to_physical(&desired_ast);
-            workflows::migrate_dev(&desired_ir, "file:app.db?vfs=git", "migrations").unwrap();
-            println!("SUCCESS: Database migrations generated and synced.");
-        }
-        Commands::Start => {
-            // Phase 5: Build Global Application State
-            let state = EngineState {
-                db_pool,
-                ast: Arc::new(desired_ast),
-            };
+        Commands::Schema { command } => match command {
+            SchemaCommands::DbPush => {
+                // Phase 3: Push non-destructive Schema Diffs directly to SQLite
+                let desired_ir = schema_mapper::lower_ast_to_physical(&desired_ast);
+                let conn = rusqlite::Connection::open("file:app.db?vfs=git").unwrap();
+                
+                workflows::db_push(&conn, &desired_ir).unwrap();
+                println!("SUCCESS: Database schema synced.");
+            }
+            SchemaCommands::MigrateDev => {
+                // Phase 3: Spawn Shadow Database, Introspect, and generate safe .sql files
+                let desired_ir = schema_mapper::lower_ast_to_physical(&desired_ast);
+                workflows::migrate_dev(&desired_ir, "file:app.db?vfs=git", "migrations").unwrap();
+                println!("SUCCESS: Database migrations generated and synced.");
+            }
+        },
+        Commands::Api { command } => match command {
+            ApiCommands::Start => {
+                // Phase 5: Build Global Application State
+                let state = EngineState {
+                    db_pool,
+                    ast: Arc::new(desired_ast),
+                };
 
-            // Phase 5: Mount Dynamic API and Bind to Port
-            let app_router = router::build_dynamic_router(state);
-            let listener = tokio::net::TcpListener::bind("0.0.0.0:4000").await.unwrap();
-            
-            println!("SUCCESS: Unified Engine running on http://0.0.0.0:4000/api/v1/query");
-            axum::serve(listener, app_router).await.unwrap();
+                // Phase 5: Mount Dynamic API and Bind to Port
+                let app_router = router::build_dynamic_router(state);
+                let listener = tokio::net::TcpListener::bind("0.0.0.0:4000").await.unwrap();
+                
+                println!("SUCCESS: Unified Engine running on http://0.0.0.0:4000/api/v1/query");
+                axum::serve(listener, app_router).await.unwrap();
+            }
         }
     }
 }
