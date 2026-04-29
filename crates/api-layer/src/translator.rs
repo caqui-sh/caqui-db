@@ -1,6 +1,109 @@
 use serde_json::Value;
-use query_compiler::ir::{QueryNode, SelectField};
-use schema_parser::ast::{SchemaAst, AstFieldType, FieldAttribute};
+use query_compiler::ir::{QueryNode, SelectField, WhereClause, WhereCondition};
+use schema_parser::ast::{SchemaAst, AstFieldType, FieldAttribute, ModelNode};
+
+fn val_to_string(val: &Value) -> String {
+    if let Some(s) = val.as_str() {
+        s.to_string()
+    } else if let Some(n) = val.as_number() {
+        n.to_string()
+    } else if let Some(b) = val.as_bool() {
+        b.to_string()
+    } else {
+        "".to_string()
+    }
+}
+
+fn parse_where_condition(val: &Value) -> Result<WhereCondition, String> {
+    if let Some(s) = val.as_str() {
+        return Ok(WhereCondition::Eq(s.to_string()));
+    }
+    if let Some(n) = val.as_number() {
+        return Ok(WhereCondition::Eq(n.to_string()));
+    }
+    if let Some(b) = val.as_bool() {
+        return Ok(WhereCondition::Eq(if b { "true".to_string() } else { "false".to_string() }));
+    }
+    if let Some(obj) = val.as_object() {
+        if let Some(eq) = obj.get("eq") {
+            return Ok(WhereCondition::Eq(val_to_string(eq)));
+        }
+        if let Some(neq) = obj.get("notEq") {
+            return Ok(WhereCondition::NotEq(val_to_string(neq)));
+        }
+        if let Some(gt) = obj.get("gt") {
+            return Ok(WhereCondition::Gt(val_to_string(gt)));
+        }
+        if let Some(gte) = obj.get("gte") {
+            return Ok(WhereCondition::Gte(val_to_string(gte)));
+        }
+        if let Some(lt) = obj.get("lt") {
+            return Ok(WhereCondition::Lt(val_to_string(lt)));
+        }
+        if let Some(lte) = obj.get("lte") {
+            return Ok(WhereCondition::Lte(val_to_string(lte)));
+        }
+        if let Some(in_vals) = obj.get("in").and_then(|v| v.as_array()) {
+            let vals: Vec<String> = in_vals.iter()
+                .map(|v| val_to_string(v))
+                .collect();
+            return Ok(WhereCondition::In(vals));
+        }
+    }
+    Err("Invalid where condition format".to_string())
+}
+
+fn parse_where_clause(where_obj: &serde_json::Map<String, Value>, model_def: &ModelNode) -> Result<WhereClause, String> {
+    let mut clauses = Vec::new();
+
+    for (k, v) in where_obj {
+        if k == "AND" {
+            if let Some(arr) = v.as_array() {
+                let mut and_clauses = Vec::new();
+                for item in arr {
+                    if let Some(obj) = item.as_object() {
+                        and_clauses.push(parse_where_clause(obj, model_def)?);
+                    }
+                }
+                clauses.push(WhereClause::And(and_clauses));
+            }
+            continue;
+        }
+        if k == "OR" {
+            if let Some(arr) = v.as_array() {
+                let mut or_clauses = Vec::new();
+                for item in arr {
+                    if let Some(obj) = item.as_object() {
+                        or_clauses.push(parse_where_clause(obj, model_def)?);
+                    }
+                }
+                clauses.push(WhereClause::Or(or_clauses));
+            }
+            continue;
+        }
+
+        // Validate field exists and isn't ignored
+        let field_def = model_def.fields.iter().find(|f| &f.name == k)
+            .ok_or_else(|| format!("Invalid field '{}' in where clause for model '{}'.", k, model_def.name))?;
+
+        if field_def.attributes.iter().any(|a| matches!(a, FieldAttribute::Ignore)) {
+            return Err(format!("Security Exception: Prohibited filter on ignored field '{}'", k));
+        }
+
+        let cond = parse_where_condition(v)?;
+        clauses.push(WhereClause::Field(k.clone(), cond));
+    }
+
+    if clauses.is_empty() {
+        return Err("Empty where clause".to_string());
+    }
+
+    if clauses.len() == 1 {
+        Ok(clauses.remove(0))
+    } else {
+        Ok(WhereClause::And(clauses))
+    }
+}
 
 pub fn hydrate_payload_to_ir(
     ast: &SchemaAst,
@@ -79,12 +182,23 @@ pub fn hydrate_payload_to_ir(
         }
     }
 
+    let filters = if let Some(where_obj) = payload.get("where").and_then(|v| v.as_object()) {
+        if where_obj.is_empty() {
+            None
+        } else {
+            Some(parse_where_clause(where_obj, model_def)?)
+        }
+    } else {
+        None
+    };
+
     Ok(QueryNode {
         target_model: model_name.to_string(),
         alias: current_alias,
         selections,
-        filters: None, // Where-clause parsing & AST validation mapped similarly here
+        filters,
         limit: payload.get("limit").and_then(|l| l.as_u64()).map(|l| l as usize),
+        offset: payload.get("skip").and_then(|l| l.as_u64()).map(|l| l as usize),
     })
 }
 
@@ -355,5 +469,43 @@ mod tests {
         
         let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap_err();
         assert!(err.contains("Security Exception: Prohibited access to ignored field 'password'"));
+    }
+
+    #[test]
+    fn test_hydrate_pagination_and_filtering() {
+        let ast = mock_ast();
+        let payload = json!({
+            "select": { "id": true },
+            "limit": 10,
+            "skip": 20,
+            "where": {
+                "AND": [
+                    { "name": { "eq": "Alice" } },
+                    { "OR": [
+                        { "tags": { "in": ["rust", "db"] } }
+                    ]}
+                ]
+            }
+        });
+        
+        let mut alias_counter = 0;
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        
+        assert_eq!(ir.limit, Some(10));
+        assert_eq!(ir.offset, Some(20));
+        
+        if let Some(WhereClause::And(clauses)) = ir.filters {
+            assert_eq!(clauses.len(), 2);
+            assert_eq!(clauses[0], WhereClause::Field("name".to_string(), WhereCondition::Eq("Alice".to_string())));
+            
+            if let WhereClause::Or(or_clauses) = &clauses[1] {
+                assert_eq!(or_clauses.len(), 1);
+                assert_eq!(or_clauses[0], WhereClause::Field("tags".to_string(), WhereCondition::In(vec!["rust".to_string(), "db".to_string()])));
+            } else {
+                panic!("Expected OR clause");
+            }
+        } else {
+            panic!("Expected AND where clause");
+        }
     }
 }

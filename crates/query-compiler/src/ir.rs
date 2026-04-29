@@ -7,6 +7,7 @@ pub struct QueryNode {
     pub selections: Vec<SelectField>,
     pub filters: Option<WhereClause>,
     pub limit: Option<usize>,
+    pub offset: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,9 +30,20 @@ pub enum SelectField {
     }
 }
 
-// WhereClause AST definitions stubbed out for Phase 4
+#[derive(Debug, Clone, PartialEq)]
+pub enum WhereCondition {
+    Eq(String),
+    NotEq(String),
+    Gt(String),
+    Gte(String),
+    Lt(String),
+    Lte(String),
+    In(Vec<String>),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum WhereClause {
-    Eq(String, String),
-    // ...
+    And(Vec<WhereClause>),
+    Or(Vec<WhereClause>),
+    Field(String, WhereCondition),
 }

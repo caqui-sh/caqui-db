@@ -1,4 +1,32 @@
-use crate::ir::{QueryNode, SelectField};
+use crate::ir::{QueryNode, SelectField, WhereClause, WhereCondition};
+
+pub fn compile_where_clause(clause: &WhereClause, alias: &str) -> String {
+    match clause {
+        WhereClause::And(clauses) => {
+            let compiled: Vec<_> = clauses.iter().map(|c| compile_where_clause(c, alias)).collect();
+            format!("({})", compiled.join(" AND "))
+        }
+        WhereClause::Or(clauses) => {
+            let compiled: Vec<_> = clauses.iter().map(|c| compile_where_clause(c, alias)).collect();
+            format!("({})", compiled.join(" OR "))
+        }
+        WhereClause::Field(field, condition) => {
+            let col = format!("{}.{}", alias, field);
+            match condition {
+                WhereCondition::Eq(v) => format!("{} = '{}'", col, v.replace('\'', "''")),
+                WhereCondition::NotEq(v) => format!("{} != '{}'", col, v.replace('\'', "''")),
+                WhereCondition::Gt(v) => format!("{} > '{}'", col, v.replace('\'', "''")),
+                WhereCondition::Gte(v) => format!("{} >= '{}'", col, v.replace('\'', "''")),
+                WhereCondition::Lt(v) => format!("{} < '{}'", col, v.replace('\'', "''")),
+                WhereCondition::Lte(v) => format!("{} <= '{}'", col, v.replace('\'', "''")),
+                WhereCondition::In(vals) => {
+                    let escaped: Vec<_> = vals.iter().map(|v| format!("'{}'", v.replace('\'', "''"))).collect();
+                    format!("{} IN ({})", col, escaped.join(", "))
+                }
+            }
+        }
+    }
+}
 
 pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> String {
     let mut json_pairs = Vec::new();
@@ -18,12 +46,30 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                 // The Recursive N+1 Neutralizer: Correlated Subquery with JSON aggregation
                 let child_json_obj = compile_select(query, Some((&node.alias, foreign_key)));
                 
-                let subquery = if *is_list {
-                    format!("(SELECT json_group_array({}) FROM {} AS {} WHERE {}.{} = {}.id)",
-                        child_json_obj, query.target_model, query.alias, query.alias, foreign_key, node.alias)
+                let mut where_conds = vec![format!("{}.{} = {}.id", query.alias, foreign_key, node.alias)];
+                if let Some(filters) = &query.filters {
+                    where_conds.push(compile_where_clause(filters, &query.alias));
+                }
+                let where_str = where_conds.join(" AND ");
+
+                let mut limit_offset = String::new();
+                if *is_list {
+                    if let Some(l) = query.limit {
+                        limit_offset.push_str(&format!(" LIMIT {}", l));
+                    }
                 } else {
-                    format!("(SELECT {} FROM {} AS {} WHERE {}.{} = {}.id LIMIT 1)",
-                        child_json_obj, query.target_model, query.alias, query.alias, foreign_key, node.alias)
+                    limit_offset.push_str(" LIMIT 1");
+                }
+                if let Some(o) = query.offset {
+                    limit_offset.push_str(&format!(" OFFSET {}", o));
+                }
+                
+                let subquery = if *is_list {
+                    format!("(SELECT json_group_array({}) FROM {} AS {} WHERE {}{})",
+                        child_json_obj, query.target_model, query.alias, where_str, limit_offset)
+                } else {
+                    format!("(SELECT {} FROM {} AS {} WHERE {}{})",
+                        child_json_obj, query.target_model, query.alias, where_str, limit_offset)
                 };
                 
                 json_pairs.push(format!("'{}', {}", field_name, subquery));
@@ -42,13 +88,20 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                 for model_name in fragment_keys {
                     let fragment_node = target_fragments.get(model_name).unwrap();
                     let sub_obj = compile_select(fragment_node, Some((&node.alias, &id_col)));
+                    
+                    let mut where_conds = vec![format!("{}.id = {}", fragment_node.alias, id_col)];
+                    if let Some(filters) = &fragment_node.filters {
+                        where_conds.push(compile_where_clause(filters, &fragment_node.alias));
+                    }
+                    let where_str = where_conds.join(" AND ");
+
                     case_statements.push(format!(
-                        "WHEN '{}' THEN (SELECT {} FROM {} AS {} WHERE {}.id = {})",
+                        "WHEN '{}' THEN (SELECT {} FROM {} AS {} WHERE {})",
                         model_name,          // e.g., 'Article'
                         sub_obj,             // e.g., json_object('title', t1.title, '__typename', 'Article')
                         model_name,          // Target table
                         fragment_node.alias, // Child table alias
-                        fragment_node.alias, id_col
+                        where_str
                     ));
                 }
                 
@@ -61,8 +114,23 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
     let json_obj = format!("json_object({})", json_pairs.join(", "));
     
     if parent_ref.is_none() {
+        let mut root_where = String::new();
+        if let Some(filters) = &node.filters {
+            root_where = format!(" WHERE {}", compile_where_clause(filters, &node.alias));
+        }
+        
+        let mut limit_clause = String::new();
+        if let Some(l) = node.limit {
+            limit_clause = format!(" LIMIT {}", l);
+        }
+        
+        let mut offset_clause = String::new();
+        if let Some(o) = node.offset {
+            offset_clause = format!(" OFFSET {}", o);
+        }
+
         // Root query: Wrap execution in a final SELECT returning a JSON array
-        format!("SELECT json_group_array({}) AS payload FROM {} AS {};", json_obj, node.target_model, node.alias)
+        format!("SELECT json_group_array({}) AS payload FROM {} AS {}{}{}{};", json_obj, node.target_model, node.alias, root_where, limit_clause, offset_clause)
     } else {
         // Child query: Return inner object formulation for subquery injection
         json_obj
@@ -85,6 +153,7 @@ mod tests {
             ],
             filters: None,
             limit: None,
+            offset: None,
         };
         let sql = compile_select(&query, None);
         assert_eq!(sql, "SELECT json_group_array(json_object('id', t0.id, 'name', t0.name)) AS payload FROM User AS t0;");
@@ -101,6 +170,7 @@ mod tests {
             ],
             filters: None,
             limit: None,
+            offset: None,
         };
         
         let query = QueryNode {
@@ -117,6 +187,7 @@ mod tests {
             ],
             filters: None,
             limit: None,
+            offset: None,
         };
         let sql = compile_select(&query, None);
         assert_eq!(
@@ -136,6 +207,7 @@ mod tests {
             ],
             filters: None,
             limit: None,
+            offset: None,
         };
         
         let mut fragments = HashMap::new();
@@ -153,6 +225,7 @@ mod tests {
             ],
             filters: None,
             limit: None,
+            offset: None,
         };
         let sql = compile_select(&query, None);
         assert_eq!(
@@ -172,6 +245,7 @@ mod tests {
             ],
             filters: None,
             limit: None,
+            offset: None,
         };
         
         let posts_query = QueryNode {
@@ -188,6 +262,7 @@ mod tests {
             ],
             filters: None,
             limit: None,
+            offset: None,
         };
         
         let user_query = QueryNode {
@@ -204,6 +279,7 @@ mod tests {
             ],
             filters: None,
             limit: None,
+            offset: None,
         };
         
         let sql = compile_select(&user_query, None);
@@ -224,6 +300,7 @@ mod tests {
             ],
             filters: None,
             limit: None,
+            offset: None,
         };
         let sql = compile_select(&query, None);
         assert_eq!(sql, "SELECT json_group_array(json_object('id', t0.id, 'tags', json(t0.tags))) AS payload FROM User AS t0;");
@@ -239,6 +316,7 @@ mod tests {
             ],
             filters: None,
             limit: None,
+            offset: None,
         };
         
         let query = QueryNode {
@@ -255,6 +333,7 @@ mod tests {
             ],
             filters: None,
             limit: None,
+            offset: None,
         };
         let sql = compile_select(&query, None);
         assert_eq!(
@@ -269,13 +348,13 @@ mod tests {
             target_model: "Article".to_string(),
             alias: "t1".to_string(),
             selections: vec![SelectField::Scalar("title".to_string())],
-            filters: None, limit: None,
+            filters: None, limit: None, offset: None,
         };
         let video_fragment = QueryNode {
             target_model: "Video".to_string(),
             alias: "t2".to_string(),
             selections: vec![SelectField::Scalar("duration".to_string())],
-            filters: None, limit: None,
+            filters: None, limit: None, offset: None,
         };
         
         let mut fragments = HashMap::new();
@@ -295,12 +374,47 @@ mod tests {
             ],
             filters: None,
             limit: None,
+            offset: None,
         };
         let sql = compile_select(&query, None);
         
         assert_eq!(
             sql,
             "SELECT json_group_array(json_object('id', t0.id, 'content', CASE t0.content_type WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.id = t0.content_id) WHEN 'Video' THEN (SELECT json_object('duration', t2.duration) FROM Video AS t2 WHERE t2.id = t0.content_id) ELSE NULL END)) AS payload FROM User AS t0;"
+        );
+    }
+
+    #[test]
+    fn test_compile_pagination_and_filtering() {
+        let query = QueryNode {
+            target_model: "User".to_string(),
+            alias: "t0".to_string(),
+            selections: vec![SelectField::Scalar("id".to_string())],
+            filters: Some(WhereClause::Field("name".to_string(), WhereCondition::Eq("Alice".to_string()))),
+            limit: Some(10),
+            offset: Some(5),
+        };
+        let sql = compile_select(&query, None);
+        assert_eq!(
+            sql,
+            "SELECT json_group_array(json_object('id', t0.id)) AS payload FROM User AS t0 WHERE t0.name = 'Alice' LIMIT 10 OFFSET 5;"
+        );
+    }
+
+    #[test]
+    fn test_compile_where_clause_complex() {
+        let clause = WhereClause::And(vec![
+            WhereClause::Field("age".to_string(), WhereCondition::Gte("18".to_string())),
+            WhereClause::Or(vec![
+                WhereClause::Field("status".to_string(), WhereCondition::Eq("active".to_string())),
+                WhereClause::Field("status".to_string(), WhereCondition::Eq("pending".to_string())),
+            ]),
+            WhereClause::Field("name".to_string(), WhereCondition::In(vec!["Alice".to_string(), "Bob's".to_string()])),
+        ]);
+        let sql = compile_where_clause(&clause, "t0");
+        assert_eq!(
+            sql,
+            "(t0.age >= '18' AND (t0.status = 'active' OR t0.status = 'pending') AND t0.name IN ('Alice', 'Bob''s'))"
         );
     }
 }
