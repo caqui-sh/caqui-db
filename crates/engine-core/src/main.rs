@@ -91,7 +91,10 @@ union SearchResult = User | Post
             SchemaCommands::DbPush => {
                 // Phase 3: Push non-destructive Schema Diffs directly to SQLite
                 let desired_ir = schema_mapper::lower_ast_to_physical(&desired_ast);
-                let conn = rusqlite::Connection::open("file:app.db?vfs=git").unwrap();
+                let conn = rusqlite::Connection::open_with_flags(
+                    "file:app.db?vfs=git",
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+                ).unwrap();
                 
                 workflows::db_push(&conn, &desired_ir).unwrap();
                 println!("SUCCESS: Database schema synced.");

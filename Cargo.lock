@@ -330,6 +330,7 @@ dependencies = [
  "schema-mapper",
  "schema-parser",
  "serde_json",
+ "tempfile",
  "tokio",
  "uuid",
 ]

@@ -21,3 +21,6 @@ api-layer = { path = "../api-layer" }
 axum = { workspace = true }
 clap = { workspace = true }
 uuid = { version = "1.8", features = ["v7", "v4"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
