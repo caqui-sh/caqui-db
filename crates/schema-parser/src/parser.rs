@@ -169,20 +169,57 @@ mod tests {
         ";
         
         let ast = parse_schema(input).unwrap();
-        assert_eq!(ast.models.len(), 2);
-        assert_eq!(ast.unions.len(), 1);
         
-        let user_model = ast.models.get("User").unwrap();
-        assert_eq!(user_model.fields.len(), 3);
-        assert_eq!(user_model.fields[0].name, "id");
-        assert_eq!(user_model.fields[0].attributes, vec![FieldAttribute::Id]);
-        assert_eq!(user_model.fields[0].field_type, AstFieldType::Scalar("String".to_string()));
+        let mut expected_ast = SchemaAst {
+            models: HashMap::new(),
+            unions: HashMap::new(),
+        };
         
-        assert_eq!(user_model.fields[2].name, "posts");
-        assert_eq!(user_model.fields[2].field_type, AstFieldType::RelationArray("Post".to_string()));
+        expected_ast.models.insert("User".to_string(), ModelNode {
+            name: "User".to_string(),
+            fields: vec![
+                FieldNode {
+                    name: "id".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    attributes: vec![FieldAttribute::Id],
+                },
+                FieldNode {
+                    name: "name".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    attributes: vec![],
+                },
+                FieldNode {
+                    name: "posts".to_string(),
+                    field_type: AstFieldType::RelationArray("Post".to_string()),
+                    attributes: vec![],
+                },
+            ],
+        });
         
-        let search_result = ast.unions.get("SearchResult").unwrap();
-        assert_eq!(search_result, &vec!["User".to_string(), "Post".to_string()]);
+        expected_ast.models.insert("Post".to_string(), ModelNode {
+            name: "Post".to_string(),
+            fields: vec![
+                FieldNode {
+                    name: "id".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    attributes: vec![FieldAttribute::Id],
+                },
+                FieldNode {
+                    name: "title".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    attributes: vec![],
+                },
+                FieldNode {
+                    name: "author".to_string(),
+                    field_type: AstFieldType::Relation("User".to_string()),
+                    attributes: vec![],
+                },
+            ],
+        });
+        
+        expected_ast.unions.insert("SearchResult".to_string(), vec!["User".to_string(), "Post".to_string()]);
+        
+        assert_eq!(ast, expected_ast);
     }
 
     #[test]
@@ -207,33 +244,30 @@ mod tests {
         
         // @map
         let id_field = user.fields.iter().find(|f| f.name == "id").unwrap();
-        assert!(id_field.attributes.contains(&FieldAttribute::Map("user_id".to_string())));
+        assert_eq!(id_field.attributes, vec![FieldAttribute::Id, FieldAttribute::Map("user_id".to_string())]);
         
         // @unique
         let email_field = user.fields.iter().find(|f| f.name == "email").unwrap();
-        assert!(email_field.attributes.contains(&FieldAttribute::Unique));
+        assert_eq!(email_field.attributes, vec![FieldAttribute::Unique]);
         
         // @default("string")
         let bio_field = user.fields.iter().find(|f| f.name == "bio").unwrap();
-        assert!(bio_field.attributes.contains(&FieldAttribute::Default(DefaultFunc::Static("no bio".to_string()))));
+        assert_eq!(bio_field.attributes, vec![FieldAttribute::Default(DefaultFunc::Static("no bio".to_string()))]);
         
         // @default(now())
         let created_at_field = user.fields.iter().find(|f| f.name == "createdAt").unwrap();
-        assert!(created_at_field.attributes.contains(&FieldAttribute::Default(DefaultFunc::Now)));
+        assert_eq!(created_at_field.attributes, vec![FieldAttribute::Default(DefaultFunc::Now)]);
         
         // @ignore
         let token_field = user.fields.iter().find(|f| f.name == "token").unwrap();
-        assert!(token_field.attributes.contains(&FieldAttribute::Ignore));
+        assert_eq!(token_field.attributes, vec![FieldAttribute::Ignore]);
         
         // @relation
         let posts_field = user.fields.iter().find(|f| f.name == "posts").unwrap();
-        let relation = posts_field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })).unwrap();
-        if let FieldAttribute::Relation { fields, references, on_delete } = relation {
-            assert_eq!(fields, &vec!["id".to_string()]);
-            assert_eq!(references, &vec!["authorId".to_string()]);
-            assert_eq!(on_delete.as_deref(), Some("Cascade"));
-        } else {
-            panic!("Expected Relation attribute");
-        }
+        assert_eq!(posts_field.attributes, vec![FieldAttribute::Relation {
+            fields: vec!["id".to_string()],
+            references: vec!["authorId".to_string()],
+            on_delete: Some("Cascade".to_string()),
+        }]);
     }
 }
