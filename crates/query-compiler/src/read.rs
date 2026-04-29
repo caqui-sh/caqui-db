@@ -417,4 +417,74 @@ mod tests {
             "(t0.age >= '18' AND (t0.status = 'active' OR t0.status = 'pending') AND t0.name IN ('Alice', 'Bob''s'))"
         );
     }
+
+    #[test]
+    fn test_compile_relation_with_pagination_and_filtering() {
+        let child_query = QueryNode {
+            target_model: "Post".to_string(),
+            alias: "t1".to_string(),
+            selections: vec![SelectField::Scalar("title".to_string())],
+            filters: Some(WhereClause::Field("published".to_string(), WhereCondition::Eq("true".to_string()))),
+            limit: Some(5),
+            offset: Some(2),
+        };
+        
+        let query = QueryNode {
+            target_model: "User".to_string(),
+            alias: "t0".to_string(),
+            selections: vec![
+                SelectField::Scalar("id".to_string()),
+                SelectField::Relation {
+                    field_name: "posts".to_string(),
+                    foreign_key: "author_id".to_string(),
+                    is_list: true,
+                    query: Box::new(child_query),
+                }
+            ],
+            filters: None,
+            limit: None,
+            offset: None,
+        };
+        
+        let sql = compile_select(&query, None);
+        assert_eq!(
+            sql,
+            "SELECT json_group_array(json_object('id', t0.id, 'posts', (SELECT json_group_array(json_object('title', t1.title)) FROM Post AS t1 WHERE t1.author_id = t0.id AND t1.published = 'true' LIMIT 5 OFFSET 2))) AS payload FROM User AS t0;"
+        );
+    }
+
+    #[test]
+    fn test_compile_polymorphic_union_with_filtering() {
+        let article_fragment = QueryNode {
+            target_model: "Article".to_string(),
+            alias: "t1".to_string(),
+            selections: vec![SelectField::Scalar("title".to_string())],
+            filters: Some(WhereClause::Field("status".to_string(), WhereCondition::Eq("published".to_string()))),
+            limit: None, offset: None,
+        };
+        
+        let mut fragments = HashMap::new();
+        fragments.insert("Article".to_string(), article_fragment);
+        
+        let query = QueryNode {
+            target_model: "User".to_string(),
+            alias: "t0".to_string(),
+            selections: vec![
+                SelectField::Scalar("id".to_string()),
+                SelectField::PolymorphicUnion {
+                    field_name: "search".to_string(),
+                    target_fragments: fragments,
+                }
+            ],
+            filters: None,
+            limit: None,
+            offset: None,
+        };
+        
+        let sql = compile_select(&query, None);
+        assert_eq!(
+            sql,
+            "SELECT json_group_array(json_object('id', t0.id, 'search', CASE t0.search_type WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.id = t0.search_id AND t1.status = 'published') ELSE NULL END)) AS payload FROM User AS t0;"
+        );
+    }
 }

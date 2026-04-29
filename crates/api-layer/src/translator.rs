@@ -508,4 +508,57 @@ mod tests {
             panic!("Expected AND where clause");
         }
     }
+
+    #[test]
+    fn test_hydrate_nested_pagination_and_filtering() {
+        let ast = mock_ast();
+        let payload = json!({
+            "select": {
+                "posts": {
+                    "select": { "title": true },
+                    "limit": 5,
+                    "skip": 10,
+                    "where": { "title": "First" }
+                }
+            }
+        });
+        
+        let mut alias_counter = 0;
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        
+        let relation = ir.selections.first().unwrap();
+        if let SelectField::Relation { query, .. } = relation {
+            assert_eq!(query.limit, Some(5));
+            assert_eq!(query.offset, Some(10));
+            assert_eq!(query.filters, Some(WhereClause::Field("title".to_string(), WhereCondition::Eq("First".to_string()))));
+        } else {
+            panic!("Expected Relation");
+        }
+    }
+
+    #[test]
+    fn test_hydrate_where_clause_invalid_field() {
+        let ast = mock_ast();
+        let payload = json!({
+            "select": { "id": true },
+            "where": { "hacker_field": "test" }
+        });
+        
+        let mut alias_counter = 0;
+        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap_err();
+        assert!(err.contains("Invalid field 'hacker_field' in where clause"));
+    }
+
+    #[test]
+    fn test_hydrate_where_clause_ignored_field() {
+        let ast = mock_ast();
+        let payload = json!({
+            "select": { "id": true },
+            "where": { "password": "123" }
+        });
+        
+        let mut alias_counter = 0;
+        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap_err();
+        assert!(err.contains("Security Exception: Prohibited filter on ignored field 'password'"));
+    }
 }
