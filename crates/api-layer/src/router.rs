@@ -44,12 +44,12 @@ mod tests {
             .method("POST")
             .uri("/api/v1/query")
             .header("Content-Type", "application/json")
-            .body(Body::from(r#"{"model": "User", "action": "findMany"}"#))
+            .body(Body::from(r#"{}"#))
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        // It might be 400 or 501 depending on AST, but it shouldn't be 404
-        assert_ne!(response.status(), StatusCode::NOT_FOUND);
+        // With an empty payload, it should fall through to the NOT_IMPLEMENTED branch
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
     }
 
     #[tokio::test]

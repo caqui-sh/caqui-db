@@ -118,6 +118,16 @@ mod tests {
             fields: vec![
                 FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
                 FieldNode { name: "title".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
+                FieldNode { name: "comments".to_string(), field_type: AstFieldType::RelationArray("Comment".to_string()), attributes: vec![] },
+            ]
+        });
+
+        ast.models.insert("Comment".to_string(), ModelNode {
+            name: "Comment".to_string(),
+            fields: vec![
+                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
+                FieldNode { name: "body".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
+                FieldNode { name: "author".to_string(), field_type: AstFieldType::Relation("User".to_string()), attributes: vec![] },
             ]
         });
 
@@ -131,6 +141,65 @@ mod tests {
         ast.unions.insert("SearchContent".to_string(), vec!["Post".to_string(), "User".to_string()]);
 
         ast
+    }
+
+    #[test]
+    fn test_hydrate_deep_recursion() {
+        let ast = mock_ast();
+        let payload = json!({
+            "select": {
+                "id": true,
+                "posts": {
+                    "select": {
+                        "id": true,
+                        "comments": {
+                            "select": {
+                                "id": true,
+                                "author": {
+                                    "select": {
+                                        "name": true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        
+        let mut alias_counter = 0;
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        
+        assert_eq!(ir.target_model, "User");
+        assert_eq!(ir.alias, "t0");
+        
+        // posts relation
+        let posts_relation = ir.selections.iter().find(|s| matches!(s, SelectField::Relation { field_name, .. } if field_name == "posts")).unwrap();
+        if let SelectField::Relation { query: posts_query, .. } = posts_relation {
+            assert_eq!(posts_query.target_model, "Post");
+            assert_eq!(posts_query.alias, "t1");
+            
+            // comments relation
+            let comments_relation = posts_query.selections.iter().find(|s| matches!(s, SelectField::Relation { field_name, .. } if field_name == "comments")).unwrap();
+            if let SelectField::Relation { query: comments_query, .. } = comments_relation {
+                assert_eq!(comments_query.target_model, "Comment");
+                assert_eq!(comments_query.alias, "t2");
+                
+                // author relation
+                let author_relation = comments_query.selections.iter().find(|s| matches!(s, SelectField::Relation { field_name, .. } if field_name == "author")).unwrap();
+                if let SelectField::Relation { query: author_query, .. } = author_relation {
+                    assert_eq!(author_query.target_model, "User");
+                    assert_eq!(author_query.alias, "t3");
+                    assert!(author_query.selections.contains(&SelectField::Scalar("name".to_string())));
+                } else {
+                    panic!("Expected author Relation");
+                }
+            } else {
+                panic!("Expected comments Relation");
+            }
+        } else {
+            panic!("Expected posts Relation");
+        }
     }
 
     #[test]

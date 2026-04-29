@@ -130,9 +130,12 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let body_str = String::from_utf8_lossy(&body_bytes);
-        assert!(body_str.contains("\"id\":\"u1\""));
-        assert!(body_str.contains("\"name\":\"Bob\""));
+        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        
+        let users = json_body["data"].as_array().expect("Expected data to be an array");
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0]["id"], "u1");
+        assert_eq!(users[0]["name"], "Bob");
     }
 
     #[tokio::test]
@@ -220,20 +223,73 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_api_execution_handler_missing_keys() {
+    async fn test_api_execution_handler_missing_model() {
         let state = build_test_state().await;
         let app = Router::new().route("/", post(api_execution_handler)).with_state(state);
 
-        // Completely empty payload
         let request = Request::builder()
             .method("POST")
             .uri("/")
             .header("Content-Type", "application/json")
-            .body(Body::from("{}"))
+            .body(Body::from(
+                r#"{
+                    "action": "findMany",
+                    "select": { "id": true }
+                }"#
+            ))
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        // Missing action defaults to "" which hits NOT_IMPLEMENTED
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body_str = String::from_utf8_lossy(&body_bytes);
+        assert!(body_str.contains("Security Exception: Model '' undefined"));
+    }
+
+    #[tokio::test]
+    async fn test_api_execution_handler_missing_action() {
+        let state = build_test_state().await;
+        let app = Router::new().route("/", post(api_execution_handler)).with_state(state);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "model": "User",
+                    "select": { "id": true }
+                }"#
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    }
+
+    #[tokio::test]
+    async fn test_api_execution_handler_missing_select() {
+        let state = build_test_state().await;
+        let app = Router::new().route("/", post(api_execution_handler)).with_state(state);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "model": "User",
+                    "action": "findMany"
+                }"#
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body_str = String::from_utf8_lossy(&body_bytes);
+        assert!(body_str.contains("Missing 'select' projection block"));
     }
 }
