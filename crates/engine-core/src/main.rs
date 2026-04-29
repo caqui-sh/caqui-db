@@ -14,6 +14,7 @@ struct Cli {
 #[derive(Subcommand)]
 #[command(rename_all = "kebab-case")]
 enum Commands {
+    Init,
     Start,
     DbPush,
     MigrateDev,
@@ -21,6 +22,34 @@ enum Commands {
 
 #[tokio::main]
 async fn main() {
+    let cli = Cli::parse();
+
+    if let Commands::Init = cli.command {
+        if std::path::Path::new("schema.cq").exists() {
+            println!("schema.cq already exists.");
+        } else {
+            let default_schema = r#"model User {
+  id    String @id @default(uuid())
+  name  String
+  posts Post[]
+}
+
+model Post {
+  id       String @id @default(uuid())
+  title    String
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+}
+
+union SearchResult = User | Post
+"#;
+            std::fs::write("schema.cq", default_schema).unwrap();
+            println!("SUCCESS: Created default schema.cq!");
+            println!("Next steps: run `caqui db-push` or `caqui migrate-dev` to apply the schema.");
+        }
+        return;
+    }
+
     // 1. Phase 1: Bootstrap the Custom C-FFI Virtual File System
     engine_core::vfs::bootstrap_custom_vfs();
 
@@ -28,12 +57,11 @@ async fn main() {
     let schema_text = std::fs::read_to_string("schema.cq").unwrap_or_else(|_| "model User { id String @id }".to_string());
     let desired_ast = parser::parse_schema(&schema_text).expect("Syntax Error in DSL");
     
-    let cli = Cli::parse();
-    
     // 3. Spin up the SQLite connection pool using the Custom VFS & WAL pragmas
     let db_pool = engine_core::pool::create_pool("file:app.db?vfs=git");
 
     match cli.command {
+        Commands::Init => unreachable!(),
         Commands::DbPush => {
             // Phase 3: Push non-destructive Schema Diffs directly to SQLite
             let desired_ir = schema_mapper::lower_ast_to_physical(&desired_ast);

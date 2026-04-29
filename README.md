@@ -19,23 +19,30 @@ Simply write your schema, start the server, and instantly query your database vi
 
 ## Getting Started
 
-`caqui` uses a single schema file (`schema.cq`) to define your database tables, relationships, and API security rules. The executable exposes three simple commands to manage your lifecycle:
+`caqui` uses a single schema file (`schema.cq`) to define your database tables, relationships, and API security rules. The executable exposes four simple commands to manage your lifecycle:
 
-### 1. Prototype (`caqui db-push`)
+### 1. Initialize a Project (`caqui init`)
+Generate a starter `schema.cq` file in your current directory.
+
+```bash
+caqui init
+```
+
+### 2. Prototype (`caqui db-push`)
 Quickly sync your `schema.cq` to your local SQLite database. This instantly generates and applies the structural differences to your database (`app.db`). Best used during local development.
 
 ```bash
 caqui db-push
 ```
 
-### 2. Safe Migrations (`caqui migrate-dev`)
+### 3. Safe Migrations (`caqui migrate-dev`)
 The safe, historical deployment workflow. This command reads your `schema.cq`, compares it to your previous migration files in `/migrations/`, and writes a new `_auto_migration.sql` script to disk before safely applying it to your live database.
 
 ```bash
 caqui migrate-dev
 ```
 
-### 3. Start the API Server (`caqui start`)
+### 4. Start the API Server (`caqui start`)
 Starts the database connection pool and mounts the universal dynamic execution router to `http://0.0.0.0:4000`.
 
 ```bash

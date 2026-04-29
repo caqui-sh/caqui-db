@@ -1,4 +1,5 @@
 [alias]
+setup = "run --release --bin caqui -- init"
 start = "run --release --bin caqui -- start"
 db-push = "run --release --bin caqui -- db-push"
 migrate-dev = "run --release --bin caqui -- migrate-dev"

@@ -31,6 +31,9 @@ When building or modifying `caqui` from source, we utilize native Cargo aliases 
 
 Execute the following commands from the root directory:
 
+- **`cargo setup`**
+  Initializes a new project. Invokes `cargo run --release --bin caqui -- init`. Generates a default `schema.cq` file in the current directory to bootstrap development.
+
 - **`cargo db-push`**
   Rapid prototyping workflow. Invokes `cargo run --release --bin caqui -- db-push`. Bypasses the shadow database history and directly compares the `schema.cq` file against the live physical database (`app.db`). Generates and executes the structural SQL differences instantly.
 
