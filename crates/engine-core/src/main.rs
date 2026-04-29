@@ -15,6 +15,10 @@ struct Cli {
 #[command(rename_all = "kebab-case")]
 enum Commands {
     Init,
+    Git {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     Schema {
         #[command(subcommand)]
         command: SchemaCommands,
@@ -80,6 +84,9 @@ union SearchResult = User | Post
 
     match cli.command {
         Commands::Init => unreachable!(),
+        Commands::Git { args } => {
+            engine_core::git::proxy_git_command(args);
+        }
         Commands::Schema { command } => match command {
             SchemaCommands::DbPush => {
                 // Phase 3: Push non-destructive Schema Diffs directly to SQLite
