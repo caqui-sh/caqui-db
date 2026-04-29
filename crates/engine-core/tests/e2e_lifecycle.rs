@@ -199,7 +199,25 @@ fn test_e2e_lifecycle() {
     api_server.wait().unwrap();
 
     // Assert merged state contains the combined users!
-    assert!(json_resp.contains("Alice"), "Missing Alice in merged API state. Response: {}", json_resp);
-    assert!(json_resp.contains("Bob"), "Missing Bob in merged API state. Response: {}", json_resp);
-    assert!(json_resp.contains("Charlie"), "Missing Charlie in merged API state. Response: {}", json_resp);
+    let parsed: serde_json::Value = serde_json::from_str(&json_resp).expect("Failed to parse JSON response");
+    let users = parsed["data"].as_array().expect("Expected data to be a JSON array");
+    
+    let mut found_alice = false;
+    let mut found_bob = false;
+    let mut found_charlie = false;
+    
+    for user in users {
+        if let Some(name) = user["name"].as_str() {
+            match name {
+                "Alice" => found_alice = true,
+                "Bob" => found_bob = true,
+                "Charlie" => found_charlie = true,
+                _ => {}
+            }
+        }
+    }
+    
+    assert!(found_alice, "Missing Alice in merged API state. Response: {}", json_resp);
+    assert!(found_bob, "Missing Bob in merged API state. Response: {}", json_resp);
+    assert!(found_charlie, "Missing Charlie in merged API state. Response: {}", json_resp);
 }

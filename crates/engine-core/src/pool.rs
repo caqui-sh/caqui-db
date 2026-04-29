@@ -38,17 +38,14 @@ pub fn create_pool(path: &str) -> Pool {
         let pool = create_pool("file::memory:?cache=shared");
         let conn = pool.get().await.unwrap();
 
-        let uuid: String = conn.interact(|db| {
+        let uuid_str: String = conn.interact(|db| {
             db.query_row("SELECT gen_uuid7()", [], |row| row.get(0))
         }).await.unwrap().unwrap();
 
-        // Basic validation that it looks like a UUID
-        assert_eq!(uuid.len(), 36);
-        assert!(uuid.contains('-'));
-
-        // Verify version 7 (the 13th character should be '7')
-        // UUID format: xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx
-        // Version M is at index 14 (8+1+4+1)
-        assert_eq!(uuid.chars().nth(14).unwrap(), '7');
+        // Native parsing and validation using the uuid crate
+        let parsed_uuid = uuid::Uuid::parse_str(&uuid_str).expect("String returned by SQLite is not a valid UUID");
+        
+        // Assert that the generated UUID is explicitly Version 7
+        assert_eq!(parsed_uuid.get_version(), Some(uuid::Version::SortRand));
         }
         }

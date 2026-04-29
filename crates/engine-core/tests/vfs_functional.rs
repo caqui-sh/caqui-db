@@ -1,12 +1,13 @@
 use engine_core::vfs::{bootstrap_custom_vfs, configure_connection};
 use rusqlite::{Connection, OpenFlags};
+use tempfile::tempdir;
 
 #[test]
 fn test_vfs_single_user_functional() {
     bootstrap_custom_vfs();
 
-    let db_path = std::env::temp_dir().join("vfs_functional_test.db");
-    let _ = std::fs::remove_dir_all(&db_path);
+    let dir = tempdir().expect("Failed to create temp dir");
+    let db_path = dir.path().join("vfs_functional_test.db");
 
     let mut conn = Connection::open_with_flags_and_vfs(
         &db_path,
@@ -52,7 +53,4 @@ fn test_vfs_single_user_functional() {
     assert!(db_path.exists());
     assert!(db_path.is_dir());
     assert!(db_path.join("pages").exists());
-
-    // Cleanup
-    let _ = std::fs::remove_dir_all(&db_path);
-}
+    }
