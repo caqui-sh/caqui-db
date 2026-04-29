@@ -5,13 +5,14 @@ use api_layer::{state::EngineState, router};
 use std::sync::Arc;
 
 #[derive(Parser)]
-#[command(name = "DataEngine", version = "1.0", about = "Unified Schema-Driven SQLite Platform")]
+#[command(name = "caqui", version = "1.0", about = "Unified Schema-Driven SQLite Platform")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand)]
+#[command(rename_all = "kebab-case")]
 enum Commands {
     Start,
     DbPush,
@@ -24,7 +25,7 @@ async fn main() {
     engine_core::vfs::bootstrap_custom_vfs();
 
     // 2. Phase 2: Parse the DSL into Memory dynamically
-    let schema_text = std::fs::read_to_string("schema.dsl").unwrap_or_else(|_| "model User { id String @id }".to_string());
+    let schema_text = std::fs::read_to_string("schema.cq").unwrap_or_else(|_| "model User { id String @id }".to_string());
     let desired_ast = parser::parse_schema(&schema_text).expect("Syntax Error in DSL");
     
     let cli = Cli::parse();

@@ -1,93 +1,121 @@
-# DataEngine
+# caqui
 
-DataEngine is a high-performance, schema-driven SQLite platform that collapses the traditional multi-tier web stack (Database Server, Migrations CLI, Object-Relational Mapper, and HTTP API Layer) into a **single, statically linked executable**.
+`caqui` is a high-performance, schema-driven SQLite database and API engine. It replaces the traditional multi-tier web stack (database, migration CLI, ORM, and API layer) with a **single executable binary**.
+
+Simply write your schema, start the server, and instantly query your database via a powerful GraphQL-style HTTP JSON API.
+
+> **For Contributors and Developers:** Want to understand the internal architecture, zero-overhead networking, or how to build `caqui` from source? Please read **[DEVELOPER.md](./DEVELOPER.md)**.
 
 ## Supported Platforms
 
 ⚠️ **Note:** Windows is strictly **not supported**.
 
-DataEngine is heavily optimized for UNIX-like environments and is officially supported exclusively on the following platforms:
-- **macOS (ARM/Apple Silicon)**
+`caqui` is officially supported exclusively on the following platforms:
+- **macOS (ARM / Apple Silicon)**
 - **Linux (ARM64)**
 - **Linux (x86_64)**
 
-## Core Philosophy: The Zero-Overhead Engine
-
-DataEngine bypasses the architectural limitations of classical backend ecosystems by eliminating unnecessary middle-men.
-
-- **Zero Network Latency**: By bypassing TCP/IP and running SQLite locally via C-FFI, database I/O execution occurs at the speed of host RAM.
-- **Zero N+1 Queries**: The custom Query Compiler shifts all object hydration and JSON mapping into the SQLite C-layer. Deeply nested, relational API queries are resolved using Correlated Subqueries and `json_group_array()`, completing infinite graph depths in exactly one mathematically perfect SELECT statement.
-- **Zero Code Generation**: The API layer protects itself and resolves queries dynamically against a thread-safe, in-memory Abstract Syntax Tree (AST). There are zero generated TypeScript/Rust structs to manage, ensuring the binary remains hyper-lean and compilation times remain lightning fast.
-- **Native Arrays and Polymorphism**: Primitive scalar arrays (e.g., `String[]`) are natively updated in C-memory via `json_insert`. Polymorphic Unions (e.g., `union SearchResult = Article | User`) are elegantly mapped using runtime $O(1)$ SQLite `CASE` resolution on physical discriminator columns.
-- **Single Binary Deployment**: Leveraging the bundled feature of `rusqlite` and aggressive Link-Time Optimization (LTO), the custom Virtual File System (VFS), mathematical migration engine, query compiler, and Axum HTTP server are compiled into one standalone `.elf` or Mach-O executable.
-
-## How it Works: The 5 Phases
-
-DataEngine's architecture is composed of five specialized subsystems:
-
-### 1. Custom C-FFI Virtual File System (VFS)
-`crates/engine-core` intercepts standard SQLite OS-level I/O operations through a custom C-FFI Virtual File System interface, bootstrapping the underlying storage mechanism entirely within the rust process.
-
-### 2. Schema Parser and DSL Engine
-`crates/schema-parser` utilizes `pest` to tokenize a custom, Prisma-inspired declarative DSL (e.g., `schema.dsl`) with zero allocations, validating graph integrity and converting multidimensional arrays and polymorphic unions into a strict Abstract Syntax Tree (AST).
-
-### 3. Schema Diffing and DBA Engine
-`crates/schema-mapper` generates a mathematical "Live IR" by introspecting the active SQLite database using `PRAGMA table_info`. It diffs this against the AST's "Desired IR" to calculate strict `MigrationOp` states, safely orchestrating SQLite's atomic 12-step table rebuild sequence to execute automated migrations.
-
-### 4. Query Compiler and Execution Engine
-`crates/query-compiler` receives dynamic JSON requests and compiles them into a Query IR. It constructs nested relational SQL utilizing `json_group_array()` and native discriminator `CASE` resolution. `engine-core` then executes these massive string payloads, directly deserializing the single-row SQLite JSON response into the application without allocating intermediate memory structs.
-
-### 5. Dynamic Custom API & HTTP Layer
-`crates/api-layer` serves the Axum router. Incoming requests are JIT-hydrated against the shared, thread-safe memory AST. Malicious or undefined field requests are blocked instantly with an $O(1)$ lookup, and valid payloads are passed to the Query Compiler, streaming the raw SQLite bytes back out as an `application/json` HTTP response.
+---
 
 ## Getting Started
 
-### Prerequisites
-- Rust 1.80+ 
-- A supported UNIX-like OS (macOS ARM, Linux ARM, or Linux x86).
+`caqui` uses a single schema file (`schema.cq`) to define your database tables, relationships, and API security rules. The executable exposes three simple commands to manage your lifecycle:
 
-### Defining your Schema
-Create a `schema.dsl` file in the root directory:
+### 1. Prototype (`caqui db-push`)
+Quickly sync your `schema.cq` to your local SQLite database. This instantly generates and applies the structural differences to your database (`app.db`). Best used during local development.
+
+```bash
+caqui db-push
+```
+
+### 2. Safe Migrations (`caqui migrate-dev`)
+The safe, historical deployment workflow. This command reads your `schema.cq`, compares it to your previous migration files in `/migrations/`, and writes a new `_auto_migration.sql` script to disk before safely applying it to your live database.
+
+```bash
+caqui migrate-dev
+```
+
+### 3. Start the API Server (`caqui start`)
+Starts the database connection pool and mounts the universal dynamic execution router to `http://0.0.0.0:4000`.
+
+```bash
+caqui start
+```
+
+---
+
+## Writing your Schema (`schema.cq`)
+
+`caqui` uses a strict, declarative, Prisma-inspired DSL. 
+
+### Models and Primitive Types
+Define your tables and basic types (`String`, `Int`, `Float`, `Boolean`).
 
 ```prisma
 model User {
-    id String @id
-    name String
-    posts Post[]
+  id    String  @id @default(uuid())
+  age   Int     @default(18)
+  score Float
+  admin Boolean
 }
+```
 
+### Arrays
+Store lists of primitives natively without needing secondary tables.
+
+```prisma
+model TagGroup {
+  id   String   @id
+  tags String[] 
+}
+```
+
+### Relationships (1:N and N:M)
+Link your models together. `caqui` automatically tracks and resolves deeply nested relationships.
+
+```prisma
 model Post {
-    id String @id
-    title String
-    author User
+  id       String  @id
+  authorId String
+  author   User    @relation(fields: [authorId], references: [id], onDelete: Cascade)
 }
-
-union SearchResult = User | Post
 ```
 
-### CLI Workflows
+### Polymorphic Unions
+Return multiple different models under a single dynamic property.
 
-The unified binary accepts commands via `clap` to manage the lifecycle of your database.
+```prisma
+union SearchResult = Post | User
 
-**1. Apply a non-destructive prototype diff to the database:**
-```bash
-cargo run --release -- DbPush
+model Query {
+  id      String       @id
+  results SearchResult 
+}
 ```
 
-**2. Generate and run safe, historical `.sql` migration files via the Shadow DB:**
-```bash
-cargo run --release -- MigrateDev
-```
+### Attributes Reference
+Customize your fields using the following attributes:
 
-**3. Boot the unified API server:**
-```bash
-cargo run --release -- Start
-```
-The server binds to `0.0.0.0:4000` and exposes a universal endpoint at `POST /api/v1/query`.
+- `@id`: Marks the field as the Primary Key. 
+- `@default(autoincrement())`: Automatically increments integer IDs.
+- `@default(uuid())`: Automatically generates a sequential UUIDv7 on insert.
+- `@default(now())`: Automatically sets the current timestamp on insert.
+- `@default("static_value")`: Provides a static default value.
+- `@unique`: Ensures all values in this column are globally unique.
+- `@@unique([field1, field2])` / `@@index([field1, field2])`: Block-level composite index generation.
+- `@updatedAt`: Automatically updates the timestamp whenever the row is modified.
+- `@map("physical_name")`: Maps a clean API name (e.g., `firstName`) to a legacy database column (e.g., `usr_frst_nm`).
+- `@ignore`: Prevents the API from ever returning this column (e.g., used for password hashes or internal data).
 
-### Example Query
+---
 
-Once the server is running, you can request deeply nested relational graphs via a single HTTP request:
+## Querying the API
+
+`caqui` exposes a single, universal HTTP POST endpoint at `/api/v1/query`.
+
+Instead of writing custom backend routes, you request the exact shape of the data you want. `caqui` will automatically fetch it, including nested relationships, in a single, highly-optimized query.
+
+### Example: Fetching deeply nested data
 
 ```bash
 curl -X POST http://localhost:4000/api/v1/query \
@@ -100,10 +128,12 @@ curl -X POST http://localhost:4000/api/v1/query \
         "name": true,
         "posts": {
             "select": {
-                "title": true
+                "title": true,
+                "authorId": true
             }
         }
     }
   }'
 ```
-The database executes exactly one query and returns the fully materialized object graph instantly.
+
+If your schema is valid, `caqui` returns exactly what you asked for, fully formatted as a JSON graph.
