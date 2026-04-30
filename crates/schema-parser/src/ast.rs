@@ -39,7 +39,7 @@ pub enum FieldAttribute {
     Ignore,
     Map(String),
     Default(DefaultFunc),
-    Relation { fields: Vec<String>, references: Vec<String>, on_delete: Option<String>, deferrable: bool },
+    Relation { name: Option<String>, fields: Vec<String>, references: Vec<String>, on_delete: Option<String>, deferrable: bool },
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -82,6 +82,7 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                                         }
                                     },
                                     "relation" => {
+                                        let mut name = None;
                                         let mut fields_vec = Vec::new();
                                         let mut refs_vec = Vec::new();
                                         let mut on_delete = None;
@@ -89,7 +90,7 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                                         
                                         if let Some(args_rule) = attr_inner.next() {
                                             for param_rule in args_rule.into_inner() {
-                                                // attr_param -> named_arg
+                                                // attr_param -> named_arg or attr_val
                                                 let actual_param = param_rule.into_inner().next().unwrap();
                                                 if actual_param.as_rule() == Rule::named_arg {
                                                     let mut param_inner = actual_param.into_inner();
@@ -114,10 +115,15 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                                                             deferrable = true;
                                                         }
                                                     }
+                                                } else if actual_param.as_rule() == Rule::attr_val {
+                                                    let val_rule = actual_param.into_inner().next().unwrap();
+                                                    if val_rule.as_rule() == Rule::string_lit {
+                                                        name = Some(val_rule.as_str().trim_matches('"').to_string());
+                                                    }
                                                 }
                                             }
                                         }
-                                        attributes.push(FieldAttribute::Relation { fields: fields_vec, references: refs_vec, on_delete, deferrable });
+                                        attributes.push(FieldAttribute::Relation { name, fields: fields_vec, references: refs_vec, on_delete, deferrable });
                                     },
                                     _ => {}
                                 }
@@ -273,9 +279,47 @@ mod tests {
         // @relation
         let posts_field = user.fields.iter().find(|f| f.name == "posts").unwrap();
         assert_eq!(posts_field.attributes, vec![FieldAttribute::Relation {
+            name: None,
             fields: vec!["id".to_string()],
             references: vec!["authorId".to_string()],
             on_delete: Some("Cascade".to_string()),
+            deferrable: false,
+        }]);
+    }
+
+    #[test]
+    fn test_parse_relation_names() {
+        let input = "
+            model Post {
+                id String @id
+                authorId String
+                reviewerId String
+                author User @relation(\"AuthorToPost\", fields: [authorId], references: [id])
+                reviewer User @relation(\"ReviewerToPost\", fields: [reviewerId], references: [id])
+            }
+            model User {
+                id String @id
+            }
+        ";
+        
+        let ast = parse_schema(input).unwrap();
+        let post = ast.models.get("Post").unwrap();
+        
+        let author_field = post.fields.iter().find(|f| f.name == "author").unwrap();
+        assert_eq!(author_field.attributes, vec![FieldAttribute::Relation {
+            name: Some("AuthorToPost".to_string()),
+            fields: vec!["authorId".to_string()],
+            references: vec!["id".to_string()],
+            on_delete: None,
+            deferrable: false,
+        }]);
+
+        let reviewer_field = post.fields.iter().find(|f| f.name == "reviewer").unwrap();
+        assert_eq!(reviewer_field.attributes, vec![FieldAttribute::Relation {
+            name: Some("ReviewerToPost".to_string()),
+            fields: vec!["reviewerId".to_string()],
+            references: vec!["id".to_string()],
+            on_delete: None,
             deferrable: false,
         }]);
     }

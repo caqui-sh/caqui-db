@@ -129,7 +129,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                 },
                 AstFieldType::Relation(ref_model) => {
                     // Map @relation attributes to physical FOREIGN KEY definitions
-                    if let Some(FieldAttribute::Relation { fields, references, on_delete, deferrable }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                    if let Some(FieldAttribute::Relation { name: _, fields, references, on_delete, deferrable }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
                         if !fields.is_empty() && !references.is_empty() {
                             let mut fk_def = format!("FOREIGN KEY ({}) REFERENCES \"{}\" ({})", fields.join(", "), ref_model, references.join(", "));
                             
@@ -307,6 +307,7 @@ mod tests {
                     field_type: AstFieldType::Relation("User".to_string()),
                     attributes: vec![
                         FieldAttribute::Relation {
+                            name: None,
                             fields: vec!["authorId".to_string()],
                             references: vec!["id".to_string()],
                             on_delete: Some("Cascade".to_string()),
