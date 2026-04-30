@@ -15,6 +15,9 @@ fn val_to_string(val: &Value) -> String {
 }
 
 fn parse_where_condition(val: &Value) -> Result<WhereCondition, String> {
+    if val.is_null() {
+        return Ok(WhereCondition::IsNull);
+    }
     if let Some(s) = val.as_str() {
         return Ok(WhereCondition::Eq(s.to_string()));
     }
@@ -26,9 +29,15 @@ fn parse_where_condition(val: &Value) -> Result<WhereCondition, String> {
     }
     if let Some(obj) = val.as_object() {
         if let Some(eq) = obj.get("eq") {
+            if eq.is_null() {
+                return Ok(WhereCondition::IsNull);
+            }
             return Ok(WhereCondition::Eq(val_to_string(eq)));
         }
         if let Some(neq) = obj.get("notEq") {
+            if neq.is_null() {
+                return Ok(WhereCondition::IsNotNull);
+            }
             return Ok(WhereCondition::NotEq(val_to_string(neq)));
         }
         if let Some(gt) = obj.get("gt") {
@@ -45,6 +54,7 @@ fn parse_where_condition(val: &Value) -> Result<WhereCondition, String> {
         }
         if let Some(in_vals) = obj.get("in").and_then(|v| v.as_array()) {
             let vals: Vec<String> = in_vals.iter()
+                .filter(|v| !v.is_null()) // Filter out nulls from IN arrays, or we could handle them, but standard SQL IN doesn't match NULL anyway.
                 .map(|v| val_to_string(v))
                 .collect();
             return Ok(WhereCondition::In(vals));
@@ -596,5 +606,32 @@ mod tests {
         let mut alias_counter = 0;
         let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap_err();
         assert!(err.contains("Security Exception: Prohibited filter on ignored field 'password'"));
+    }
+
+    #[test]
+    fn test_hydrate_null_filters() {
+        let ast = mock_ast();
+        let payload = json!({
+            "select": { "id": true },
+            "where": { 
+                "AND": [
+                    { "name": null },
+                    { "tags": { "eq": null } },
+                    { "profile": { "notEq": null } }
+                ]
+            }
+        });
+        
+        let mut alias_counter = 0;
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        
+        if let Some(WhereClause::And(clauses)) = ir.filters {
+            assert_eq!(clauses.len(), 3);
+            assert_eq!(clauses[0], WhereClause::Field("name".to_string(), WhereCondition::IsNull));
+            assert_eq!(clauses[1], WhereClause::Field("tags".to_string(), WhereCondition::IsNull));
+            assert_eq!(clauses[2], WhereClause::Field("profile".to_string(), WhereCondition::IsNotNull));
+        } else {
+            panic!("Expected AND where clause");
+        }
     }
 }

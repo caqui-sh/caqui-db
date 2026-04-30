@@ -40,6 +40,8 @@ pub enum WhereCondition {
     Lt(String),
     Lte(String),
     In(Vec<String>),
+    IsNull,
+    IsNotNull,
 }
 
 #[derive(Debug, Clone, PartialEq)]

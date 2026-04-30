@@ -20,9 +20,15 @@ pub fn compile_where_clause(clause: &WhereClause, alias: &str) -> String {
                 WhereCondition::Lt(v) => format!("{} < '{}'", col, v.replace('\'', "''")),
                 WhereCondition::Lte(v) => format!("{} <= '{}'", col, v.replace('\'', "''")),
                 WhereCondition::In(vals) => {
-                    let escaped: Vec<_> = vals.iter().map(|v| format!("'{}'", v.replace('\'', "''"))).collect();
-                    format!("{} IN ({})", col, escaped.join(", "))
-                }
+                    if vals.is_empty() {
+                        "1=0".to_string()
+                    } else {
+                        let escaped: Vec<_> = vals.iter().map(|v| format!("'{}'", v.replace('\'', "''"))).collect();
+                        format!("{} IN ({})", col, escaped.join(", "))
+                    }
+                },
+                WhereCondition::IsNull => format!("{} IS NULL", col),
+                WhereCondition::IsNotNull => format!("{} IS NOT NULL", col),
             }
         }
     }
@@ -424,6 +430,18 @@ mod tests {
             sql,
             "(t0.age >= '18' AND (t0.status = 'active' OR t0.status = 'pending') AND t0.name IN ('Alice', 'Bob''s'))"
         );
+    }
+
+    #[test]
+    fn test_compile_where_clause_edge_cases() {
+        let clause1 = WhereClause::Field("id".to_string(), WhereCondition::In(vec![]));
+        assert_eq!(compile_where_clause(&clause1, "t0"), "1=0");
+
+        let clause2 = WhereClause::Field("managerId".to_string(), WhereCondition::IsNull);
+        assert_eq!(compile_where_clause(&clause2, "t1"), "t1.managerId IS NULL");
+
+        let clause3 = WhereClause::Field("email".to_string(), WhereCondition::IsNotNull);
+        assert_eq!(compile_where_clause(&clause3, "t2"), "t2.email IS NOT NULL");
     }
 
     #[test]
