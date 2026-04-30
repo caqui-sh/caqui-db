@@ -1,3 +1,3 @@
 #/bin/sh
 
-docker build -t caqui-db-container -f ./.environment/Dockerfile .
+docker build -t caqui-cli-container -f ./.environment/Dockerfile .

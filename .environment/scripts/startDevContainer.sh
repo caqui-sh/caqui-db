@@ -6,4 +6,4 @@ docker run -it --rm -p 127.0.0.1:8082:8080 \
   -v "$PWD:/home/coder/project" \
   -u "$(id -u):$(id -g)" \
   -e "DOCKER_USER=$USER" \
-  caqui-db-container
+  caqui-cli-container
