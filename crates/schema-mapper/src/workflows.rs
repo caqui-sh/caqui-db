@@ -131,6 +131,7 @@ mod tests {
                 ],
                 indexes: vec![],
                 triggers: vec![],
+                foreign_keys: vec![],
             }
         ];
 
@@ -163,6 +164,7 @@ mod tests {
                 ],
                 indexes: vec![],
                 triggers: vec![],
+                foreign_keys: vec![],
             }
         ];
         
@@ -182,6 +184,7 @@ mod tests {
                 ],
                 indexes: vec![],
                 triggers: vec![],
+                foreign_keys: vec![],
             },
             PhysicalTable {
                 name: "Post".to_string(),
@@ -191,6 +194,7 @@ mod tests {
                 ],
                 indexes: vec![],
                 triggers: vec![],
+                foreign_keys: vec![],
             }
         ];
         
@@ -229,6 +233,7 @@ mod tests {
                 ],
                 indexes: vec![],
                 triggers: vec![],
+                foreign_keys: vec![],
             }
         ];
 

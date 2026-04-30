@@ -31,6 +31,7 @@ pub struct PhysicalTable {
     pub columns: Vec<PhysicalColumn>,
     pub indexes: Vec<PhysicalIndex>,
     pub triggers: Vec<PhysicalTrigger>,
+    pub foreign_keys: Vec<String>,
 }
 
 pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
@@ -44,6 +45,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
         let mut columns = Vec::new();
         let mut indexes = Vec::new();
         let mut triggers = Vec::new();
+        let mut foreign_keys = Vec::new();
 
         for field in &model.fields {
             let is_unique = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Unique));
@@ -125,12 +127,30 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                         is_json_array: false,
                     });
                 },
-                AstFieldType::Relation(_) => {
-                    // Standard relations omitted for brevity as per phase 2 constraints
+                AstFieldType::Relation(ref_model) => {
+                    // Map @relation attributes to physical FOREIGN KEY definitions
+                    if let Some(FieldAttribute::Relation { fields, references, on_delete }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                        if !fields.is_empty() && !references.is_empty() {
+                            let mut fk_def = format!("FOREIGN KEY ({}) REFERENCES \"{}\" ({})", fields.join(", "), ref_model, references.join(", "));
+                            
+                            if let Some(action) = on_delete {
+                                let sql_action = match action.to_uppercase().as_str() {
+                                    "CASCADE" => "CASCADE",
+                                    "SETNULL" => "SET NULL",
+                                    "SETDEFAULT" => "SET DEFAULT",
+                                    "RESTRICT" => "RESTRICT",
+                                    _ => "NO ACTION" // default fallback
+                                };
+                                fk_def.push_str(&format!(" ON DELETE {}", sql_action));
+                            }
+                            
+                            foreign_keys.push(fk_def);
+                        }
+                    }
                 }
             }
         }
-        physical_tables.push(PhysicalTable { name: model.name.clone(), columns, indexes, triggers });
+        physical_tables.push(PhysicalTable { name: model.name.clone(), columns, indexes, triggers, foreign_keys });
     }
     physical_tables
 }
@@ -256,5 +276,47 @@ mod tests {
         let counter = tables.iter().find(|t| t.name == "Counter").unwrap();
         let c_id_col = counter.columns.iter().find(|c| c.name == "id").unwrap();
         assert_eq!(c_id_col.sqlite_type, "INTEGER PRIMARY KEY AUTOINCREMENT");
+    }
+
+    #[test]
+    fn test_lower_ast_to_physical_relations() {
+        let mut ast = SchemaAst {
+            models: HashMap::new(),
+            unions: HashMap::new(),
+        };
+        
+        ast.models.insert("Post".to_string(), ModelNode {
+            name: "Post".to_string(),
+            fields: vec![
+                FieldNode {
+                    name: "id".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    attributes: vec![FieldAttribute::Id],
+                },
+                FieldNode {
+                    name: "authorId".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    attributes: vec![],
+                },
+                FieldNode {
+                    name: "author".to_string(),
+                    field_type: AstFieldType::Relation("User".to_string()),
+                    attributes: vec![
+                        FieldAttribute::Relation {
+                            fields: vec!["authorId".to_string()],
+                            references: vec!["id".to_string()],
+                            on_delete: Some("Cascade".to_string()),
+                        }
+                    ],
+                },
+            ]
+        });
+        
+        let tables = lower_ast_to_physical(&ast);
+        assert_eq!(tables.len(), 1);
+        
+        let post_table = tables.iter().find(|t| t.name == "Post").unwrap();
+        assert_eq!(post_table.foreign_keys.len(), 1);
+        assert_eq!(post_table.foreign_keys[0], "FOREIGN KEY (authorId) REFERENCES \"User\" (id) ON DELETE CASCADE");
     }
 }

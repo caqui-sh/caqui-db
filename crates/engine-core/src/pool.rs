@@ -17,7 +17,10 @@ pub fn create_pool(path: &str) -> Pool {
     Pool::builder(manager)
         .post_create(deadpool::managed::Hook::async_fn(|conn: &mut <deadpool_sqlite::Manager as deadpool::managed::Manager>::Type, _| {
             Box::pin(async move {
-                conn.interact(|db: &mut rusqlite::Connection| register_custom_functions(db))
+                conn.interact(|db: &mut rusqlite::Connection| {
+                    db.execute_batch("PRAGMA foreign_keys = ON;")?;
+                    register_custom_functions(db)
+                })
                     .await
                     .map_err(|e| deadpool::managed::HookError::Message(e.to_string().into()))?
                     .map_err(|e| deadpool::managed::HookError::Message(e.to_string().into()))?;

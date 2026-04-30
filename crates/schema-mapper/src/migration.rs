@@ -7,6 +7,9 @@ pub fn generate_create_table_sql(table_name: &str, table: &PhysicalTable) -> Str
     for col in &table.columns {
         cols.push(format!("    {} {}", col.name, col.sqlite_type));
     }
+    for fk in &table.foreign_keys {
+        cols.push(format!("    {}", fk));
+    }
     sql.push_str(&cols.join(",\n"));
     sql.push_str("\n)");
     sql
@@ -89,6 +92,7 @@ mod tests {
             ],
             indexes: vec![],
             triggers: vec![],
+            foreign_keys: vec![],
         };
         let sql = generate_create_table_sql("User", &table);
         assert_eq!(sql, "CREATE TABLE User (\n    id TEXT PRIMARY KEY,\n    name TEXT\n)");
@@ -114,6 +118,7 @@ mod tests {
             ],
             indexes: vec![],
             triggers: vec![],
+            foreign_keys: vec![],
         };
         let live_cols = vec!["id".to_string(), "age".to_string()];
         let op = MigrationOp::RebuildTable { table, live_cols };
@@ -166,6 +171,7 @@ mod tests {
             triggers: vec![
                 PhysicalTrigger { name: "trg_test".to_string(), sql: "CREATE TRIGGER trg_test AFTER INSERT ON Device BEGIN SELECT 1; END;".to_string() }
             ],
+            foreign_keys: vec![],
         };
         let op = MigrationOp::CreateTable { table };
         let sql = generate_sql(&op);
