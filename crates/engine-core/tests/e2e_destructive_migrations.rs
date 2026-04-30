@@ -45,7 +45,7 @@ async fn test_e2e_destructive_migrations() {
     run_cmd(cmd);
 
     // 4. Insert incompatible data
-    let pool = engine_core::pool::create_pool(&db_uri);
+    let pool = api_layer::db::create_pool(&db_uri);
     let conn = pool.get().await.unwrap();
     conn.interact(|db| {
         db.execute("INSERT INTO Config (id, value) VALUES ('c1', 'hello_world')", []).unwrap();

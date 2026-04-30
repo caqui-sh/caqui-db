@@ -69,7 +69,7 @@ async fn test_e2e_on_delete() {
     run_cmd(cmd);
 
     // 4. Create a connection pool to test PRAGMA foreign_keys = ON
-    let pool = engine_core::pool::create_pool(&db_uri);
+    let pool = api_layer::db::create_pool(&db_uri);
     
     // 5. Test Cascade
     let conn = pool.get().await.unwrap();

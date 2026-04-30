@@ -464,7 +464,7 @@ fn test_e2e_custom_functions_and_triggers() {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         ).unwrap();
         // Register custom functions manually here so the INSERT works natively
-        engine_core::pool::register_custom_functions(&conn).unwrap();
+        api_layer::db::register_custom_functions(&conn).unwrap();
         conn.execute("INSERT INTO Item (name) VALUES ('Test Item')", []).unwrap();
         conn.execute("UPDATE Item SET name = 'Updated Item'", []).unwrap();
     }

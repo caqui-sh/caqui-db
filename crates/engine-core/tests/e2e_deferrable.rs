@@ -60,7 +60,7 @@ async fn test_e2e_deferrable() {
     run_cmd(cmd);
 
     // 4. Create connection pool
-    let pool = engine_core::pool::create_pool(&db_uri);
+    let pool = api_layer::db::create_pool(&db_uri);
     
     // 5. Test Deferrable - Success within a Transaction (Circular Insert)
     let conn = pool.get().await.unwrap();

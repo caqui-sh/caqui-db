@@ -57,7 +57,7 @@ async fn test_e2e_relation_names() {
     run_cmd(cmd);
 
     // 4. Create connection pool & Insert Data
-    let pool = engine_core::pool::create_pool(&db_uri);
+    let pool = api_layer::db::create_pool(&db_uri);
     
     let conn = pool.get().await.unwrap();
     conn.interact(|db| {
@@ -156,7 +156,7 @@ async fn test_e2e_self_referential_relations() {
     cmd.args(&["schema", "db-push"]).current_dir(workspace);
     run_cmd(cmd);
 
-    let pool = engine_core::pool::create_pool(&db_uri);
+    let pool = api_layer::db::create_pool(&db_uri);
     
     let conn = pool.get().await.unwrap();
     conn.interact(|db| {
