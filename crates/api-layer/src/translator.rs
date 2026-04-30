@@ -143,11 +143,43 @@ pub fn hydrate_payload_to_ir(
                 let child_node = hydrate_payload_to_ir(ast, target_model, sub_payload, alias_counter)?;
                 let is_list = matches!(field_def.field_type, AstFieldType::RelationArray(_));
                 
+                // Determine foreign key by inspecting the AST
+                let mut resolved_fk = format!("{}_id", model_name.to_lowercase()); // fallback
+                
+                let relation_attr = field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. }));
+                let relation_name = if let Some(FieldAttribute::Relation { name, .. }) = relation_attr {
+                    name.clone()
+                } else {
+                    None
+                };
+
+                let target_model_def = ast.models.get(target_model).unwrap();
+                
+                for target_field in &target_model_def.fields {
+                    if let AstFieldType::Relation(ref_model) | AstFieldType::RelationArray(ref_model) = &target_field.field_type {
+                        if ref_model == model_name {
+                            if let Some(FieldAttribute::Relation { name: target_name, fields, .. }) = target_field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                                if relation_name == *target_name {
+                                    if !fields.is_empty() {
+                                        resolved_fk = fields[0].clone();
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // If we are on the child side (we own the foreign key), our own @relation holds the fields
+                if let Some(FieldAttribute::Relation { fields, .. }) = relation_attr {
+                    if !fields.is_empty() {
+                        resolved_fk = fields[0].clone();
+                    }
+                }
+                
                 selections.push(SelectField::Relation {
                     field_name: field_name.clone(),
-                    // In a production engine, foreign_key resolution is mapped from AST relation attributes
-                    // but for this phase we fall back to a simple convention based on the parent model.
-                    foreign_key: format!("{}_id", model_name.to_lowercase()), 
+                    foreign_key: resolved_fk, 
                     is_list,
                     query: Box::new(child_node),
                 });

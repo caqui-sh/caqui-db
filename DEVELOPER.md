@@ -91,18 +91,14 @@ When validated, the payload is compiled by Phase 4, thrown into the thread-safe 
 
 To maintain feature parity with modern DSLs (like Prisma or GraphQL), the following architectural features are under consideration for future development:
 
-### 1. Disambiguating Multiple Relations (Relation Names)
-- **Syntax:** `@relation("AuthorToPost", fields: [authorId], references: [id])`
-- **Use Case:** When a `Post` model has two distinct relations to a `User` model (e.g., `author` and `reviewer`), the query compiler needs named definitions to disambiguate which foreign key correctly maps back to the parent.
-
-### 2. Composite Unique Constraints & Indexes
+### 1. Composite Unique Constraints & Indexes
 - **Syntax:** `@@unique([firstName, lastName])`
 - **Use Case:** Highly common in join tables (e.g., `@@unique([userId, postId])` for a `Like` tracking table). Our schema parser currently handles field-level `@unique`, but block-level composite unique enforcement is needed for complex relationships.
 
-### 3. Database Mapping (`@map` / `@@map`)
+### 2. Database Mapping (`@map` / `@@map`)
 - **Syntax:** `@@map("tbl_users")` or `@map("first_name")`
 - **Use Case:** Allows developers to expose clean, idiomatic camelCase names in their API and JSON responses while physically interacting with a legacy database that enforces snake_case or prefix-based schemas.
 
-### 4. Composite Foreign Keys
+### 3. Composite Foreign Keys
 - **Syntax:** `@relation(fields: [f1, f2], references: [r1, r2])`
 - **Use Case:** Required for interacting with complex legacy databases that use composite primary keys. The AST `fields` and `references` vectors already natively support multiple values, but the SQL generation and runtime Query Compiler `JOIN` logic needs expansion to support parsing arrays of keys.
