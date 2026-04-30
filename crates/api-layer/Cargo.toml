@@ -11,7 +11,9 @@ axum = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }
 deadpool-sqlite = { workspace = true }
+deadpool = { workspace = true }
 rusqlite = { workspace = true }
+uuid = { version = "1.8", features = ["v7", "v4"] }
 
 [dev-dependencies]
 tower = { workspace = true }

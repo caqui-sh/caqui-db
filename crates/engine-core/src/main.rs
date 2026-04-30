@@ -93,7 +93,7 @@ union SearchResult = User | Post
     };
     
     // 3. Spin up the SQLite connection pool using the Custom VFS & WAL pragmas
-    let db_pool = engine_core::pool::create_pool("file:app.db?vfs=git");
+    let db_pool = api_layer::db::create_pool("file:app.db?vfs=git");
 
     match cli.command {
         Commands::Init => unreachable!(),
