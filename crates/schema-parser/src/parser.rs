@@ -85,6 +85,7 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                                         let mut fields_vec = Vec::new();
                                         let mut refs_vec = Vec::new();
                                         let mut on_delete = None;
+                                        let mut deferrable = false;
                                         
                                         if let Some(args_rule) = attr_inner.next() {
                                             for param_rule in args_rule.into_inner() {
@@ -93,23 +94,30 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                                                 if actual_param.as_rule() == Rule::named_arg {
                                                     let mut param_inner = actual_param.into_inner();
                                                     let key = param_inner.next().unwrap().as_str();
-                                                    let val_rule = param_inner.next().unwrap().into_inner().next().unwrap();
+                                                    let val_pair = param_inner.next().unwrap();
                                                     
                                                     if key == "fields" {
+                                                        let val_rule = val_pair.into_inner().next().unwrap();
                                                         if val_rule.as_rule() == Rule::attr_array {
                                                             fields_vec = val_rule.into_inner().map(|r| r.as_str().to_string()).collect();
                                                         }
                                                     } else if key == "references" {
+                                                        let val_rule = val_pair.into_inner().next().unwrap();
                                                         if val_rule.as_rule() == Rule::attr_array {
                                                             refs_vec = val_rule.into_inner().map(|r| r.as_str().to_string()).collect();
                                                         }
                                                     } else if key == "onDelete" {
+                                                        let val_rule = val_pair.into_inner().next().unwrap();
                                                         on_delete = Some(val_rule.as_str().to_string());
+                                                    } else if key == "deferrable" {
+                                                        if val_pair.as_str() == "true" {
+                                                            deferrable = true;
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
-                                        attributes.push(FieldAttribute::Relation { fields: fields_vec, references: refs_vec, on_delete });
+                                        attributes.push(FieldAttribute::Relation { fields: fields_vec, references: refs_vec, on_delete, deferrable });
                                     },
                                     _ => {}
                                 }
@@ -268,6 +276,7 @@ mod tests {
             fields: vec!["id".to_string()],
             references: vec!["authorId".to_string()],
             on_delete: Some("Cascade".to_string()),
+            deferrable: false,
         }]);
     }
 }
