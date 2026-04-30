@@ -120,7 +120,7 @@ pub fn hydrate_payload_to_ir(
         if where_obj.is_empty() {
             None
         } else {
-            Some(parse_where_clause(where_obj, model_def)?)
+            Some(parse_where_clause(ast, where_obj, model_def)?)
         }
     } else {
         None
