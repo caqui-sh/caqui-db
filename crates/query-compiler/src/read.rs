@@ -1,4 +1,4 @@
-use crate::ir::{QueryNode, SelectField, WhereClause, WhereCondition};
+use crate::ir::{QueryNode, SelectField, WhereClause, WhereCondition, RelationFilter};
 
 pub fn compile_where_clause(clause: &WhereClause, alias: &str) -> String {
     match clause {
@@ -31,6 +31,41 @@ pub fn compile_where_clause(clause: &WhereClause, alias: &str) -> String {
                 WhereCondition::IsNotNull => format!("{} IS NOT NULL", col),
             }
         }
+        WhereClause::Relation { target_model, fk_column, is_forward, filter, .. } => {
+            let child_alias = format!("{}_{}", alias, target_model.to_lowercase());
+            
+            let join_cond = if *is_forward {
+                // Parent holds FK
+                format!("{}.id = {}.{}", child_alias, alias, fk_column)
+            } else {
+                // Child holds FK
+                format!("{}.{} = {}.id", child_alias, fk_column, alias)
+            };
+
+            match filter {
+                RelationFilter::Some(inner) => {
+                    let inner_sql = compile_where_clause(inner, &child_alias);
+                    format!("EXISTS (SELECT 1 FROM {} AS {} WHERE {} AND {})", target_model, child_alias, join_cond, inner_sql)
+                }
+                RelationFilter::Every(inner) => {
+                    let inner_sql = compile_where_clause(inner, &child_alias);
+                    format!("NOT EXISTS (SELECT 1 FROM {} AS {} WHERE {} AND NOT ({}))", target_model, child_alias, join_cond, inner_sql)
+                }
+                RelationFilter::None(inner) => {
+                    let inner_sql = compile_where_clause(inner, &child_alias);
+                    format!("NOT EXISTS (SELECT 1 FROM {} AS {} WHERE {} AND {})", target_model, child_alias, join_cond, inner_sql)
+                }
+                RelationFilter::Is(inner) => {
+                    let inner_sql = compile_where_clause(inner, &child_alias);
+                    format!("EXISTS (SELECT 1 FROM {} AS {} WHERE {} AND {})", target_model, child_alias, join_cond, inner_sql)
+                }
+                RelationFilter::IsNot(inner) => {
+                    let inner_sql = compile_where_clause(inner, &child_alias);
+                    format!("NOT EXISTS (SELECT 1 FROM {} AS {} WHERE {} AND {})", target_model, child_alias, join_cond, inner_sql)
+                }
+            }
+        }
+        WhereClause::AlwaysTrue => "1=1".to_string(),
     }
 }
 

@@ -102,3 +102,7 @@ To maintain feature parity with modern DSLs (like Prisma or GraphQL), the follow
 ### 3. Composite Foreign Keys
 - **Syntax:** `@relation(fields: [f1, f2], references: [r1, r2])`
 - **Use Case:** Required for interacting with complex legacy databases that use composite primary keys. The AST `fields` and `references` vectors already natively support multiple values, but the SQL generation and runtime Query Compiler `JOIN` logic needs expansion to support parsing arrays of keys.
+
+### 4. Batch Operations
+- **Syntax:** `action: "createMany"`, `action: "updateMany"`, `action: "deleteMany"`
+- **Use Case:** High-performance bulk data modifications. Requires query chunking to circumvent SQLite's parameter limits and logic to return aggregate counts (`{ count: N }`) instead of materializing thousands of objects into application memory.

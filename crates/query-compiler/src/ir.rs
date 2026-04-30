@@ -45,8 +45,25 @@ pub enum WhereCondition {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum RelationFilter {
+    Some(Box<WhereClause>),
+    Every(Box<WhereClause>),
+    None(Box<WhereClause>),
+    Is(Box<WhereClause>),
+    IsNot(Box<WhereClause>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum WhereClause {
     And(Vec<WhereClause>),
     Or(Vec<WhereClause>),
     Field(String, WhereCondition),
+    Relation {
+        field_name: String,
+        target_model: String,
+        fk_column: String,
+        is_forward: bool,
+        filter: RelationFilter,
+    },
+    AlwaysTrue,
 }

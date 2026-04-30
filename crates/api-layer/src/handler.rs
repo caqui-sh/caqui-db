@@ -1742,4 +1742,308 @@ mod tests {
         let data = json_body["data"].as_object().unwrap();
         assert_eq!(data["name"], "BobNew"); 
     }
+
+    #[tokio::test]
+    async fn test_api_relational_filtering_some() {
+        let state = build_test_state().await;
+        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "model": "User",
+                    "action": "findMany",
+                    "where": {
+                        "posts": {
+                            "some": { "title": { "eq": "First Post" } }
+                        }
+                    },
+                    "select": { "name": true }
+                }"#
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let data = json_body["data"].as_array().unwrap();
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0]["name"], "Bob"); 
+    }
+
+    #[tokio::test]
+    async fn test_api_relational_filtering_none() {
+        let state = build_test_state().await;
+        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
+
+        // Add a second user with no posts
+        let conn = state.db_pool.get().await.unwrap();
+        conn.interact(|db| {
+            db.execute("INSERT INTO User (id, name, age) VALUES ('u2', 'Alice', 30);", []).unwrap();
+        }).await.unwrap();
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "model": "User",
+                    "action": "findMany",
+                    "where": {
+                        "posts": {
+                            "none": { "title": { "eq": "First Post" } }
+                        }
+                    },
+                    "select": { "name": true }
+                }"#
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let data = json_body["data"].as_array().unwrap();
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0]["name"], "Alice");
+    }
+
+    #[tokio::test]
+    async fn test_api_relational_filtering_every() {
+        let state = build_test_state().await;
+        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
+
+        // Add a user with ONLY matching posts
+        let conn = state.db_pool.get().await.unwrap();
+        conn.interact(|db| {
+            db.execute("INSERT INTO User (id, name, age) VALUES ('u_every', 'Every', 30);", []).unwrap();
+            db.execute("INSERT INTO Post (id, title, authorId) VALUES ('p_e1', 'Good Post', 'u_every');", []).unwrap();
+            db.execute("INSERT INTO Post (id, title, authorId) VALUES ('p_e2', 'Another Good Post', 'u_every');", []).unwrap();
+            
+            // User with NO posts (should evaluate to TRUE for every)
+            db.execute("INSERT INTO User (id, name, age) VALUES ('u_empty', 'Empty', 30);", []).unwrap();
+            
+            // User with mixed posts (should evaluate to FALSE)
+            db.execute("INSERT INTO User (id, name, age) VALUES ('u_mixed', 'Mixed', 30);", []).unwrap();
+            db.execute("INSERT INTO Post (id, title, authorId) VALUES ('p_m1', 'Good Post', 'u_mixed');", []).unwrap();
+            db.execute("INSERT INTO Post (id, title, authorId) VALUES ('p_m2', 'Bad Post', 'u_mixed');", []).unwrap();
+        }).await.unwrap();
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "model": "User",
+                    "action": "findMany",
+                    "where": {
+                        "posts": {
+                            "every": { "title": { "eq": "Good Post" } }
+                        }
+                    },
+                    "select": { "name": true }
+                }"#
+            ))
+            .unwrap();
+
+        // Wait, "Another Good Post" is not "Good Post". So 'u_every' actually evaluates to FALSE. Let's fix that query or expectation.
+        // Actually, let's look for "Good" using like/contains. Since we only have eq, let's just test "Good Post".
+        // We expect u_empty to return. 'Bob' (u1) has 'First Post', which is not 'Good Post', so Bob returns FALSE.
+        // Wait, 'u_every' has 'p_e2' = 'Another Good Post', so it's FALSE. Let's make it TRUE.
+        conn.interact(|db| {
+            db.execute("UPDATE Post SET title = 'Good Post' WHERE id = 'p_e2';", []).unwrap();
+        }).await.unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let data = json_body["data"].as_array().unwrap();
+        
+        let names: Vec<&str> = data.iter().map(|v| v["name"].as_str().unwrap()).collect();
+        assert_eq!(names.len(), 2, "Should find u_every and u_empty");
+        assert!(names.contains(&"Every"));
+        assert!(names.contains(&"Empty")); // Empty collections return true for EVERY
+    }
+
+    #[tokio::test]
+    async fn test_api_relational_filtering_1_to_1() {
+        let state = build_test_state().await;
+        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "model": "User",
+                    "action": "findMany",
+                    "where": {
+                        "profile": {
+                            "is": { "bio": { "eq": "Existing Profile" } }
+                        }
+                    },
+                    "select": { "name": true }
+                }"#
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let data = json_body["data"].as_array().unwrap();
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0]["name"], "Bob"); 
+    }
+
+    #[tokio::test]
+    async fn test_api_relational_filtering_deeply_nested() {
+        let state = build_test_state().await;
+        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "model": "User",
+                    "action": "findMany",
+                    "where": {
+                        "posts": {
+                            "some": {
+                                "comments": {
+                                    "some": { "text": { "eq": "First Comment" } }
+                                }
+                            }
+                        }
+                    },
+                    "select": { "name": true }
+                }"#
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let data = json_body["data"].as_array().unwrap();
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0]["name"], "Bob"); 
+    }
+
+    #[tokio::test]
+    async fn test_api_relational_filtering_empty_existence() {
+        let state = build_test_state().await;
+        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
+
+        // Add a user with NO posts
+        let conn = state.db_pool.get().await.unwrap();
+        conn.interact(|db| {
+            db.execute("INSERT INTO User (id, name, age) VALUES ('u2', 'Alice', 30);", []).unwrap();
+        }).await.unwrap();
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "model": "User",
+                    "action": "findMany",
+                    "where": {
+                        "posts": { "some": {} }
+                    },
+                    "select": { "name": true }
+                }"#
+            ))
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let data = json_body["data"].as_array().unwrap();
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0]["name"], "Bob"); // Alice has no posts
+        
+        let request2 = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "model": "User",
+                    "action": "findMany",
+                    "where": {
+                        "posts": { "none": {} }
+                    },
+                    "select": { "name": true }
+                }"#
+            ))
+            .unwrap();
+
+        let response2 = app.oneshot(request2).await.unwrap();
+        assert_eq!(response2.status(), StatusCode::OK);
+        
+        let body_bytes2 = axum::body::to_bytes(response2.into_body(), usize::MAX).await.unwrap();
+        let json_body2: serde_json::Value = serde_json::from_slice(&body_bytes2).unwrap();
+        let data2 = json_body2["data"].as_array().unwrap();
+        assert_eq!(data2.len(), 1);
+        assert_eq!(data2[0]["name"], "Alice"); // Alice is the only one with no posts
+    }
+
+    #[tokio::test]
+    async fn test_api_relational_filtering_in_mutation() {
+        let state = build_test_state().await;
+        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "model": "User",
+                    "action": "update",
+                    "where": { "id": "u1" },
+                    "data": {
+                        "posts": {
+                            "update": [
+                                {
+                                    "where": { 
+                                        "comments": { "some": { "text": { "eq": "First Comment" } } } 
+                                    },
+                                    "data": { "title": "Flagged" }
+                                }
+                            ]
+                        }
+                    },
+                    "select": { "id": true, "posts": { "select": { "title": true } } }
+                }"#
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let posts = json_body["data"]["posts"].as_array().unwrap();
+        assert_eq!(posts[0]["title"].as_str().unwrap(), "Flagged"); 
+    }
 }

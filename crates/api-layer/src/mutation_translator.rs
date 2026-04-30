@@ -51,7 +51,7 @@ pub fn hydrate_mutation_to_plan(
             let mut params = Vec::new();
             let mut param_idx = 1;
             
-            let where_clause_ir = parse_where_clause(where_obj, model_def)?;
+            let where_clause_ir = parse_where_clause(ast, where_obj, model_def)?;
             let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, model_name, &mut param_idx);
             params.extend(where_params);
             
@@ -534,7 +534,7 @@ fn translate_update_node(
         set_clauses.push("id = id".to_string());
     }
     
-    let where_clause_ir = parse_where_clause(where_obj, model_def)?;
+    let where_clause_ir = parse_where_clause(ast, where_obj, model_def)?;
     let (mut where_sql, mut where_params) = compile_parameterized_where(&where_clause_ir, model_name, &mut param_idx);
     
     if let Some(rel) = &parent_rel {
@@ -605,7 +605,7 @@ fn translate_root_upsert_node(
     *alias_counter += 1;
     
     let mut param_idx = 1;
-    let where_clause_ir = parse_where_clause(where_obj, model_def)?;
+    let where_clause_ir = parse_where_clause(ast, where_obj, model_def)?;
     
     // Safety check: Upserts must target a unique field
     // In Phase 4, we enforce this at the Rust layer since we don't rely on ON CONFLICT anymore.
@@ -623,7 +623,7 @@ fn translate_root_upsert_node(
     let _create_step_id = translate_create_node(ast, model_name, create_data, &mut if_not_exists, alias_counter, None)?;
 
     let mut if_exists = Vec::new();
-    let _update_step_id = translate_update_node(ast, model_name, where_obj, update_data, &mut if_exists, alias_counter)?;
+    let _update_step_id = translate_update_node(ast, model_name, where_obj, update_data, &mut if_exists, alias_counter, None)?;
     
     // We need the executor to return `create_step_id` or `update_step_id` under `step_id`?
     // Actually, `ExecutionStep::UpsertBranch` currently uses `root_step_id: String` to know what to assign.
@@ -700,7 +700,7 @@ fn process_deferred_children(
                 param_idx += 1;
                 
                 let child_model_def = ast.models.get(&child.target_model).unwrap();
-                let where_clause_ir = parse_where_clause(&connect_where, child_model_def)?;
+                let where_clause_ir = parse_where_clause(ast, &connect_where, child_model_def)?;
                 let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &child.target_model, &mut param_idx);
                 params.extend(where_params);
                 
@@ -732,7 +732,7 @@ fn process_deferred_children(
                 let mut param_idx = 1;
                 
                 let child_model_def = ast.models.get(&child.target_model).unwrap();
-                let where_clause_ir = parse_where_clause(&child_where, child_model_def)?;
+                let where_clause_ir = parse_where_clause(ast, &child_where, child_model_def)?;
                 let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &child.target_model, &mut param_idx);
                 params.extend(where_params);
                 
@@ -760,7 +760,7 @@ fn process_deferred_children(
                 let mut param_idx = 1;
                 
                 let child_model_def = ast.models.get(&child.target_model).unwrap();
-                let where_clause_ir = parse_where_clause(&child_where, child_model_def)?;
+                let where_clause_ir = parse_where_clause(ast, &child_where, child_model_def)?;
                 let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &child.target_model, &mut param_idx);
                 params.extend(where_params);
                 
@@ -879,7 +879,7 @@ fn process_deferred_children(
                     param_idx += 1;
                     
                     let child_model_def = ast.models.get(&child.target_model).unwrap();
-                    let where_clause_ir = parse_where_clause(&connect_where, child_model_def)?;
+                    let where_clause_ir = parse_where_clause(ast, &connect_where, child_model_def)?;
                     let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &child.target_model, &mut param_idx);
                     params.extend(where_params);
                     
@@ -907,7 +907,7 @@ fn compile_parameterized_where(
     alias: &str,
     param_idx: &mut usize,
 ) -> (String, Vec<Parameter>) {
-    use query_compiler::ir::{WhereClause, WhereCondition};
+    use query_compiler::ir::{WhereClause, WhereCondition, RelationFilter};
     let mut params = Vec::new();
 
     match clause {
@@ -985,6 +985,46 @@ fn compile_parameterized_where(
                 WhereCondition::IsNotNull => (format!("{} IS NOT NULL", col), params),
             }
         }
+        WhereClause::Relation { target_model, fk_column, is_forward, filter, .. } => {
+            let child_alias = format!("{}_{}", alias, target_model.to_lowercase());
+            
+            let join_cond = if *is_forward {
+                // Parent holds FK
+                format!("{}.id = {}.{}", child_alias, alias, fk_column)
+            } else {
+                // Child holds FK
+                format!("{}.{} = {}.id", child_alias, fk_column, alias)
+            };
+
+            match filter {
+                RelationFilter::Some(inner) => {
+                    let (inner_sql, inner_params) = compile_parameterized_where(inner, &child_alias, param_idx);
+                    params.extend(inner_params);
+                    (format!("EXISTS (SELECT 1 FROM {} AS {} WHERE {} AND {})", target_model, child_alias, join_cond, inner_sql), params)
+                }
+                RelationFilter::Every(inner) => {
+                    let (inner_sql, inner_params) = compile_parameterized_where(inner, &child_alias, param_idx);
+                    params.extend(inner_params);
+                    (format!("NOT EXISTS (SELECT 1 FROM {} AS {} WHERE {} AND NOT ({}))", target_model, child_alias, join_cond, inner_sql), params)
+                }
+                RelationFilter::None(inner) => {
+                    let (inner_sql, inner_params) = compile_parameterized_where(inner, &child_alias, param_idx);
+                    params.extend(inner_params);
+                    (format!("NOT EXISTS (SELECT 1 FROM {} AS {} WHERE {} AND {})", target_model, child_alias, join_cond, inner_sql), params)
+                }
+                RelationFilter::Is(inner) => {
+                    let (inner_sql, inner_params) = compile_parameterized_where(inner, &child_alias, param_idx);
+                    params.extend(inner_params);
+                    (format!("EXISTS (SELECT 1 FROM {} AS {} WHERE {} AND {})", target_model, child_alias, join_cond, inner_sql), params)
+                }
+                RelationFilter::IsNot(inner) => {
+                    let (inner_sql, inner_params) = compile_parameterized_where(inner, &child_alias, param_idx);
+                    params.extend(inner_params);
+                    (format!("NOT EXISTS (SELECT 1 FROM {} AS {} WHERE {} AND {})", target_model, child_alias, join_cond, inner_sql), params)
+                }
+            }
+        },
+        WhereClause::AlwaysTrue => ("1=1".to_string(), params),
     }
 }
 
