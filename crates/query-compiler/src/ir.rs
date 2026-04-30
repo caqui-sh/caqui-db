@@ -21,6 +21,7 @@ pub enum SelectField {
         field_name: String,
         foreign_key: String,
         is_list: bool,
+        is_forward: bool,
         query: Box<QueryNode>,
     },
     /// A Polymorphic Union request requiring conditional resolution

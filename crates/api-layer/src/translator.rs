@@ -170,10 +170,13 @@ pub fn hydrate_payload_to_ir(
                     }
                 }
                 
+                let mut is_forward = false;
+                
                 // If we are on the child side (we own the foreign key), our own @relation holds the fields
                 if let Some(FieldAttribute::Relation { fields, .. }) = relation_attr {
                     if !fields.is_empty() {
                         resolved_fk = fields[0].clone();
+                        is_forward = true;
                     }
                 }
                 
@@ -181,6 +184,7 @@ pub fn hydrate_payload_to_ir(
                     field_name: field_name.clone(),
                     foreign_key: resolved_fk, 
                     is_list,
+                    is_forward,
                     query: Box::new(child_node),
                 });
             },

@@ -127,3 +127,104 @@ async fn test_e2e_relation_names() {
     assert_eq!(reviewed.len(), 1, "Alice reviewed 1 post");
     assert_eq!(reviewed[0]["title"], "SQLite Tips");
 }
+
+#[tokio::test]
+async fn test_e2e_self_referential_relations() {
+    let dir = tempdir().unwrap();
+    let workspace = dir.path();
+    engine_core::vfs::bootstrap_custom_vfs();
+    
+    let caqui_bin = env!("CARGO_BIN_EXE_caqui");
+    let db_uri = format!("file:{}?vfs=git", workspace.join("app.db").display());
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.arg("init").current_dir(workspace);
+    run_cmd(cmd);
+
+    let schema = "
+        model Employee {
+            id String @id
+            name String
+            managerId String
+            manager Employee @relation(\"ManagerToEmployee\", fields: [managerId], references: [id])
+            directReports Employee[] @relation(\"ManagerToEmployee\")
+        }
+    ";
+    fs::write(workspace.join("schema.cq"), schema).unwrap();
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let pool = engine_core::pool::create_pool(&db_uri);
+    
+    let conn = pool.get().await.unwrap();
+    conn.interact(|db| {
+        db.execute_batch("
+            BEGIN TRANSACTION;
+            INSERT INTO Employee (id, name, managerId) VALUES ('e1', 'CEO', 'e1');
+            INSERT INTO Employee (id, name, managerId) VALUES ('e2', 'VP', 'e1');
+            INSERT INTO Employee (id, name, managerId) VALUES ('e3', 'Manager', 'e2');
+            INSERT INTO Employee (id, name, managerId) VALUES ('e4', 'IC', 'e3');
+            COMMIT;
+        ").unwrap();
+        Ok::<(), rusqlite::Error>(())
+    }).await.unwrap().unwrap();
+
+    let ast = schema_parser::parser::parse_schema(schema).unwrap();
+    
+    let payload = json!({
+        "action": "findMany",
+        "select": {
+            "name": true,
+            "directReports": {
+                "select": {
+                    "name": true,
+                    "directReports": {
+                        "select": {
+                            "name": true,
+                            "manager": {
+                                "select": { "name": true }
+                            }
+                        }
+                    }
+                },
+                "where": {
+                    "name": { "notEq": "CEO" }
+                }
+            }
+        },
+        "where": {
+            "name": "CEO"
+        }
+    });
+
+    let mut alias_counter = 0;
+    let ir = api_layer::translator::hydrate_payload_to_ir(&ast, "Employee", &payload, &mut alias_counter).unwrap();
+    let sql = query_compiler::read::compile_select(&ir, None);
+    println!("GENERATED SQL:\n{}", sql);
+
+    let conn2 = pool.get().await.unwrap();
+    let result_json: String = conn2.interact(move |db| {
+        let mut stmt = db.prepare(&sql).unwrap();
+        stmt.query_row([], |row| row.get(0))
+    }).await.unwrap().unwrap();
+
+    let result_val: serde_json::Value = serde_json::from_str(&result_json).unwrap();
+    let rows = result_val.as_array().unwrap();
+    
+    assert_eq!(rows.len(), 1, "Should return exactly one CEO");
+    let ceo = &rows[0];
+    assert_eq!(ceo["name"], "CEO");
+    
+    let ceo_directs = ceo["directReports"].as_array().unwrap();
+    assert_eq!(ceo_directs.len(), 1, "CEO has 1 real direct report (VP)");
+    assert_eq!(ceo_directs[0]["name"], "VP");
+    
+    let vp_directs = ceo_directs[0]["directReports"].as_array().unwrap();
+    assert_eq!(vp_directs.len(), 1, "VP has 1 direct report (Manager)");
+    assert_eq!(vp_directs[0]["name"], "Manager");
+    
+    let manager_manager = &vp_directs[0]["manager"];
+    assert_eq!(manager_manager["name"], "VP", "Manager's manager is VP");
+}

@@ -42,11 +42,15 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                 // preventing double-escaped strings like "[\"a\"]".
                 json_pairs.push(format!("'{}', json({}.{})", name, node.alias, name));
             },
-            SelectField::Relation { field_name, foreign_key, is_list, query } => {
+            SelectField::Relation { field_name, foreign_key, is_list, is_forward, query } => {
                 // The Recursive N+1 Neutralizer: Correlated Subquery with JSON aggregation
                 let child_json_obj = compile_select(query, Some((&node.alias, foreign_key)));
                 
-                let mut where_conds = vec![format!("{}.{} = {}.id", query.alias, foreign_key, node.alias)];
+                let mut where_conds = if *is_forward {
+                    vec![format!("{}.id = {}.{}", query.alias, node.alias, foreign_key)]
+                } else {
+                    vec![format!("{}.{} = {}.id", query.alias, foreign_key, node.alias)]
+                };
                 if let Some(filters) = &query.filters {
                     where_conds.push(compile_where_clause(filters, &query.alias));
                 }
@@ -182,6 +186,7 @@ mod tests {
                     field_name: "posts".to_string(),
                     foreign_key: "author_id".to_string(),
                     is_list: true,
+                    is_forward: false,
                     query: Box::new(child_query),
                 }
             ],
@@ -257,6 +262,7 @@ mod tests {
                     field_name: "comments".to_string(),
                     foreign_key: "post_id".to_string(),
                     is_list: true,
+                    is_forward: false,
                     query: Box::new(comments_query),
                 }
             ],
@@ -274,6 +280,7 @@ mod tests {
                     field_name: "posts".to_string(),
                     foreign_key: "author_id".to_string(),
                     is_list: true,
+                    is_forward: false,
                     query: Box::new(posts_query),
                 }
             ],
@@ -328,6 +335,7 @@ mod tests {
                     field_name: "profile".to_string(),
                     foreign_key: "user_id".to_string(),
                     is_list: false,
+                    is_forward: false,
                     query: Box::new(child_query),
                 }
             ],
@@ -438,6 +446,7 @@ mod tests {
                     field_name: "posts".to_string(),
                     foreign_key: "author_id".to_string(),
                     is_list: true,
+                    is_forward: false,
                     query: Box::new(child_query),
                 }
             ],
