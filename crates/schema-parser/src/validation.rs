@@ -79,6 +79,48 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
         }
     }
 
+    // Pass 3: Ambiguous Relations Check
+    for model in ast.models.values() {
+        let mut target_counts: std::collections::HashMap<&String, Vec<&FieldNode>> = std::collections::HashMap::new();
+        
+        for field in &model.fields {
+            match &field.field_type {
+                AstFieldType::Relation(target_name) | AstFieldType::RelationArray(target_name) => {
+                    if model_symbols.contains(target_name) {
+                        target_counts.entry(target_name).or_insert_with(Vec::new).push(field);
+                    }
+                },
+                _ => {}
+            }
+        }
+        
+        for (target_name, relation_fields) in target_counts {
+            if relation_fields.len() > 1 {
+                let mut seen_names = HashSet::new();
+                for field in relation_fields {
+                    let mut has_name = false;
+                    if let Some(FieldAttribute::Relation { name, .. }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                        if let Some(n) = name {
+                            has_name = true;
+                            if !seen_names.insert(n) {
+                                return Err(ValidationError(format!(
+                                    "Ambiguous relations: Model '{}' has multiple relations to '{}' with the same name '{}'. Each must be uniquely named.",
+                                    model.name, target_name, n
+                                )));
+                            }
+                        }
+                    }
+                    if !has_name {
+                        return Err(ValidationError(format!(
+                            "Ambiguous relations: Model '{}' has multiple relations to '{}', but field '{}' is missing a unique @relation(\"Name\").",
+                            model.name, target_name, field.name
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
     Ok(ast)
 }
 
@@ -272,5 +314,58 @@ mod tests {
         let result_field = post_model.fields.iter().find(|f| f.name == "result").unwrap();
         
         assert_eq!(result_field.field_type, AstFieldType::PolymorphicUnion("SearchResult".to_string()));
+    }
+
+    #[test]
+    fn test_validation_ambiguous_relations_missing_name() {
+        let input = "
+            model User {
+                id String @id
+                authoredPosts Post[]
+                reviewedPosts Post[]
+            }
+            model Post {
+                id String @id
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let result = validate_schema(ast);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, "Ambiguous relations: Model 'User' has multiple relations to 'Post', but field 'authoredPosts' is missing a unique @relation(\"Name\").");
+    }
+
+    #[test]
+    fn test_validation_ambiguous_relations_duplicate_name() {
+        let input = "
+            model User {
+                id String @id
+                authoredPosts Post[] @relation(\"AuthorToPost\")
+                reviewedPosts Post[] @relation(\"AuthorToPost\")
+            }
+            model Post {
+                id String @id
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let result = validate_schema(ast);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().0, "Ambiguous relations: Model 'User' has multiple relations to 'Post' with the same name 'AuthorToPost'. Each must be uniquely named.");
+    }
+
+    #[test]
+    fn test_validation_valid_multiple_named_relations() {
+        let input = "
+            model User {
+                id String @id
+                authoredPosts Post[] @relation(\"AuthorToPost\")
+                reviewedPosts Post[] @relation(\"ReviewerToPost\")
+            }
+            model Post {
+                id String @id
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let result = validate_schema(ast);
+        assert!(result.is_ok());
     }
 }
