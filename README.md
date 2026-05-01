@@ -37,16 +37,16 @@ Edit `schema.cq` to define your models.
 
 ```prisma
 model User {
-  id    String @id @default(uuid())
-  name  String
-  posts Post[]
+  id:    String @id @default(uuid())
+  name:  String
+  posts: Post[]
 }
 
 model Post {
-  id       String @id @default(uuid())
-  title    String
-  authorId String
-  author   User   @relation(fields: [authorId], references: [id])
+  id:       String @id @default(uuid())
+  title:    String
+  authorId: String
+  author:   User   @relation(fields: [authorId], references: [id])
 }
 ```
 

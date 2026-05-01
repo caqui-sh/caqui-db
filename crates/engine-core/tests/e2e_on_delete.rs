@@ -33,32 +33,32 @@ async fn test_e2e_on_delete() {
     // 2. Define schema
     let schema = "
         model User {
-            id String @id
-            name String
-            posts Post[]
-            profiles Profile[]
-            comments Comment[]
+            id: String @id
+            name: String
+            posts: Post[]
+            profiles: Profile[]
+            comments: Comment[]
         }
         
         model Post {
-            id String @id
-            title String
-            userId String
-            user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+            id: String @id
+            title: String
+            userId: String
+            user: User @relation(fields: [userId], references: [id], onDelete: Cascade)
         }
         
         model Profile {
-            id String @id
-            bio String
-            userId String
-            user User @relation(fields: [userId], references: [id], onDelete: SetNull)
+            id: String @id
+            bio: String
+            userId: String
+            user: User @relation(fields: [userId], references: [id], onDelete: SetNull)
         }
         
         model Comment {
-            id String @id
-            text String
-            userId String
-            user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+            id: String @id
+            text: String
+            userId: String
+            user: User @relation(fields: [userId], references: [id], onDelete: Restrict)
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();

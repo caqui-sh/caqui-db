@@ -33,8 +33,8 @@ async fn test_e2e_destructive_migrations() {
     // 2. Define schema with a String column
     let schema_v1 = "
         model Config {
-            id String @id
-            value String
+            id: String @id
+            value: String
         }
     ";
     fs::write(workspace.join("schema.cq"), schema_v1).unwrap();
@@ -56,8 +56,8 @@ async fn test_e2e_destructive_migrations() {
     // 5. Evolve schema: Change `value` from String to Int
     let schema_v2 = "
         model Config {
-            id String @id
-            value Int
+            id: String @id
+            value: Int
         }
     ";
     fs::write(workspace.join("schema.cq"), schema_v2).unwrap();

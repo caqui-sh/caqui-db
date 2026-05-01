@@ -35,8 +35,8 @@ fn test_e2e_migrate_dev() {
     // Write initial schema
     let initial_schema = "
         model User {
-            id String @id
-            name String
+            id: String @id
+            name: String
         }
     ";
     fs::write(workspace.join("schema.cq"), initial_schema).unwrap();
@@ -73,14 +73,14 @@ fn test_e2e_migrate_dev() {
     // 3. Second Migration (Evolution)
     let evolved_schema = "
         model User {
-            id String @id
-            name String
-            email String
+            id: String @id
+            name: String
+            email: String
         }
         
         model Post {
-            id String @id
-            title String
+            id: String @id
+            title: String
         }
     ";
     fs::write(workspace.join("schema.cq"), evolved_schema).unwrap();

@@ -34,19 +34,19 @@ async fn test_e2e_relation_names() {
     // 2. Define schema with multiple relations
     let schema = "
         model User {
-            id String @id
-            name String
-            authoredPosts Post[] @relation(\"AuthorToPost\")
-            reviewedPosts Post[] @relation(\"ReviewerToPost\")
+            id: String @id
+            name: String
+            authoredPosts: Post[] @relation(\"AuthorToPost\")
+            reviewedPosts: Post[] @relation(\"ReviewerToPost\")
         }
         
         model Post {
-            id String @id
-            title String
-            authorId String
-            author User @relation(\"AuthorToPost\", fields: [authorId], references: [id])
-            reviewerId String
-            reviewer User @relation(\"ReviewerToPost\", fields: [reviewerId], references: [id])
+            id: String @id
+            title: String
+            authorId: String
+            author: User @relation(\"AuthorToPost\", fields: [authorId], references: [id])
+            reviewerId: String
+            reviewer: User @relation(\"ReviewerToPost\", fields: [reviewerId], references: [id])
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -143,11 +143,11 @@ async fn test_e2e_self_referential_relations() {
 
     let schema = "
         model Employee {
-            id String @id
-            name String
-            managerId String
-            manager Employee @relation(\"ManagerToEmployee\", fields: [managerId], references: [id])
-            directReports Employee[] @relation(\"ManagerToEmployee\")
+            id: String @id
+            name: String
+            managerId: String
+            manager: Employee @relation(\"ManagerToEmployee\", fields: [managerId], references: [id])
+            directReports: Employee[] @relation(\"ManagerToEmployee\")
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();

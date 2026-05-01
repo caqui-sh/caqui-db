@@ -27,7 +27,7 @@ attr_args   = { "(" ~ attr_param ~ ("," ~ attr_param)* ~ ")" }
 field_attr  = { "@" ~ ident ~ attr_args? }
 block_attr  = { "@@" ~ ident ~ attr_args? }
 
-field_def  = { ident ~ field_type ~ field_attr* }
+field_def  = { ident ~ ":" ~ field_type ~ field_attr* }
 model_def  = { "model" ~ ident ~ "{" ~ field_def* ~ block_attr* ~ "}" }
 
 // Capture explicit Polymorphic Unions (e.g., union SearchResult = Article | User)

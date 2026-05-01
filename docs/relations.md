@@ -8,17 +8,17 @@ When you have multiple relationships between the same two models, you must name 
 
 ```prisma
 model User {
-  id            String @id
-  authoredPosts Post[] @relation("AuthorToPost")
-  reviewedPosts Post[] @relation("ReviewerToPost")
+  id:            String @id
+  authoredPosts: Post[] @relation("AuthorToPost")
+  reviewedPosts: Post[] @relation("ReviewerToPost")
 }
 
 model Post {
-  id         String @id
-  authorId   String
-  author     User   @relation("AuthorToPost", fields: [authorId], references: [id])
-  reviewerId String
-  reviewer   User   @relation("ReviewerToPost", fields: [reviewerId], references: [id])
+  id:         String @id
+  authorId:   String
+  author:     User   @relation("AuthorToPost", fields: [authorId], references: [id])
+  reviewerId: String
+  reviewer:   User   @relation("ReviewerToPost", fields: [reviewerId], references: [id])
 }
 ```
 
@@ -28,11 +28,11 @@ You can model hierarchies where a model points back to itself.
 
 ```prisma
 model Employee {
-  id              String     @id
-  name            String
-  managerId       String?
-  manager         Employee?  @relation("Management", fields: [managerId], references: [id])
-  directReports   Employee[] @relation("Management")
+  id:              String     @id
+  name:            String
+  managerId:       String?
+  manager:         Employee?  @relation("Management", fields: [managerId], references: [id])
+  directReports:   Employee[] @relation("Management")
 }
 ```
 
@@ -48,14 +48,14 @@ You can control what happens to related records when a parent record is deleted 
 
 ```prisma
 model User {
-  id    String @id
-  posts Post[]
+  id:    String @id
+  posts: Post[]
 }
 
 model Post {
-  id       String @id
-  userId   String
-  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id:       String @id
+  userId:   String
+  user:     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 ```
 
@@ -67,15 +67,15 @@ Using `deferrable: true` tells `caqui` to wait until the end of a transaction to
 
 ```prisma
 model User {
-  id        String  @id
-  profileId String
-  profile   Profile @relation(fields: [profileId], references: [id], deferrable: true)
+  id:        String  @id
+  profileId: String
+  profile:   Profile @relation(fields: [profileId], references: [id], deferrable: true)
 }
 
 model Profile {
-  id     String @id
-  userId String
-  user   User   @relation(fields: [userId], references: [id], deferrable: true)
+  id:     String @id
+  userId: String
+  user:   User   @relation(fields: [userId], references: [id], deferrable: true)
 }
 ```
 

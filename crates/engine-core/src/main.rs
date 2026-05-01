@@ -51,16 +51,16 @@ async fn main() {
             println!("schema.cq already exists.");
         } else {
             let default_schema = r#"model User {
-  id    String @id @default(uuid())
-  name  String
-  posts Post[]
+  id: String @id @default(uuid())
+  name: String
+  posts: Post[]
 }
 
 model Post {
-  id       String @id @default(uuid())
-  title    String
-  authorId String
-  author   User   @relation(fields: [authorId], references: [id])
+  id: String @id @default(uuid())
+  title: String
+  authorId: String
+  author: User @relation(fields: [authorId], references: [id])
 }
 
 union SearchResult = User | Post

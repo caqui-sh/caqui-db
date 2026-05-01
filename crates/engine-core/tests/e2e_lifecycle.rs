@@ -97,7 +97,7 @@ fn test_e2e_lifecycle() {
     // Read and mutate the generated schema.cq
     let schema_path = workspace.join("schema.cq");
     let mut schema = fs::read_to_string(&schema_path).unwrap();
-    schema = schema.replace("name  String", "name  String\n  status String @default(\"active\")");
+    schema = schema.replace("name: String", "name: String\n  status: String @default(\"active\")");
     fs::write(&schema_path, schema).unwrap();
 
     let mut db_push_feature = Command::new(caqui_bin);
@@ -346,20 +346,20 @@ fn test_e2e_complex_graph_traversal() {
 
     let schema = "
         model User {
-            id String @id
-            name String
-            posts Post[]
+            id: String @id
+            name: String
+            posts: Post[]
         }
         model Post {
-            id String @id
-            title String
-            user_id String
-            comments Comment[]
+            id: String @id
+            title: String
+            user_id: String
+            comments: Comment[]
         }
         model Comment {
-            id String @id
-            body String
-            post_id String
+            id: String @id
+            body: String
+            post_id: String
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -448,9 +448,9 @@ fn test_e2e_custom_functions_and_triggers() {
 
     let schema = "
         model Item {
-            id String @id @default(uuid())
-            name String
-            updatedAt DateTime @updatedAt
+            id: String @id @default(uuid())
+            name: String
+            updatedAt: DateTime @updatedAt
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();

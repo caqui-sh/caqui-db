@@ -33,23 +33,23 @@ async fn test_e2e_deferrable() {
     // 2. Define schema with circular dependency using deferrable: true
     let schema = "
         model User {
-            id String @id
-            profileId String
-            profile Profile @relation(fields: [profileId], references: [id], deferrable: true)
-            comments Comment[]
+            id: String @id
+            profileId: String
+            profile: Profile @relation(fields: [profileId], references: [id], deferrable: true)
+            comments: Comment[]
         }
         
         model Profile {
-            id String @id
-            userId String
-            user User @relation(fields: [userId], references: [id], deferrable: true)
+            id: String @id
+            userId: String
+            user: User @relation(fields: [userId], references: [id], deferrable: true)
         }
         
         model Comment {
-            id String @id
-            text String
-            userId String
-            user User @relation(fields: [userId], references: [id], deferrable: true)
+            id: String @id
+            text: String
+            userId: String
+            user: User @relation(fields: [userId], references: [id], deferrable: true)
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();

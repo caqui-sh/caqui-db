@@ -320,12 +320,12 @@ mod tests {
     fn test_validation_ambiguous_relations_missing_name() {
         let input = "
             model User {
-                id String @id
-                authoredPosts Post[]
-                reviewedPosts Post[]
+                id: String @id
+                authoredPosts: Post[]
+                reviewedPosts: Post[]
             }
             model Post {
-                id String @id
+                id: String @id
             }
         ";
         let ast = crate::parser::parse_schema(input).unwrap();
@@ -338,12 +338,12 @@ mod tests {
     fn test_validation_ambiguous_relations_duplicate_name() {
         let input = "
             model User {
-                id String @id
-                authoredPosts Post[] @relation(\"AuthorToPost\")
-                reviewedPosts Post[] @relation(\"AuthorToPost\")
+                id: String @id
+                authoredPosts: Post[] @relation(\"AuthorToPost\")
+                reviewedPosts: Post[] @relation(\"AuthorToPost\")
             }
             model Post {
-                id String @id
+                id: String @id
             }
         ";
         let ast = crate::parser::parse_schema(input).unwrap();
@@ -356,12 +356,12 @@ mod tests {
     fn test_validation_valid_multiple_named_relations() {
         let input = "
             model User {
-                id String @id
-                authoredPosts Post[] @relation(\"AuthorToPost\")
-                reviewedPosts Post[] @relation(\"ReviewerToPost\")
+                id: String @id
+                authoredPosts: Post[] @relation(\"AuthorToPost\")
+                reviewedPosts: Post[] @relation(\"ReviewerToPost\")
             }
             model Post {
-                id String @id
+                id: String @id
             }
         ";
         let ast = crate::parser::parse_schema(input).unwrap();

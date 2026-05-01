@@ -8,8 +8,8 @@ A `model` represents a table in your SQLite database and an entity in your API.
 
 ```prisma
 model User {
-  id   String @id @default(uuid())
-  name String
+  id:   String @id @default(uuid())
+  name: String
 }
 ```
 
@@ -31,8 +31,8 @@ The following scalar types are supported:
 
 ```prisma
 model Post {
-  id    String   @id @default(uuid())
-  tags  String[]
+  id:    String   @id @default(uuid())
+  tags:  String[]
 }
 ```
 
@@ -44,14 +44,14 @@ Relationships link models together. `caqui` handles foreign key generation and d
 
 ```prisma
 model Author {
-  id    String @id @default(uuid())
-  posts Post[]
+  id:    String @id @default(uuid())
+  posts: Post[]
 }
 
 model Post {
-  id       String @id @default(uuid())
-  authorId String
-  author   Author @relation(fields: [authorId], references: [id])
+  id:       String @id @default(uuid())
+  authorId: String
+  author:   Author @relation(fields: [authorId], references: [id])
 }
 ```
 
@@ -59,14 +59,14 @@ model Post {
 
 ```prisma
 model User {
-  id        String  @id @default(uuid())
-  profileId String? @unique
-  profile   Profile @relation(fields: [profileId], references: [id])
+  id:        String  @id @default(uuid())
+  profileId: String? @unique
+  profile:   Profile @relation(fields: [profileId], references: [id])
 }
 
 model Profile {
-  id   String @id @default(uuid())
-  user User?
+  id:   String @id @default(uuid())
+  user: User?
 }
 ```
 
@@ -76,20 +76,20 @@ N:M relationships currently require an explicit join table model.
 
 ```prisma
 model User {
-  id    String @id @default(uuid())
-  roles UserRole[]
+  id:    String @id @default(uuid())
+  roles: UserRole[]
 }
 
 model Role {
-  id    String @id @default(uuid())
-  users UserRole[]
+  id:    String @id @default(uuid())
+  users: UserRole[]
 }
 
 model UserRole {
-  userId String
-  roleId String
-  user   User @relation(fields: [userId], references: [id])
-  role   Role @relation(fields: [roleId], references: [id])
+  userId: String
+  roleId: String
+  user:   User @relation(fields: [userId], references: [id])
+  role:   Role @relation(fields: [roleId], references: [id])
   @@id([userId, roleId])
 }
 ```
@@ -102,8 +102,8 @@ Unions allow a single property to return different models dynamically.
 union SearchResult = Post | Author
 
 model SearchQuery {
-  id      String       @id @default(uuid())
-  results SearchResult
+  id:      String       @id @default(uuid())
+  results: SearchResult
 }
 ```
 

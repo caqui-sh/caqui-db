@@ -170,14 +170,14 @@ mod tests {
     fn test_parse_schema() {
         let input = "
             model User {
-                id String @id
-                name String
-                posts Post[]
+                id: String @id
+                name: String
+                posts: Post[]
             }
             model Post {
-                id String @id
-                title String
-                author User
+                id: String @id
+                title: String
+                author: User
             }
             union SearchResult = User | Post
         ";
@@ -240,16 +240,16 @@ mod tests {
     fn test_parse_advanced_attributes() {
         let input = "
             model User {
-                id String @id @map(\"user_id\")
-                email String @unique
-                bio String @default(\"no bio\")
-                createdAt DateTime @default(now())
-                token String @ignore
-                posts Post[] @relation(fields: [id], references: [authorId], onDelete: Cascade)
+                id: String @id @map(\"user_id\")
+                email: String @unique
+                bio: String @default(\"no bio\")
+                createdAt: DateTime @default(now())
+                token: String @ignore
+                posts: Post[] @relation(fields: [id], references: [authorId], onDelete: Cascade)
             }
             model Post {
-                id String @id
-                authorId String
+                id: String @id
+                authorId: String
             }
         ";
         
@@ -291,14 +291,14 @@ mod tests {
     fn test_parse_relation_names() {
         let input = "
             model Post {
-                id String @id
-                authorId String
-                reviewerId String
-                author User @relation(\"AuthorToPost\", fields: [authorId], references: [id])
-                reviewer User @relation(\"ReviewerToPost\", fields: [reviewerId], references: [id])
+                id: String @id
+                authorId: String
+                reviewerId: String
+                author: User @relation(\"AuthorToPost\", fields: [authorId], references: [id])
+                reviewer: User @relation(\"ReviewerToPost\", fields: [reviewerId], references: [id])
             }
             model User {
-                id String @id
+                id: String @id
             }
         ";
         
