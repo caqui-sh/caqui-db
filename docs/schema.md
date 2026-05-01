@@ -4,7 +4,7 @@
 
 ## Models
 
-A `model` represents a table in your SQLite database and an entity in your API.
+A `model` represents a database table and an entity in your API.
 
 ```
 model User {
@@ -13,21 +13,28 @@ model User {
 }
 ```
 
-## Primitive Types
+## Scalar Types
 
 The following scalar types are supported:
 
-| Type | SQLite Type | Description |
-| :--- | :--- | :--- |
-| `String` | `TEXT` | UTF-8 encoded string. |
-| `Int` | `INTEGER` | 64-bit signed integer. |
-| `Float` | `REAL` | 64-bit floating point number. |
-| `Boolean` | `INTEGER` | Stored as 0 or 1. |
-| `DateTime` | `TEXT` | ISO 8601 formatted string. |
+| Type | Description |
+| :--- | :--- |
+| `String` | UTF-8 encoded string. |
+| `Int` | 64-bit signed integer. |
+| `Float` | 64-bit floating point number. |
+| `Boolean` | Stored as true or false. |
+| `DateTime` | ISO 8601 formatted string. |
+
+### Type Modifiers
+
+Scalar and model types can be modified to change their cardinality or nullability:
+
+- **Optional (`?`)**: Appending `?` makes a field optional (nullable). Example: `String?`
+- **Array (`[]`)**: Appending `[]` makes a field an array (list) of that type. Example: `String[]`
 
 ## Arrays
 
-`caqui` supports native storage of primitive arrays 
+`caqui` supports native storage of primitive arrays.
 
 ```
 model Post {
@@ -59,7 +66,8 @@ model Post {
 ```
 model User {
   id:      String   @id @default(uuid())
-  profile: Profile? @relation(column: "profileId")
+  profile: Profile? @relation(fields: [profileId], references: [id])
+  profileId: String? @unique
 }
 
 model Profile {
@@ -70,7 +78,7 @@ model Profile {
 
 ### N:M (Many-to-Many)
 
-N:M relationships currently require an explicit join table model.
+N:M relationships require an explicit join table model.
 
 ```
 model User {
@@ -111,18 +119,18 @@ Attributes customize the behavior of individual fields.
 
 | Attribute | Description |
 | :--- | :--- |
-| `@id` | Marks the field as the Primary Key. |
+| `@id` | Marks the field as the Primary Key. **Must not be optional (`?`).** |
 | `@unique` | Ensures all values in the column are unique. |
-| `@default(...)` | Sets a default value (see [Functions](#functions)). |
+| `@default(...)` | Sets a default value (e.g., `uuid()`, `autoincrement()`, `now()`, or static values like `"string"` or `42`). |
 | `@updatedAt` | Automatically updates the timestamp on modification. |
-| `@map("name")` | Maps the field to a different database column name. |
+| `@map("name")` | Maps the field to a different underlying database column name. |
 | `@ignore` | Prevents the field from being read or written via the API. |
-| `@relation(...)` | Defines the fields and references for a relationship. |
+| `@relation(...)` | Defines the relationship. Accepts `fields` (local keys), `references` (foreign keys), `onDelete` (e.g., `CASCADE`, `SET NULL`, `RESTRICT`, `NO ACTION`), and `deferrable` (for deferring constraint checks). |
 
 ### Functions in `@default`
 
 - `uuid()`: Generates a sequential UUIDv7.
-- `autoincrement()`: automatically incrementing IDs.
+- `autoincrement()`: Automatically incrementing IDs.
 - `now()`: The current UTC timestamp.
 - `"static"`: A static string, number, or boolean default.
 

@@ -47,20 +47,49 @@ Use the `where` block to filter your results.
 
 ### Simple Operators
 
+`caqui` supports the following simple operators. Note that text search operators like `contains`, `startsWith`, and `endsWith` are NOT supported.
+
 - `eq`: Equal
 - `notEq`: Not Equal
 - `gt`: Greater Than
 - `gte`: Greater Than or Equal
 - `lt`: Less Than
 - `lte`: Less Than or Equal
-- `in`: Included in array of values
+- `in`: Included in an array of values
 
 ```json
 {
+  "model": "User",
+  "action": "findMany",
   "where": {
-    "age": { "gte": 18 },
-    "status": { "in": ["ACTIVE", "PENDING"] }
-  }
+    "age": { "gte": 18, "lt": 65 },
+    "status": { "in": ["ACTIVE", "PENDING"] },
+    "role": { "notEq": "GUEST" }
+  },
+  "select": { "id": true }
+}
+```
+
+### Logical Operators (`AND`, `OR`)
+
+Combine multiple conditions using `AND` and `OR`.
+
+```json
+{
+  "model": "User",
+  "action": "findMany",
+  "where": {
+    "OR": [
+      { "role": { "eq": "ADMIN" } },
+      { 
+        "AND": [
+          { "isSuperuser": { "eq": true } },
+          { "status": { "eq": "ACTIVE" } }
+        ]
+      }
+    ]
+  },
+  "select": { "id": true }
 }
 ```
 
@@ -71,24 +100,12 @@ Use the `where` block to filter your results.
 
 ```json
 {
+  "model": "User",
+  "action": "findMany",
   "where": {
     "deletedAt": "IsNull"
-  }
-}
-```
-
-### Logical Operators (`AND`, `OR`)
-
-Combine multiple conditions.
-
-```json
-{
-  "where": {
-    "OR": [
-      { "role": { "eq": "ADMIN" } },
-      { "isSuperuser": { "eq": true } }
-    ]
-  }
+  },
+  "select": { "id": true }
 }
 ```
 
@@ -98,46 +115,48 @@ Combine multiple conditions.
 
 ### For To-Many Relations (`some`, `every`, `none`)
 
-- `some`: Returns records where at least one related record matches.
-- `every`: Returns records where all related records match (or none exist).
-- `none`: Returns records where no related records match.
+- `some`: Returns records where at least one related record matches the condition.
+- `every`: Returns records where all related records match the condition (or none exist).
+- `none`: Returns records where no related records match the condition.
 
 ```json
-// Find users who have at least one post titled "Hello"
 {
   "model": "User",
+  "action": "findMany",
   "where": {
     "posts": {
       "some": {
-        "title": { "eq": "Hello" }
+        "published": { "eq": true }
       }
     }
-  }
+  },
+  "select": { "id": true }
 }
 ```
 
 ### For To-One Relations (`is`, `isNot`)
 
-- `is`: Returns records where the related record matches.
-- `isNot`: Returns records where the related record does not match.
+- `is`: Returns records where the related record matches the condition.
+- `isNot`: Returns records where the related record does not match the condition.
 
 ```json
-// Find users whose profile bio is "Hi"
 {
   "model": "User",
+  "action": "findMany",
   "where": {
     "profile": {
       "is": {
-        "bio": { "eq": "Hi" }
+        "bio": { "IsNotNull": true }
       }
     }
-  }
+  },
+  "select": { "id": true }
 }
 ```
 
-## Querying Polymorphic Unions
+## Querying Polymorphic Unions and Union Arrays
 
-When a field is defined as a `union` in your schema, you must specify which fields to return for each possible model using **target fragments**.
+When a field is defined as a `union` or a union array in your schema, you must specify which fields to return for each possible model using **fragment selection blocks** directly inside the union field object.
 
 ```json
 {
@@ -145,11 +164,11 @@ When a field is defined as a `union` in your schema, you must specify which fiel
   "action": "findMany",
   "select": {
     "id": true,
-    "content": {
+    "results": {
       "Post": { 
         "select": { "title": true } 
       },
-      "User": { 
+      "Author": { 
         "select": { "name": true } 
       }
     }
@@ -157,7 +176,7 @@ When a field is defined as a `union` in your schema, you must specify which fiel
 }
 ```
 
-If the `content` of a record is a `Post`, the API will return a `title`. If it is a `User`, it will return a `name`.
+If the `results` of a record (or items in the array) resolve to a `Post`, the API will return a `title`. If they resolve to an `Author`, it will return a `name`.
 
 ## Pagination
 
