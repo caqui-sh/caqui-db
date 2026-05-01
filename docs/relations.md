@@ -14,11 +14,9 @@ model User {
 }
 
 model Post {
-  id:         String @id
-  authorId:   String
-  author:     User   @relation("AuthorToPost", fields: [authorId], references: [id])
-  reviewerId: String
-  reviewer:   User   @relation("ReviewerToPost", fields: [reviewerId], references: [id])
+  id:       String @id
+  author:   User   @relation("AuthorToPost")
+  reviewer: User   @relation("ReviewerToPost", column: "reviewerId")
 }
 ```
 
@@ -67,15 +65,13 @@ Using `deferrable: true` tells `caqui` to wait until the end of a transaction to
 
 ```prisma
 model User {
-  id:        String  @id
-  profileId: String
-  profile:   Profile @relation(fields: [profileId], references: [id], deferrable: true)
+  id:      String  @id
+  profile: Profile @relation(deferrable: true)
 }
 
 model Profile {
-  id:     String @id
-  userId: String
-  user:   User   @relation(fields: [userId], references: [id], deferrable: true)
+  id:   String @id
+  user: User   @relation(deferrable: true)
 }
 ```
 

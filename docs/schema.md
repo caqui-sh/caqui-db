@@ -49,9 +49,8 @@ model Author {
 }
 
 model Post {
-  id:       String @id @default(uuid())
-  authorId: String
-  author:   Author @relation(fields: [authorId], references: [id])
+  id:     String @id @default(uuid())
+  author: Author
 }
 ```
 
@@ -59,9 +58,8 @@ model Post {
 
 ```prisma
 model User {
-  id:        String  @id @default(uuid())
-  profileId: String? @unique
-  profile:   Profile @relation(fields: [profileId], references: [id])
+  id:      String   @id @default(uuid())
+  profile: Profile? @relation(column: "profileId")
 }
 
 model Profile {

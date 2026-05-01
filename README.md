@@ -43,10 +43,9 @@ model User {
 }
 
 model Post {
-  id:       String @id @default(uuid())
-  title:    String
-  authorId: String
-  author:   User   @relation(fields: [authorId], references: [id])
+  id:     String @id @default(uuid())
+  title:  String
+  author: User
 }
 ```
 
