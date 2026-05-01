@@ -71,10 +71,7 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                 },
                 AstFieldType::RelationArray(target_name) => {
                     if union_symbols.contains(target_name) {
-                        return Err(ValidationError(format!(
-                            "Field '{}' in model '{}' is an array of union '{}'. Array of unions is currently unsupported.",
-                            field.name, model.name, target_name
-                        )));
+                        field.field_type = AstFieldType::PolymorphicUnionArray(target_name.clone());
                     } else if !model_symbols.contains(target_name) {
                         return Err(ValidationError(format!(
                             "Field '{}' in model '{}' references unknown type '{}'.",
@@ -349,12 +346,12 @@ mod tests {
     }
 
     #[test]
-    fn test_unsupported_union_array() {
+    fn test_union_array_fixup() {
         let mut ast = SchemaAst {
             models: HashMap::new(),
             unions: HashMap::new(),
         };
-        
+
         ast.models.insert("Query".to_string(), ModelNode {
             name: "Query".to_string(),
             fields: vec![
@@ -372,14 +369,14 @@ mod tests {
                 }
             ]
         });
-        
-        ast.unions.insert("SearchResult".to_string(), vec![]);
-        
-        let result = validate_schema(ast);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().0, "Field 'results' in model 'Query' is an array of union 'SearchResult'. Array of unions is currently unsupported.");
-    }
 
+        ast.unions.insert("SearchResult".to_string(), vec![]);
+
+        let result = validate_schema(ast).unwrap();
+        let query = result.models.get("Query").unwrap();
+        let results_field = query.fields.iter().find(|f| f.name == "results").unwrap();
+        assert_eq!(results_field.field_type, AstFieldType::PolymorphicUnionArray("SearchResult".to_string()));
+    }
     #[test]
     fn test_polymorphic_union_fixup() {
         let mut ast = SchemaAst {
@@ -644,11 +641,34 @@ mod tests {
         let res = validate_schema(ast).unwrap();
         let user = res.models.get("User").unwrap();
         let manager_id = user.fields.iter().find(|f| f.name == "managerId").unwrap();
-        assert!(manager_id.is_optional);
-    }
+        assert_eq!(manager_id.is_optional, true);
+        }
 
-    #[test]
-    fn test_validation_optional_unique_succeeds() {
+        #[test]
+        fn test_parse_and_validate_union_array() {
+        let input = "
+            model Query {
+                id: String @id
+                results: SearchResult[]
+            }
+            model User {
+                id: String @id
+            }
+            model Post {
+                id: String @id
+            }
+            union SearchResult = User | Post
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let res = validate_schema(ast).unwrap();
+
+        let query = res.models.get("Query").unwrap();
+        let results_field = query.fields.iter().find(|f| f.name == "results").unwrap();
+        assert_eq!(results_field.field_type, AstFieldType::PolymorphicUnionArray("SearchResult".to_string()));
+        }
+
+        #[test]
+        fn test_validation_optional_unique_succeeds() {
         let input = "
             model User {
                 id: String @id

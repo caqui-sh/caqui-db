@@ -318,7 +318,9 @@ fn translate_create_node(
                     }
                 }
             },
-            _ => return Err(format!("Unsupported nested mutation on field '{}'", key)),
+            AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicUnionArray(_) => {
+                return Err(format!("Unsupported: Mutations on polymorphic union field '{}' are not yet implemented.", key));
+            }
         }
     }
     
@@ -526,7 +528,9 @@ fn translate_update_node(
                     }
                 }
             },
-            _ => return Err(format!("Unsupported nested mutation on field '{}'", key)),
+            AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicUnionArray(_) => {
+                return Err(format!("Unsupported: Mutations on polymorphic union field '{}' are not yet implemented.", key));
+            }
         }
     }
     

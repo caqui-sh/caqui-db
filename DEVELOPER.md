@@ -106,3 +106,10 @@ To maintain feature parity with modern DSLs (like Prisma or GraphQL), the follow
 ### 4. Batch Operations
 - **Syntax:** `action: "createMany"`, `action: "updateMany"`, `action: "deleteMany"`
 - **Use Case:** High-performance bulk data modifications. Requires query chunking to circumvent SQLite's parameter limits and logic to return aggregate counts (`{ count: N }`) instead of materializing thousands of objects into application memory.
+
+### 5. Advanced AST Field Types
+- **Enums:** Native support for schema enumeration types (e.g., `enum Role { ADMIN, USER }`).
+- **JSON / JSONB:** A dedicated JSON scalar for structured payloads, allowing for native database JSON operations.
+- **Bytes / Binary Data:** A scalar type for `BLOB` / binary storage (e.g., images, file buffers).
+- **High-Precision Numerics:** Support for `Decimal` and `BigInt` for exact financial calculations or extremely large counters.
+- **Embedded Documents:** Native sub-object definitions common in NoSQL schemas, allowing nested structures without separate tables.

@@ -8,7 +8,7 @@ use rusqlite::Connection;
 fn format_type(field: &FieldNode) -> String {
     let base = match &field.field_type {
         AstFieldType::Scalar(t) | AstFieldType::Relation(t) | AstFieldType::PolymorphicUnion(t) => t.clone(),
-        AstFieldType::ScalarArray(t) | AstFieldType::RelationArray(t) => format!("{}[]", t),
+        AstFieldType::ScalarArray(t) | AstFieldType::RelationArray(t) | AstFieldType::PolymorphicUnionArray(t) => format!("{}[]", t),
     };
     if field.is_optional {
         format!("{}?", base)
@@ -373,5 +373,14 @@ mod tests {
             attributes: vec![],
         };
         assert_eq!(format_type(&f4), "String[]?");
+
+        // Polymorphic Union Array
+        let f5 = FieldNode {
+            name: "results".to_string(),
+            field_type: AstFieldType::PolymorphicUnionArray("SearchResult".to_string()),
+            is_optional: false,
+            attributes: vec![],
+        };
+        assert_eq!(format_type(&f5), "SearchResult[]");
     }
 }

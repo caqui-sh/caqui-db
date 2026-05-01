@@ -27,6 +27,7 @@ pub enum SelectField {
     /// A Polymorphic Union request requiring conditional resolution
     PolymorphicUnion {
         field_name: String,
+        is_list: bool,
         target_fragments: HashMap<String, QueryNode>, // e.g., "Article" -> QueryNode
     }
 }

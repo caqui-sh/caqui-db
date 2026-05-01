@@ -119,7 +119,10 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                 
                 json_pairs.push(format!("'{}', {}", field_name, subquery));
             },
-            SelectField::PolymorphicUnion { field_name, target_fragments } => {
+            SelectField::PolymorphicUnion { field_name, is_list, target_fragments } => {
+                if *is_list {
+                    unimplemented!("Polymorphic union arrays are currently supported in the AST and Schema, but not yet implemented in the Query Compiler.");
+                }
                 let type_col = format!("{}.{}_type", node.alias, field_name); // e.g., t0.result_type
                 let id_col = format!("{}.{}_id", node.alias, field_name);     // e.g., t0.result_id
                 
@@ -266,6 +269,7 @@ mod tests {
                 SelectField::Scalar("id".to_string()),
                 SelectField::PolymorphicUnion {
                     field_name: "search".to_string(),
+                    is_list: false,
                     target_fragments: fragments,
                 }
             ],
@@ -418,6 +422,7 @@ mod tests {
                 SelectField::Scalar("id".to_string()),
                 SelectField::PolymorphicUnion {
                     field_name: "content".to_string(),
+                    is_list: false,
                     target_fragments: fragments,
                 }
             ],
@@ -535,6 +540,7 @@ mod tests {
                 SelectField::Scalar("id".to_string()),
                 SelectField::PolymorphicUnion {
                     field_name: "search".to_string(),
+                    is_list: false,
                     target_fragments: fragments,
                 }
             ],

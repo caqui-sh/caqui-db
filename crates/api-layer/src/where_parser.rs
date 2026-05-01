@@ -100,7 +100,7 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
         }
 
         match &field_def.field_type {
-            AstFieldType::Scalar(_) | AstFieldType::ScalarArray(_) | AstFieldType::PolymorphicUnion(_) => {
+            AstFieldType::Scalar(_) | AstFieldType::ScalarArray(_) | AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicUnionArray(_) => {
                 let cond = parse_where_condition(v)?;
                 clauses.push(WhereClause::Field(k.clone(), cond));
             }

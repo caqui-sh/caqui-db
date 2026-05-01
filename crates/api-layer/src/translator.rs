@@ -86,7 +86,8 @@ pub fn hydrate_payload_to_ir(
                     query: Box::new(child_node),
                 });
             },
-            AstFieldType::PolymorphicUnion(union_name) => {
+            AstFieldType::PolymorphicUnion(union_name) | AstFieldType::PolymorphicUnionArray(union_name) => {
+                let is_list = matches!(field_def.field_type, AstFieldType::PolymorphicUnionArray(_));
                 let targets = ast.unions.get(union_name)
                     .ok_or_else(|| format!("Security Exception: Union '{}' undefined.", union_name))?;
                     
@@ -110,6 +111,7 @@ pub fn hydrate_payload_to_ir(
 
                 selections.push(SelectField::PolymorphicUnion {
                     field_name: field_name.clone(),
+                    is_list,
                     target_fragments,
                 });
             }
@@ -159,6 +161,7 @@ mod tests {
                 FieldNode { name: "posts".to_string(), field_type: AstFieldType::RelationArray("Post".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "profile".to_string(), field_type: AstFieldType::Relation("Profile".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "content".to_string(), field_type: AstFieldType::PolymorphicUnion("SearchContent".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "contents".to_string(), field_type: AstFieldType::PolymorphicUnionArray("SearchContent".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
 
@@ -300,8 +303,35 @@ mod tests {
         let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
         
         let union_field = ir.selections.iter().find(|s| matches!(s, SelectField::PolymorphicUnion { .. })).unwrap();
-        if let SelectField::PolymorphicUnion { field_name, target_fragments } = union_field {
+        if let SelectField::PolymorphicUnion { field_name, is_list, target_fragments } = union_field {
             assert_eq!(field_name, "content");
+            assert_eq!(*is_list, false);
+            assert_eq!(target_fragments.len(), 2);
+            assert!(target_fragments.contains_key("Post"));
+            assert!(target_fragments.contains_key("User"));
+        } else {
+            panic!("Expected PolymorphicUnion");
+        }
+    }
+
+    #[test]
+    fn test_hydrate_polymorphic_union_array() {
+        let ast = mock_ast();
+        let payload = json!({
+            "select": {
+                "contents": {
+                    "Post": { "select": { "title": true } },
+                    "User": { "select": { "name": true } }
+                }
+            }
+        });
+        let mut alias_counter = 0;
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        
+        let union_field = ir.selections.iter().find(|s| matches!(s, SelectField::PolymorphicUnion { .. })).unwrap();
+        if let SelectField::PolymorphicUnion { field_name, is_list, target_fragments } = union_field {
+            assert_eq!(field_name, "contents");
+            assert_eq!(*is_list, true);
             assert_eq!(target_fragments.len(), 2);
             assert!(target_fragments.contains_key("Post"));
             assert!(target_fragments.contains_key("User"));

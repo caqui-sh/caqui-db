@@ -18,6 +18,7 @@ pub enum AstFieldType {
     ScalarArray(String),
     Relation(String),          // Points to another Model
     PolymorphicUnion(String),  // Points to a defined Union
+    PolymorphicUnionArray(String),
     // Extension for custom arrays, though not explicitly in the snippet
     RelationArray(String),
 }

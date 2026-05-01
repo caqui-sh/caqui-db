@@ -77,7 +77,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
             }
 
             match &field.field_type {
-                AstFieldType::ScalarArray(_) | AstFieldType::RelationArray(_) => {
+                AstFieldType::ScalarArray(_) | AstFieldType::RelationArray(_) | AstFieldType::PolymorphicUnionArray(_) => {
                     columns.push(PhysicalColumn {
                         name: field.name.clone(),
                         sqlite_type: "TEXT".to_string(), // Tagged internally for JSON1
