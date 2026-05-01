@@ -139,8 +139,14 @@ pub fn hydrate_payload_to_ir(
         None
     };
 
+    let primary_key = model_def.fields.iter()
+        .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
+        .map(|f| f.name.clone())
+        .unwrap_or_else(|| "id".to_string());
+
     Ok(QueryNode {
         target_model: model_name.to_string(),
+        primary_key,
         alias: current_alias,
         selections,
         filters,
@@ -592,5 +598,29 @@ mod tests {
         
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Security Exception: Maximum query depth exceeded.");
+    }
+
+    #[test]
+    fn test_hydrate_custom_id_field() {
+        let mut ast = mock_ast();
+        
+        // Let's create a new model with a custom ID field named "uuid"
+        ast.models.insert("Device".to_string(), ModelNode {
+            name: "Device".to_string(),
+            fields: vec![
+                FieldNode { name: "uuid".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id] },
+                FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+            ]
+        });
+        
+        let payload = json!({
+            "select": { "uuid": true, "name": true }
+        });
+        
+        let mut alias_counter = 0;
+        let ir = hydrate_payload_to_ir(&ast, "Device", &payload, &mut alias_counter, 0).unwrap();
+        
+        assert_eq!(ir.target_model, "Device");
+        assert_eq!(ir.primary_key, "uuid", "The IR should dynamically extract the correct primary key field name based on the @id attribute");
     }
 }

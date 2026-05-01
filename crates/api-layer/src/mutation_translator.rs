@@ -47,6 +47,10 @@ pub fn hydrate_mutation_to_plan(
             
             let model_def = ast.models.get(model_name)
                 .ok_or_else(|| format!("Security Exception: Model '{}' undefined.", model_name))?;
+            let pk_col = model_def.fields.iter()
+                .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
+                .map(|f| f.name.as_str())
+                .unwrap_or("id");
             
             let mut params = Vec::new();
             let mut param_idx = 1;
@@ -56,9 +60,10 @@ pub fn hydrate_mutation_to_plan(
             params.extend(where_params);
             
             let sql = format!(
-                "DELETE FROM {} WHERE {} RETURNING id;",
+                "DELETE FROM {} WHERE {} RETURNING {};",
                 model_name,
-                where_sql
+                where_sql,
+                pk_col
             );
             
             steps.push(ExecutionStep::Query {
@@ -123,6 +128,11 @@ fn translate_create_node(
 ) -> Result<String, String> {
     let model_def = ast.models.get(model_name)
         .ok_or_else(|| format!("Security Exception: Model '{}' undefined.", model_name))?;
+        
+    let pk_col = model_def.fields.iter()
+        .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
+        .map(|f| f.name.as_str())
+        .unwrap_or("id");
 
     let step_id = format!("step_{}_{}", model_name.to_lowercase(), *alias_counter);
     *alias_counter += 1;
@@ -136,6 +146,10 @@ fn translate_create_node(
     
     if let Some(rel) = &parent_rel {
         let parent_model_def = ast.models.get(&rel.parent_model).unwrap();
+        let parent_pk_col = parent_model_def.fields.iter()
+            .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
+            .map(|f| f.name.as_str())
+            .unwrap_or("id");
         let parent_field_def = parent_model_def.fields.iter().find(|f| f.name == rel.relation_field_name).unwrap();
         
         let mut fk_column_name = None;
@@ -167,7 +181,7 @@ fn translate_create_node(
             if let Some(col) = fk_column_name {
                 columns.push(col.clone());
                 placeholders.push(format!("?{}", param_idx));
-                params.push(Parameter::Reference { step_id: rel.parent_step_id.clone(), column: "id".to_string() });
+                params.push(Parameter::Reference { step_id: rel.parent_step_id.clone(), column: parent_pk_col.to_string() });
                 param_idx += 1;
             }
         }
@@ -218,11 +232,13 @@ fn translate_create_node(
                         }
                         let child_data = create_payload.as_object().ok_or("Expected object for 'create'")?;
                         let child_step_id = translate_create_node(ast, target_model, child_data, steps, alias_counter, None)?;
+                        let child_model_def = ast.models.get(target_model).unwrap();
+                        let child_pk_col = child_model_def.fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
                         
                         if let Some(col) = &fk_column {
                             columns.push(col.clone());
                             placeholders.push(format!("?{}", param_idx));
-                            params.push(Parameter::Reference { step_id: child_step_id, column: "id".to_string() });
+                            params.push(Parameter::Reference { step_id: child_step_id, column: child_pk_col.to_string() });
                             param_idx += 1;
                         }
                     }
@@ -325,13 +341,14 @@ fn translate_create_node(
     }
     
     let sql = if columns.is_empty() {
-        format!("INSERT INTO {} DEFAULT VALUES RETURNING id;", model_name)
+        format!("INSERT INTO {} DEFAULT VALUES RETURNING {};", model_name, pk_col)
     } else {
         format!(
-            "INSERT INTO {} ({}) VALUES ({}) RETURNING id;",
+            "INSERT INTO {} ({}) VALUES ({}) RETURNING {};",
             model_name,
             columns.join(", "),
-            placeholders.join(", ")
+            placeholders.join(", "),
+            pk_col
         )
     };
     
@@ -357,6 +374,11 @@ fn translate_update_node(
 ) -> Result<String, String> {
     let model_def = ast.models.get(model_name)
         .ok_or_else(|| format!("Security Exception: Model '{}' undefined.", model_name))?;
+        
+    let pk_col = model_def.fields.iter()
+        .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
+        .map(|f| f.name.as_str())
+        .unwrap_or("id");
 
     let step_id = format!("step_{}_{}", model_name.to_lowercase(), *alias_counter);
     *alias_counter += 1;
@@ -423,10 +445,12 @@ fn translate_update_node(
                         }
                         let child_data = create_payload.as_object().ok_or("Expected object for 'create'")?;
                         let child_step_id = translate_create_node(ast, target_model, child_data, steps, alias_counter, None)?;
+                        let child_model_def = ast.models.get(target_model).unwrap();
+                        let child_pk_col = child_model_def.fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
                         
                         if let Some(col) = &fk_column {
                             set_clauses.push(format!("{} = ?{}", col, param_idx));
-                            params.push(Parameter::Reference { step_id: child_step_id, column: "id".to_string() });
+                            params.push(Parameter::Reference { step_id: child_step_id, column: child_pk_col.to_string() });
                             param_idx += 1;
                         }
                     }
@@ -535,7 +559,7 @@ fn translate_update_node(
     }
     
     if set_clauses.is_empty() {
-        set_clauses.push("id = id".to_string());
+        set_clauses.push(format!("{} = {}", pk_col, pk_col));
     }
     
     let where_clause_ir = parse_where_clause(ast, where_obj, model_def)?;
@@ -543,6 +567,10 @@ fn translate_update_node(
     
     if let Some(rel) = &parent_rel {
         let parent_model_def = ast.models.get(&rel.parent_model).unwrap();
+        let parent_pk_col = parent_model_def.fields.iter()
+            .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
+            .map(|f| f.name.as_str())
+            .unwrap_or("id");
         let mut fk_column_name = None;
         let mut is_our_fk = false;
 
@@ -569,17 +597,18 @@ fn translate_update_node(
         if is_our_fk {
             if let Some(col) = fk_column_name {
                 where_sql = format!("{} AND {}.{} = ?{}", where_sql, model_name, col, param_idx);
-                where_params.push(Parameter::Reference { step_id: rel.parent_step_id.clone(), column: "id".to_string() });
+                where_params.push(Parameter::Reference { step_id: rel.parent_step_id.clone(), column: parent_pk_col.to_string() });
             }
         }
     }
     params.extend(where_params);
 
     let sql = format!(
-        "UPDATE {} SET {} WHERE {} RETURNING id;",
+        "UPDATE {} SET {} WHERE {} RETURNING {};",
         model_name,
         set_clauses.join(", "),
-        where_sql
+        where_sql,
+        pk_col
     );
     
     steps.push(ExecutionStep::Query {
@@ -604,6 +633,11 @@ fn translate_root_upsert_node(
 ) -> Result<String, String> {
     let model_def = ast.models.get(model_name)
         .ok_or_else(|| format!("Security Exception: Model '{}' undefined.", model_name))?;
+        
+    let pk_col = model_def.fields.iter()
+        .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
+        .map(|f| f.name.as_str())
+        .unwrap_or("id");
 
     let step_id = format!("step_{}_{}", model_name.to_lowercase(), *alias_counter);
     *alias_counter += 1;
@@ -621,7 +655,7 @@ fn translate_root_upsert_node(
     
     let (where_sql, check_params) = compile_parameterized_where(&where_clause_ir, model_name, &mut param_idx);
     
-    let check_sql = format!("SELECT id FROM {} WHERE {}", model_name, where_sql);
+    let check_sql = format!("SELECT {} FROM {} WHERE {}", pk_col, model_name, where_sql);
     
     let mut if_not_exists = Vec::new();
     let _create_step_id = translate_create_node(ast, model_name, create_data, &mut if_not_exists, alias_counter, None)?;
@@ -667,7 +701,12 @@ fn process_deferred_children(
     steps: &mut Vec<ExecutionStep>,
     alias_counter: &mut usize,
 ) -> Result<(), String> {
+    let parent_model_def = ast.models.get(parent_model_name).unwrap();
+    let parent_pk_col = parent_model_def.fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
+
     for child in deferred_children {
+        let child_model_def = ast.models.get(&child.target_model).unwrap();
+        let child_pk_col = child_model_def.fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
         let mut fk_column_name = None;
         for our_field in &ast.models.get(&child.target_model).unwrap().fields {
             if let AstFieldType::Relation(target) = &our_field.field_type {
@@ -700,7 +739,7 @@ fn process_deferred_children(
                 let mut param_idx = 1;
                 
                 let set_clause = format!("{} = ?{}", fk_col, param_idx);
-                params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: "id".to_string() });
+                params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() });
                 param_idx += 1;
                 
                 let child_model_def = ast.models.get(&child.target_model).unwrap();
@@ -709,10 +748,11 @@ fn process_deferred_children(
                 params.extend(where_params);
                 
                 let sql = format!(
-                    "UPDATE {} SET {} WHERE {} RETURNING id;",
+                    "UPDATE {} SET {} WHERE {} RETURNING {};",
                     child.target_model,
                     set_clause,
-                    where_sql
+                    where_sql,
+                    child_pk_col
                 );
                 
                 steps.push(ExecutionStep::Query {
@@ -742,12 +782,13 @@ fn process_deferred_children(
                 
                 // Add parent relation constraint
                 let combined_where_sql = format!("{} AND {}.{} = ?{}", where_sql, child.target_model, fk_col, param_idx);
-                params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: "id".to_string() });
+                params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() });
                 
                 let sql = format!(
-                    "DELETE FROM {} WHERE {} RETURNING id;",
+                    "DELETE FROM {} WHERE {} RETURNING {};",
                     child.target_model,
-                    combined_where_sql
+                    combined_where_sql,
+                    child_pk_col
                 );
                 
                 steps.push(ExecutionStep::Query {
@@ -769,13 +810,14 @@ fn process_deferred_children(
                 params.extend(where_params);
                 
                 let combined_where_sql = format!("{} AND {}.{} = ?{}", where_sql, child.target_model, fk_col, param_idx);
-                params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: "id".to_string() });
+                params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() });
                 
                 let sql = format!(
-                    "UPDATE {} SET {} = NULL WHERE {} RETURNING id;",
+                    "UPDATE {} SET {} = NULL WHERE {} RETURNING {};",
                     child.target_model,
                     fk_col,
-                    combined_where_sql
+                    combined_where_sql,
+                    child_pk_col
                 );
                 
                 steps.push(ExecutionStep::Query {
@@ -803,9 +845,9 @@ fn process_deferred_children(
                 let mut param_idx = 1;
                 
                 if let Some(ref pfk) = parent_fk_col {
-                    columns.push("id".to_string());
-                    placeholders.push(format!("COALESCE((SELECT {} FROM {} WHERE id = ?{}), gen_uuid7())", pfk, parent_model_name, param_idx));
-                    params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: "id".to_string() });
+                    columns.push(child_pk_col.to_string());
+                    placeholders.push(format!("COALESCE((SELECT {} FROM {} WHERE {} = ?{}), gen_uuid7())", pfk, parent_model_name, parent_pk_col, param_idx));
+                    params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() });
                     param_idx += 1;
                 }
                 
@@ -826,15 +868,17 @@ fn process_deferred_children(
                 }
                 
                 if update_set_clauses.is_empty() {
-                    update_set_clauses.push("id = excluded.id".to_string());
+                    update_set_clauses.push(format!("{} = excluded.{}", child_pk_col, child_pk_col));
                 }
 
                 let sql = format!(
-                    "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT(id) DO UPDATE SET {} RETURNING id;",
+                    "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT({}) DO UPDATE SET {} RETURNING {};",
                     child.target_model,
                     columns.join(", "),
                     placeholders.join(", "),
-                    update_set_clauses.join(", ")
+                    child_pk_col,
+                    update_set_clauses.join(", "),
+                    child_pk_col
                 );
                 
                 steps.push(ExecutionStep::Query {
@@ -847,13 +891,13 @@ fn process_deferred_children(
                     let link_step_id = format!("step_{}_upsert_link_{}", parent_model_name.to_lowercase(), *alias_counter);
                     *alias_counter += 1;
                     
-                    let link_sql = format!("UPDATE {} SET {} = ?1 WHERE id = ?2 RETURNING id;", parent_model_name, pfk);
+                    let link_sql = format!("UPDATE {} SET {} = ?1 WHERE {} = ?2 RETURNING {};", parent_model_name, pfk, parent_pk_col, parent_pk_col);
                     steps.push(ExecutionStep::Query {
                         id: link_step_id,
                         sql: link_sql,
                         params: vec![
-                            Parameter::Reference { step_id: child_step_id.clone(), column: "id".to_string() },
-                            Parameter::Reference { step_id: parent_step_id.to_string(), column: "id".to_string() },
+                            Parameter::Reference { step_id: child_step_id.clone(), column: child_pk_col.to_string() },
+                            Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() },
                         ],
                     });
                 }
@@ -863,11 +907,11 @@ fn process_deferred_children(
                 let disconnect_step_id = format!("step_{}_set_disconnect_{}", child.target_model.to_lowercase(), *alias_counter);
                 *alias_counter += 1;
                 
-                let sql = format!("UPDATE {} SET {} = NULL WHERE {} = ?1 RETURNING id;", child.target_model, fk_col, fk_col);
+                let sql = format!("UPDATE {} SET {} = NULL WHERE {} = ?1 RETURNING {};", child.target_model, fk_col, fk_col, child_pk_col);
                 steps.push(ExecutionStep::Query {
                     id: disconnect_step_id,
                     sql,
-                    params: vec![Parameter::Reference { step_id: parent_step_id.to_string(), column: "id".to_string() }],
+                    params: vec![Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() }],
                 });
                 
                 // Then connect each child
@@ -879,7 +923,7 @@ fn process_deferred_children(
                     let mut param_idx = 1;
                     
                     let set_clause = format!("{} = ?{}", fk_col, param_idx);
-                    params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: "id".to_string() });
+                    params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() });
                     param_idx += 1;
                     
                     let child_model_def = ast.models.get(&child.target_model).unwrap();

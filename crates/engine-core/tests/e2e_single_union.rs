@@ -42,6 +42,7 @@ fn setup_db() -> Connection {
 
 fn build_query() -> QueryNode {
     let post_fragment = QueryNode {
+        primary_key: "id".to_string(),
         target_model: "Post".to_string(),
         alias: "t1".to_string(),
         selections: vec![SelectField::Scalar("title".to_string())],
@@ -51,6 +52,7 @@ fn build_query() -> QueryNode {
     };
     
     let video_fragment = QueryNode {
+        primary_key: "id".to_string(),
         target_model: "Video".to_string(),
         alias: "t2".to_string(),
         selections: vec![SelectField::Scalar("url".to_string())],
@@ -64,6 +66,7 @@ fn build_query() -> QueryNode {
     fragments.insert("Video".to_string(), video_fragment);
     
     QueryNode {
+        primary_key: "id".to_string(),
         target_model: "User".to_string(),
         alias: "t0".to_string(),
         selections: vec![

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueryNode {
     pub target_model: String,
+    pub primary_key: String,
     pub alias: String, // Crucial for preventing namespace collisions in self-joins (e.g., t0, t1)
     pub selections: Vec<SelectField>,
     pub filters: Option<WhereClause>,

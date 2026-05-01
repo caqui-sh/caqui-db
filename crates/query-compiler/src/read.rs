@@ -92,9 +92,9 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                 let child_json_obj = compile_select(query, Some((&node.alias, foreign_key)));
                 
                 let mut where_conds = if *is_forward {
-                    vec![format!("{}.id = {}.{}", query.alias, node.alias, foreign_key)]
+                    vec![format!("{}.{} = {}.{}", query.alias, query.primary_key, node.alias, foreign_key)]
                 } else {
-                    vec![format!("{}.{} = {}.id", query.alias, foreign_key, node.alias)]
+                    vec![format!("{}.{} = {}.{}", query.alias, foreign_key, node.alias, node.primary_key)]
                 };
                 if let Some(filters) = &query.filters {
                     where_conds.push(compile_where_clause(filters, &query.alias));
@@ -227,6 +227,7 @@ mod tests {
     #[test]
     fn test_compile_basic_select() {
         let query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "User".to_string(),
             alias: "t0".to_string(),
             selections: vec![
@@ -244,6 +245,7 @@ mod tests {
     #[test]
     fn test_compile_relation_select() {
         let child_query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "Post".to_string(),
             alias: "t1".to_string(),
             selections: vec![
@@ -256,6 +258,7 @@ mod tests {
         };
         
         let query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "User".to_string(),
             alias: "t0".to_string(),
             selections: vec![
@@ -282,6 +285,7 @@ mod tests {
     #[test]
     fn test_compile_polymorphic_union() {
         let article_fragment = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "Article".to_string(),
             alias: "t1".to_string(),
             selections: vec![
@@ -297,6 +301,7 @@ mod tests {
         fragments.insert("Article".to_string(), article_fragment);
         
         let query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "User".to_string(),
             alias: "t0".to_string(),
             selections: vec![
@@ -321,6 +326,7 @@ mod tests {
     #[test]
     fn test_compile_deep_recursive_relation() {
         let comments_query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "Comment".to_string(),
             alias: "t2".to_string(),
             selections: vec![
@@ -333,6 +339,7 @@ mod tests {
         };
         
         let posts_query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "Post".to_string(),
             alias: "t1".to_string(),
             selections: vec![
@@ -351,6 +358,7 @@ mod tests {
         };
         
         let user_query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "User".to_string(),
             alias: "t0".to_string(),
             selections: vec![
@@ -378,6 +386,7 @@ mod tests {
     #[test]
     fn test_compile_scalar_array() {
         let query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "User".to_string(),
             alias: "t0".to_string(),
             selections: vec![
@@ -395,6 +404,7 @@ mod tests {
     #[test]
     fn test_compile_single_relation() {
         let child_query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "Profile".to_string(),
             alias: "t1".to_string(),
             selections: vec![
@@ -406,6 +416,7 @@ mod tests {
         };
         
         let query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "User".to_string(),
             alias: "t0".to_string(),
             selections: vec![
@@ -432,12 +443,14 @@ mod tests {
     #[test]
     fn test_compile_multi_fragment_polymorphic_union() {
         let article_fragment = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "Article".to_string(),
             alias: "t1".to_string(),
             selections: vec![SelectField::Scalar("title".to_string())],
             filters: None, limit: None, offset: None,
         };
         let video_fragment = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "Video".to_string(),
             alias: "t2".to_string(),
             selections: vec![SelectField::Scalar("duration".to_string())],
@@ -450,6 +463,7 @@ mod tests {
         fragments.insert("Article".to_string(), article_fragment);
         
         let query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "User".to_string(),
             alias: "t0".to_string(),
             selections: vec![
@@ -475,6 +489,7 @@ mod tests {
     #[test]
     fn test_compile_pagination_and_filtering() {
         let query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "User".to_string(),
             alias: "t0".to_string(),
             selections: vec![SelectField::Scalar("id".to_string())],
@@ -521,6 +536,7 @@ mod tests {
     #[test]
     fn test_compile_relation_with_pagination_and_filtering() {
         let child_query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "Post".to_string(),
             alias: "t1".to_string(),
             selections: vec![SelectField::Scalar("title".to_string())],
@@ -530,6 +546,7 @@ mod tests {
         };
         
         let query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "User".to_string(),
             alias: "t0".to_string(),
             selections: vec![
@@ -557,6 +574,7 @@ mod tests {
     #[test]
     fn test_compile_polymorphic_union_with_filtering() {
         let article_fragment = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "Article".to_string(),
             alias: "t1".to_string(),
             selections: vec![SelectField::Scalar("title".to_string())],
@@ -568,6 +586,7 @@ mod tests {
         fragments.insert("Article".to_string(), article_fragment);
         
         let query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "User".to_string(),
             alias: "t0".to_string(),
             selections: vec![
@@ -593,6 +612,7 @@ mod tests {
     #[test]
     fn test_compile_polymorphic_union_array() {
         let article_fragment = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "Article".to_string(),
             alias: "t1".to_string(),
             selections: vec![SelectField::Scalar("title".to_string())],
@@ -605,6 +625,7 @@ mod tests {
         fragments.insert("Article".to_string(), article_fragment);
         
         let query = QueryNode {
+            primary_key: "id".to_string(),
             target_model: "User".to_string(),
             alias: "t0".to_string(),
             selections: vec![
