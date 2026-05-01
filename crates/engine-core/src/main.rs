@@ -5,7 +5,7 @@ use api_layer::{state::EngineState, router};
 use std::sync::Arc;
 
 #[derive(Parser)]
-#[command(name = "caqui", version = "0.0.2", about = "Unified Schema-Driven SQLite Platform")]
+#[command(name = "caqui", version = "0.0.3", about = "Unified Schema-Driven SQLite Platform")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
