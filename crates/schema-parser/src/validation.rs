@@ -178,6 +178,8 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                                 *references = vec![target_id_name.clone()];
                             }
                         }
+                    } else {
+                        return Err(ValidationError(format!("Target model '{}' does not have an @id field.", target_name)));
                     }
                 }
             }
@@ -479,6 +481,100 @@ mod tests {
             on_delete: None,
             deferrable: false,
             column: Some("reviewer_id".to_string()),
+        }]);
+    }
+
+    #[test]
+    fn test_implicit_relation_explicit_bypass() {
+        let input = "
+            model User {
+                id: String @id
+            }
+            model Post {
+                id: String @id
+                authorId: String
+                author: User @relation(fields: [authorId], references: [id])
+            }
+        ";
+        let mut ast = crate::parser::parse_schema(input).unwrap();
+        ast = validate_schema(ast).unwrap();
+        
+        let post = ast.models.get("Post").unwrap();
+        assert_eq!(post.fields.len(), 3);
+        
+        let author_rel = post.fields.iter().find(|f| f.name == "author").unwrap();
+        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation {
+            name: None,
+            fields: vec!["authorId".to_string()],
+            references: vec!["id".to_string()],
+            on_delete: None,
+            deferrable: false,
+            column: None,
+        }]);
+    }
+
+    #[test]
+    fn test_implicit_relation_strict_type_matching() {
+        let input = "
+            model Category {
+                id: Int @id
+            }
+            model Product {
+                id: String @id
+                category: Category
+            }
+        ";
+        let mut ast = crate::parser::parse_schema(input).unwrap();
+        ast = validate_schema(ast).unwrap();
+        
+        let product = ast.models.get("Product").unwrap();
+        let cat_id_field = product.fields.iter().find(|f| f.name == "categoryId").unwrap();
+        assert_eq!(cat_id_field.field_type, AstFieldType::Scalar("Int".to_string()));
+    }
+
+    #[test]
+    fn test_implicit_relation_missing_target_id() {
+        // Here Author lacks an @id field
+        let input = "
+            model Author {
+                name: String
+            }
+            model Book {
+                id: String @id
+                author: Author
+            }
+        ";
+        // Parse the schema. Note: Pass 2 normally catches missing ID for Author itself.
+        // Wait, Pass 2 will fail first: "Model 'Author' must have exactly one field with the '@id' attribute, found 0."
+        // That is totally fine and correct. Let's just assert that it fails.
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let result = validate_schema(ast);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_implicit_relation_self_referential() {
+        let input = "
+            model Employee {
+                id: String @id
+                manager: Employee @relation(\"Management\")
+            }
+        ";
+        let mut ast = crate::parser::parse_schema(input).unwrap();
+        ast = validate_schema(ast).unwrap();
+        
+        let employee = ast.models.get("Employee").unwrap();
+        let manager_id_field = employee.fields.iter().find(|f| f.name == "managerId").unwrap();
+        assert_eq!(manager_id_field.field_type, AstFieldType::Scalar("String".to_string()));
+        
+        let manager_rel = employee.fields.iter().find(|f| f.name == "manager").unwrap();
+        assert_eq!(manager_rel.attributes, vec![FieldAttribute::Relation {
+            name: Some("Management".to_string()),
+            fields: vec!["managerId".to_string()],
+            references: vec!["id".to_string()],
+            on_delete: None,
+            deferrable: false,
+            column: None,
         }]);
     }
 }
