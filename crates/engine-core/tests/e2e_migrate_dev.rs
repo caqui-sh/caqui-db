@@ -43,7 +43,7 @@ fn test_e2e_migrate_dev() {
 
     // 2. First Migration
     let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "migrate-dev"]).current_dir(workspace);
+    cmd.args(&["schema", "migrate"]).current_dir(workspace);
     run_cmd(cmd);
 
     // Verify migrations directory exists
@@ -89,16 +89,16 @@ fn test_e2e_migrate_dev() {
     // Sleep for 1 second to ensure the second migration gets a new timestamp and doesn't overwrite the first.
     std::thread::sleep(std::time::Duration::from_secs(1));
 
-    // Run migrate-dev again
+    // Run migrate again
     let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "migrate-dev"]).current_dir(workspace);
+    cmd.args(&["schema", "migrate"]).current_dir(workspace);
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     println!("SECOND MIGRATE-DEV STDOUT:\n{}", stdout);
     println!("SECOND MIGRATE-DEV STDERR:\n{}", stderr);
     if !output.status.success() {
-        panic!("Second migrate-dev failed:\nSTDOUT:\n{}\nSTDERR:\n{}", stdout, stderr);
+        panic!("Second migrate failed:\nSTDOUT:\n{}\nSTDERR:\n{}", stdout, stderr);
     }
 
     // Verify a second migration file was created

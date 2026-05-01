@@ -56,7 +56,7 @@ async fn test_e2e_deferrable() {
 
     // 3. Push schema
     let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
     run_cmd(cmd);
 
     // 4. Create connection pool

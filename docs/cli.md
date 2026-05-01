@@ -9,10 +9,10 @@ Generates a starter `schema.cq` file in the current directory if one does not al
 
 ## Schema Management
 
-### `caqui schema db-push`
+### `caqui schema push`
 Quickly syncs your `schema.cq` to your local SQLite database (`app.db`). This instantly generates and applies structural differences to the database. This command is best used during local prototyping and development.
 
-### `caqui schema migrate-dev`
+### `caqui schema migrate`
 The safe, historical deployment workflow. This command:
 1. Reads your `schema.cq`.
 2. Compares it against your previous migration files in the `migrations/` directory.

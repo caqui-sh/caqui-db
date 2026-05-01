@@ -61,7 +61,7 @@ fn test_e2e_git_diff() {
     fs::write(workspace.join("schema.cq"), initial_schema).unwrap();
 
     let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
     run_cmd(cmd);
 
     // 3. Insert initial data
@@ -106,7 +106,7 @@ fn test_e2e_git_diff() {
     fs::write(workspace.join("schema.cq"), evolved_schema).unwrap();
 
     let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
     run_cmd(cmd);
 
     {

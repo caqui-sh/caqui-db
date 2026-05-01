@@ -34,11 +34,11 @@ Execute the following commands from the root directory:
 - **`cargo setup`**
   Initializes a new project. Invokes `cargo run --release --bin caqui -- init`. Generates a default `schema.cq` file in the current directory to bootstrap development.
 
-- **`cargo db-push`**
-  Rapid prototyping workflow. Invokes `cargo run --release --bin caqui -- db-push`. Bypasses the shadow database history and directly compares the `schema.cq` file against the live physical database (`app.db`). Generates and executes the structural SQL differences instantly.
+- **`cargo push`**
+  Rapid prototyping workflow. Invokes `cargo run --release --bin caqui -- push`. Bypasses the shadow database history and directly compares the `schema.cq` file against the live physical database (`app.db`). Generates and executes the structural SQL differences instantly.
 
-- **`cargo migrate-dev`**
-  The safe deployment workflow. Invokes `cargo run --release --bin caqui -- migrate-dev`. Boots a transient, ephemeral "Shadow Database" in memory. It plays the existing `/migrations/*.sql` history files, diffs the historical state against your current `schema.cq`, and writes an automated `_auto_migration.sql` file safely to disk before executing it on your live database.
+- **`cargo migrate`**
+  The safe deployment workflow. Invokes `cargo run --release --bin caqui -- migrate`. Boots a transient, ephemeral "Shadow Database" in memory. It plays the existing `/migrations/*.sql` history files, diffs the historical state against your current `schema.cq`, and writes an automated `_auto_migration.sql` file safely to disk before executing it on your live database.
 
 - **`cargo start`**
   Initializes the engine. Invokes `cargo run --release --bin caqui -- api start`. Bootstraps the custom Virtual File System (VFS), creates the SQLite connection pool, and mounts the universal dynamic execution router to `http://0.0.0.0:4000`.
@@ -68,7 +68,7 @@ This phase provides declarative automated migrations.
 - **Delta Computation**: It diffs the "Live IR" against the AST's "Desired IR" $O(N)$.
 - **Safe Execution**: SQLite cannot dynamically alter table column properties safely. If the engine detects a restrictive type change or a newly added `NOT NULL` constraint, it generates an atomic 12-step table rebuild sequence (`PRAGMA foreign_keys=OFF` -> `BEGIN TRANSACTION` -> `CREATE _new_tbl` -> `INSERT SELECT` -> `DROP` -> `RENAME` -> `COMMIT`). 
 
-During the `cargo migrate-dev` workflow, this logic runs against a transient, in-memory **Shadow Database**, playing historical `.sql` scripts to ascertain safety before touching the developer's live disk.
+During the `cargo migrate` workflow, this logic runs against a transient, in-memory **Shadow Database**, playing historical `.sql` scripts to ascertain safety before touching the developer's live disk.
 
 ### Phase 4: The Query Compiler
 `crates/query-compiler`

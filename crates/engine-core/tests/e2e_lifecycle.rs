@@ -66,7 +66,7 @@ fn test_e2e_lifecycle() {
     assert!(workspace.join("schema.cq").exists(), "schema.cq was not created");
 
     let mut db_push = Command::new(caqui_bin);
-    db_push.args(&["schema", "db-push"]).current_dir(workspace);
+    db_push.args(&["schema", "push"]).current_dir(workspace);
     run_cmd(db_push);
 
     assert!(workspace.join("app.db").exists(), "app.db was not created");
@@ -101,7 +101,7 @@ fn test_e2e_lifecycle() {
     fs::write(&schema_path, schema).unwrap();
 
     let mut db_push_feature = Command::new(caqui_bin);
-    db_push_feature.args(&["schema", "db-push"]).current_dir(workspace);
+    db_push_feature.args(&["schema", "push"]).current_dir(workspace);
     run_cmd(db_push_feature);
 
     // Insert new data on the feature branch
@@ -256,7 +256,7 @@ fn test_e2e_hard_merge_conflict() {
     run_cmd(cmd);
 
     let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
     run_cmd(cmd);
 
     {
@@ -364,7 +364,7 @@ fn test_e2e_complex_graph_traversal() {
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();
     let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
     run_cmd(cmd);
 
     {
@@ -410,9 +410,9 @@ fn test_e2e_cli_misconfigurations() {
     let workspace = dir.path();
     let caqui_bin = env!("CARGO_BIN_EXE_caqui");
 
-    // 1. db-push without schema.cq
+    // 1. push without schema.cq
     let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
     let output = cmd.output().unwrap();
     assert!(!output.status.success());
 
@@ -429,7 +429,7 @@ fn test_e2e_cli_misconfigurations() {
     
     fs::write(workspace.join("schema.cq"), "invalid schema syntax").unwrap();
     let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
     let output = cmd.output().unwrap();
     assert!(!output.status.success());
 }
@@ -455,7 +455,7 @@ fn test_e2e_custom_functions_and_triggers() {
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();
     let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
     run_cmd(cmd);
 
     {

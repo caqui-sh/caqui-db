@@ -53,7 +53,7 @@ model Post {
 Apply your schema changes to the local SQLite database (`app.db`).
 
 ```bash
-caqui schema db-push
+caqui schema push
 ```
 
 ### 4. Start the API
@@ -87,7 +87,7 @@ For a comprehensive guide on all features, please refer to our modular documenta
 - ✍️ **[API Mutation Reference (Write)](./docs/mutations.md)**: `create`, `update`, `delete`, `upsert`, and nested writes.
 - 💻 **[CLI Commands Reference](./docs/cli.md)**: Initialization, migrations, API server, and git proxy behaviors.
 - 🔄 **[Decentralized Git Workflow](./docs/workflow.md)**: Understanding the sync loop and `sqlitevfs` merge driver.
-- 📈 **[Database Lifecycle & Migrations](./docs/migrations.md)**: `db-push` vs `migrate-dev`, shadow databases, and table rebuilds.
+- 📈 **[Database Lifecycle & Migrations](./docs/migrations.md)**: `push` vs `migrate`, shadow databases, and table rebuilds.
 - 🔗 **[Advanced Relational Rules](./docs/relations.md)**: Named relations, self-referential models, and deferrable constraints.
 - 🚫 **[Error Handling & API Responses](./docs/errors.md)**: HTTP status codes, error shapes, and troubleshooting.
 - ⚙️ **[Configuration & Engine Pragmas](./docs/configuration.md)**: Ports, foreign key enforcement, and custom SQLite functions.

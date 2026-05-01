@@ -2,27 +2,27 @@
 
 `caqui` provides two primary workflows for evolving your database schema: a fast, iterative workflow for local prototyping and a safe, historical workflow for production-ready deployments.
 
-## The Prototyping Workflow (`db-push`)
+## The Prototyping Workflow (`push`)
 
-When you are rapidly iterating on your schema and don't care about maintaining a history of individual SQL migration scripts, use `db-push`.
+When you are rapidly iterating on your schema and don't care about maintaining a history of individual SQL migration scripts, use `push`.
 
 ```bash
-caqui schema db-push
+caqui schema push
 ```
 
 - **How it works:** `caqui` introspects your current `app.db`, calculates the structural difference with your `schema.cq`, and applies the changes immediately.
 - **Best for:** Local development and initial prototyping.
 - **Warning:** This command does not generate a `.sql` file in your `migrations/` directory.
 
-## The Migration Workflow (`migrate-dev`)
+## The Migration Workflow (`migrate`)
 
-For shared environments and production deployments, use `migrate-dev`. This workflow ensures that every schema change is captured as a versioned SQL script.
+For shared environments and production deployments, use `migrate`. This workflow ensures that every schema change is captured as a versioned SQL script.
 
 ```bash
-caqui schema migrate-dev
+caqui schema migrate
 ```
 
-### How `migrate-dev` Works
+### How `migrate` Works
 
 1. **Shadow Database:** `caqui` spins up a temporary, in-memory "Shadow Database".
 2. **Replay:** It replays all existing scripts in your `migrations/` folder into the Shadow Database to reach the current "production" state.

@@ -5,7 +5,7 @@ use api_layer::{state::EngineState, router};
 use std::sync::Arc;
 
 #[derive(Parser)]
-#[command(name = "caqui", version = "0.0.3", about = "Unified Schema-Driven SQLite Platform")]
+#[command(name = "caqui", version = "0.0.4", about = "Unified Schema-Driven SQLite Platform")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -32,8 +32,8 @@ enum Commands {
 #[derive(Subcommand)]
 #[command(rename_all = "kebab-case")]
 enum SchemaCommands {
-    DbPush,
-    MigrateDev,
+    Push,
+    Migrate,
 }
 
 #[derive(Subcommand)]
@@ -67,7 +67,7 @@ union SearchResult = User | Post
 "#;
             std::fs::write("schema.cq", default_schema).unwrap();
             println!("SUCCESS: Created default schema.cq!");
-            println!("Next steps: run `caqui schema db-push` or `caqui schema migrate-dev` to apply the schema.");
+            println!("Next steps: run `caqui schema push` or `caqui schema migrate` to apply the schema.");
         }
         return;
     }
@@ -101,7 +101,7 @@ union SearchResult = User | Post
             engine_core::git::proxy_git_command(args);
         }
         Commands::Schema { command } => match command {
-            SchemaCommands::DbPush => {
+            SchemaCommands::Push => {
                 // Phase 3: Push non-destructive Schema Diffs directly to SQLite
                 let desired_ir = schema_mapper::lower_ast_to_physical(&desired_ast);
                 let conn = rusqlite::Connection::open_with_flags(
@@ -112,7 +112,7 @@ union SearchResult = User | Post
                 workflows::db_push(&conn, &desired_ir).unwrap();
                 println!("SUCCESS: Database schema synced.");
             }
-            SchemaCommands::MigrateDev => {
+            SchemaCommands::Migrate => {
                 // Phase 3: Spawn Shadow Database, Introspect, and generate safe .sql files
                 let desired_ir = schema_mapper::lower_ast_to_physical(&desired_ast);
                 workflows::migrate_dev(&desired_ir, "file:app.db?vfs=git", "migrations").unwrap();
@@ -122,7 +122,7 @@ union SearchResult = User | Post
         Commands::Api { command } => match command {
             ApiCommands::Start => {
                 if !std::path::Path::new("app.db").exists() {
-                    eprintln!("Error: 'app.db' not found. Run `caqui schema db-push` to initialize the database.");
+                    eprintln!("Error: 'app.db' not found. Run `caqui schema push` to initialize the database.");
                     std::process::exit(1);
                 }
 

@@ -65,7 +65,7 @@ async fn test_e2e_on_delete() {
 
     // 3. Push schema
     let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
     run_cmd(cmd);
 
     // 4. Create a connection pool to test PRAGMA foreign_keys = ON
@@ -153,7 +153,7 @@ async fn test_e2e_self_referential_cascade() {
     fs::write(workspace.join("schema.cq"), schema).unwrap();
 
     let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
     run_cmd(cmd);
 
     let pool = api_layer::db::create_pool(&db_uri);

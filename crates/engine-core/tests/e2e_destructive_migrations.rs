@@ -41,7 +41,7 @@ async fn test_e2e_destructive_migrations() {
 
     // 3. Migrate and Push
     let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "migrate-dev"]).current_dir(workspace);
+    cmd.args(&["schema", "migrate"]).current_dir(workspace);
     run_cmd(cmd);
 
     // 4. Insert incompatible data
@@ -62,9 +62,9 @@ async fn test_e2e_destructive_migrations() {
     ";
     fs::write(workspace.join("schema.cq"), schema_v2).unwrap();
 
-    // 6. Run migrate-dev. This will detect a type change and trigger a table rebuild.
+    // 6. Run migrate. This will detect a type change and trigger a table rebuild.
     let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "migrate-dev"]).current_dir(workspace);
+    cmd.args(&["schema", "migrate"]).current_dir(workspace);
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
