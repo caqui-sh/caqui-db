@@ -177,21 +177,25 @@ mod tests {
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![FieldAttribute::Id],
                 },
                 FieldNode {
                     name: "tags".to_string(),
                     field_type: AstFieldType::ScalarArray("String".to_string()),
+                    is_optional: false,
                     attributes: vec![],
                 },
                 FieldNode {
                     name: "search".to_string(),
                     field_type: AstFieldType::PolymorphicUnion("SearchResult".to_string()),
+                    is_optional: false,
                     attributes: vec![],
                 },
                 FieldNode {
                     name: "age".to_string(),
                     field_type: AstFieldType::Scalar("Int".to_string()),
+                    is_optional: false,
                     attributes: vec![],
                 },
             ]
@@ -236,16 +240,19 @@ mod tests {
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)],
                 },
                 FieldNode {
                     name: "serial".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![FieldAttribute::Unique],
                 },
                 FieldNode {
                     name: "updated_at".to_string(),
                     field_type: AstFieldType::Scalar("DateTime".to_string()),
+                    is_optional: false,
                     attributes: vec![FieldAttribute::UpdatedAt],
                 },
             ]
@@ -257,6 +264,7 @@ mod tests {
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("Int".to_string()),
+                    is_optional: false,
                     attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::AutoIncrement)],
                 },
             ]
@@ -295,16 +303,19 @@ mod tests {
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![FieldAttribute::Id],
                 },
                 FieldNode {
                     name: "authorId".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![],
                 },
                 FieldNode {
                     name: "author".to_string(),
                     field_type: AstFieldType::Relation("User".to_string()),
+                    is_optional: false,
                     attributes: vec![
                         FieldAttribute::Relation {
                             name: None,

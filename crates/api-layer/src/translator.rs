@@ -152,38 +152,38 @@ mod tests {
         ast.models.insert("User".to_string(), ModelNode {
             name: "User".to_string(),
             fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
-                FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
-                FieldNode { name: "tags".to_string(), field_type: AstFieldType::ScalarArray("String".to_string()), attributes: vec![] },
-                FieldNode { name: "password".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![FieldAttribute::Ignore] },
-                FieldNode { name: "posts".to_string(), field_type: AstFieldType::RelationArray("Post".to_string()), attributes: vec![] },
-                FieldNode { name: "profile".to_string(), field_type: AstFieldType::Relation("Profile".to_string()), attributes: vec![] },
-                FieldNode { name: "content".to_string(), field_type: AstFieldType::PolymorphicUnion("SearchContent".to_string()), attributes: vec![] },
+                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "tags".to_string(), field_type: AstFieldType::ScalarArray("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "password".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Ignore] },
+                FieldNode { name: "posts".to_string(), field_type: AstFieldType::RelationArray("Post".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "profile".to_string(), field_type: AstFieldType::Relation("Profile".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "content".to_string(), field_type: AstFieldType::PolymorphicUnion("SearchContent".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
 
         ast.models.insert("Post".to_string(), ModelNode {
             name: "Post".to_string(),
             fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
-                FieldNode { name: "title".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
-                FieldNode { name: "comments".to_string(), field_type: AstFieldType::RelationArray("Comment".to_string()), attributes: vec![] },
+                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "title".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "comments".to_string(), field_type: AstFieldType::RelationArray("Comment".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
 
         ast.models.insert("Comment".to_string(), ModelNode {
             name: "Comment".to_string(),
             fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
-                FieldNode { name: "body".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
-                FieldNode { name: "author".to_string(), field_type: AstFieldType::Relation("User".to_string()), attributes: vec![] },
+                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "body".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "author".to_string(), field_type: AstFieldType::Relation("User".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
 
         ast.models.insert("Profile".to_string(), ModelNode {
             name: "Profile".to_string(),
             fields: vec![
-                FieldNode { name: "bio".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
+                FieldNode { name: "bio".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
 

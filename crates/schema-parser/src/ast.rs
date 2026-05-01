@@ -46,5 +46,6 @@ pub enum FieldAttribute {
 pub struct FieldNode {
     pub name: String,
     pub field_type: AstFieldType,
+    pub is_optional: bool,
     pub attributes: Vec<FieldAttribute>,
 }

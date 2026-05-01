@@ -6,9 +6,14 @@ use std::process::{Command, exit};
 use rusqlite::Connection;
 
 fn format_type(field: &FieldNode) -> String {
-    match &field.field_type {
+    let base = match &field.field_type {
         AstFieldType::Scalar(t) | AstFieldType::Relation(t) | AstFieldType::PolymorphicUnion(t) => t.clone(),
         AstFieldType::ScalarArray(t) | AstFieldType::RelationArray(t) => format!("{}[]", t),
+    };
+    if field.is_optional {
+        format!("{}?", base)
+    } else {
+        base
     }
 }
 
@@ -324,4 +329,49 @@ struct ModelDiff {
     added: Vec<String>,
     deleted: Vec<String>,
     modified: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use schema_parser::ast::{FieldNode, AstFieldType};
+
+    #[test]
+    fn test_format_type() {
+        // Required Scalar
+        let f1 = FieldNode {
+            name: "id".to_string(),
+            field_type: AstFieldType::Scalar("Int".to_string()),
+            is_optional: false,
+            attributes: vec![],
+        };
+        assert_eq!(format_type(&f1), "Int");
+
+        // Optional Scalar
+        let f2 = FieldNode {
+            name: "bio".to_string(),
+            field_type: AstFieldType::Scalar("String".to_string()),
+            is_optional: true,
+            attributes: vec![],
+        };
+        assert_eq!(format_type(&f2), "String?");
+
+        // Required Array
+        let f3 = FieldNode {
+            name: "tags".to_string(),
+            field_type: AstFieldType::ScalarArray("String".to_string()),
+            is_optional: false,
+            attributes: vec![],
+        };
+        assert_eq!(format_type(&f3), "String[]");
+
+        // Optional Array (though unusual, grammar supports it)
+        let f4 = FieldNode {
+            name: "notes".to_string(),
+            field_type: AstFieldType::ScalarArray("String".to_string()),
+            is_optional: true,
+            attributes: vec![],
+        };
+        assert_eq!(format_type(&f4), "String[]?");
+    }
 }

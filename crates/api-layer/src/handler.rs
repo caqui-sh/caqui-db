@@ -164,14 +164,14 @@ mod tests {
         ast.models.insert("User".to_string(), ModelNode {
             name: "User".to_string(),
             fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
-                FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![FieldAttribute::Unique] },
-                FieldNode { name: "age".to_string(), field_type: AstFieldType::Scalar("Int".to_string()), attributes: vec![] },
-                FieldNode { name: "bio".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
-                FieldNode { name: "secret".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![FieldAttribute::Ignore] },
-                FieldNode { name: "tags".to_string(), field_type: AstFieldType::ScalarArray("String".to_string()), attributes: vec![] },
-                FieldNode { name: "updated_at".to_string(), field_type: AstFieldType::Scalar("DateTime".to_string()), attributes: vec![FieldAttribute::UpdatedAt] },
-                FieldNode { name: "posts".to_string(), field_type: AstFieldType::RelationArray("Post".to_string()), attributes: vec![
+                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
+                FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Unique] },
+                FieldNode { name: "age".to_string(), field_type: AstFieldType::Scalar("Int".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "bio".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "secret".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Ignore] },
+                FieldNode { name: "tags".to_string(), field_type: AstFieldType::ScalarArray("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "updated_at".to_string(), field_type: AstFieldType::Scalar("DateTime".to_string()), is_optional: false, attributes: vec![FieldAttribute::UpdatedAt] },
+                FieldNode { name: "posts".to_string(), field_type: AstFieldType::RelationArray("Post".to_string()), is_optional: false, attributes: vec![
                     FieldAttribute::Relation {
                         name: None,
                         fields: vec![],
@@ -181,8 +181,8 @@ mod tests {
                         column: None,
                     }
                 ] },
-                FieldNode { name: "profileId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
-                FieldNode { name: "profile".to_string(), field_type: AstFieldType::Relation("Profile".to_string()), attributes: vec![
+                FieldNode { name: "profileId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "profile".to_string(), field_type: AstFieldType::Relation("Profile".to_string()), is_optional: false, attributes: vec![
                     FieldAttribute::Relation {
                         name: None,
                         fields: vec!["profileId".to_string()],
@@ -198,18 +198,18 @@ mod tests {
         ast.models.insert("Profile".to_string(), ModelNode {
             name: "Profile".to_string(),
             fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
-                FieldNode { name: "bio".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
+                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
+                FieldNode { name: "bio".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
 
         ast.models.insert("Post".to_string(), ModelNode {
             name: "Post".to_string(),
             fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
-                FieldNode { name: "title".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
-                FieldNode { name: "authorId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
-                FieldNode { name: "author".to_string(), field_type: AstFieldType::Relation("User".to_string()), attributes: vec![
+                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
+                FieldNode { name: "title".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "authorId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "author".to_string(), field_type: AstFieldType::Relation("User".to_string()), is_optional: false, attributes: vec![
                     FieldAttribute::Relation {
                         name: None,
                         fields: vec!["authorId".to_string()],
@@ -219,7 +219,7 @@ mod tests {
                         column: None,
                     }
                 ] },
-                FieldNode { name: "comments".to_string(), field_type: AstFieldType::RelationArray("Comment".to_string()), attributes: vec![
+                FieldNode { name: "comments".to_string(), field_type: AstFieldType::RelationArray("Comment".to_string()), is_optional: false, attributes: vec![
                     FieldAttribute::Relation {
                         name: None,
                         fields: vec![],
@@ -235,10 +235,10 @@ mod tests {
         ast.models.insert("Comment".to_string(), ModelNode {
             name: "Comment".to_string(),
             fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
-                FieldNode { name: "text".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
-                FieldNode { name: "postId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
-                FieldNode { name: "post".to_string(), field_type: AstFieldType::Relation("Post".to_string()), attributes: vec![
+                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
+                FieldNode { name: "text".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "postId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "post".to_string(), field_type: AstFieldType::Relation("Post".to_string()), is_optional: false, attributes: vec![
                     FieldAttribute::Relation {
                         name: None,
                         fields: vec!["postId".to_string()],
@@ -402,7 +402,7 @@ mod tests {
         ast.models.insert("Ghost".to_string(), ModelNode {
             name: "Ghost".to_string(),
             fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
+                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
         state.ast = Arc::new(ast);

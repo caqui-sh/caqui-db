@@ -39,7 +39,22 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
             // Check for @id attribute
             let has_id = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Id));
             if has_id {
+                if field.is_optional {
+                    return Err(ValidationError(format!(
+                        "Field '{}' in model '{}' is marked with '@id' but is optional. Primary keys cannot be optional.",
+                        field.name, model.name
+                    )));
+                }
                 id_count += 1;
+            }
+
+            // Check if arrays are optional
+            let is_array = matches!(field.field_type, AstFieldType::ScalarArray(_) | AstFieldType::RelationArray(_));
+            if is_array && field.is_optional {
+                return Err(ValidationError(format!(
+                    "Field '{}' in model '{}' is an array but is marked as optional. Arrays cannot be optional.",
+                    field.name, model.name
+                )));
             }
             
             // Fix up Relation to PolymorphicUnion if it points to a union
@@ -169,6 +184,7 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                         added_fields.push(FieldNode {
                             name: col_name.clone(),
                             field_type: target_id_type.clone(),
+                            is_optional: field.is_optional,
                             attributes: vec![],
                         });
                         
@@ -213,6 +229,7 @@ mod tests {
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![FieldAttribute::Id],
                 }
             ]
@@ -234,6 +251,7 @@ mod tests {
                 FieldNode {
                     name: "name".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![],
                 }
             ]
@@ -257,6 +275,7 @@ mod tests {
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![FieldAttribute::Id],
                 }
             ]
@@ -282,11 +301,13 @@ mod tests {
                 FieldNode {
                     name: "id1".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![FieldAttribute::Id],
                 },
                 FieldNode {
                     name: "id2".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![FieldAttribute::Id],
                 }
             ]
@@ -310,11 +331,13 @@ mod tests {
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![FieldAttribute::Id],
                 },
                 FieldNode {
                     name: "author".to_string(),
                     field_type: AstFieldType::Relation("UnknownModel".to_string()),
+                    is_optional: false,
                     attributes: vec![],
                 }
             ]
@@ -338,11 +361,13 @@ mod tests {
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![FieldAttribute::Id],
                 },
                 FieldNode {
                     name: "results".to_string(),
                     field_type: AstFieldType::RelationArray("SearchResult".to_string()),
+                    is_optional: false,
                     attributes: vec![],
                 }
             ]
@@ -368,11 +393,13 @@ mod tests {
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![FieldAttribute::Id],
                 },
                 FieldNode {
                     name: "result".to_string(),
                     field_type: AstFieldType::Relation("SearchResult".to_string()),
+                    is_optional: false,
                     attributes: vec![],
                 }
             ]
@@ -576,5 +603,60 @@ mod tests {
             deferrable: false,
             column: None,
         }]);
+    }
+
+    #[test]
+    fn test_validation_optional_id_fails() {
+        let input = "
+            model User {
+                id: String? @id
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let res = validate_schema(ast);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().0.contains("Primary keys cannot be optional"));
+    }
+
+    #[test]
+    fn test_validation_optional_array_fails() {
+        let input = "
+            model User {
+                id: String @id
+                tags: String[]?
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let res = validate_schema(ast);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().0.contains("Arrays cannot be optional"));
+    }
+
+    #[test]
+    fn test_validation_implicit_fk_inherits_optionality() {
+        let input = "
+            model User {
+                id: String @id
+                manager: User?
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let res = validate_schema(ast).unwrap();
+        let user = res.models.get("User").unwrap();
+        let manager_id = user.fields.iter().find(|f| f.name == "managerId").unwrap();
+        assert!(manager_id.is_optional);
+    }
+
+    #[test]
+    fn test_validation_optional_unique_succeeds() {
+        let input = "
+            model User {
+                id: String @id
+                email: String? @unique
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let res = validate_schema(ast);
+        assert!(res.is_ok());
     }
 }

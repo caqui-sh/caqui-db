@@ -32,7 +32,17 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                         let type_ident_rule = ft_inner.next().unwrap();
                         let is_scalar = type_ident_rule.as_rule() == Rule::scalar;
                         let type_name = type_ident_rule.as_str().to_string();
-                        let is_array = ft_inner.next().map(|r| r.as_rule() == Rule::is_array).is_some();
+
+                        let mut is_array = false;
+                        let mut is_optional = false;
+
+                        for sub_pair in ft_inner {
+                            match sub_pair.as_rule() {
+                                Rule::is_array => is_array = true,
+                                Rule::is_optional => is_optional = true,
+                                _ => {}
+                            }
+                        }
                         
                         let ast_field_type = if is_scalar {
                             if is_array {
@@ -137,6 +147,7 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                         fields.push(FieldNode {
                             name: field_name,
                             field_type: ast_field_type,
+                            is_optional,
                             attributes,
                         });
                     }
@@ -199,16 +210,19 @@ mod tests {
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![FieldAttribute::Id],
                 },
                 FieldNode {
                     name: "name".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![],
                 },
                 FieldNode {
                     name: "posts".to_string(),
                     field_type: AstFieldType::RelationArray("Post".to_string()),
+                    is_optional: false,
                     attributes: vec![],
                 },
             ],
@@ -220,16 +234,19 @@ mod tests {
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![FieldAttribute::Id],
                 },
                 FieldNode {
                     name: "title".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
                     attributes: vec![],
                 },
                 FieldNode {
                     name: "author".to_string(),
                     field_type: AstFieldType::Relation("User".to_string()),
+                    is_optional: false,
                     attributes: vec![],
                 },
             ],
@@ -329,5 +346,35 @@ mod tests {
             deferrable: false,
             column: None,
         }]);
+    }
+
+    #[test]
+    fn test_parse_optional_fields() {
+        let input = "
+            model User {
+                id: String @id
+                bio: String?
+                manager: User? @relation(fields: [managerId], references: [id])
+                managerId: String?
+            }
+        ";
+        
+        let ast = parse_schema(input).unwrap();
+        let user = ast.models.get("User").unwrap();
+        
+        let id_field = user.fields.iter().find(|f| f.name == "id").unwrap();
+        assert!(!id_field.is_optional);
+        
+        let bio_field = user.fields.iter().find(|f| f.name == "bio").unwrap();
+        assert!(bio_field.is_optional);
+        assert_eq!(bio_field.field_type, AstFieldType::Scalar("String".to_string()));
+        
+        let manager_field = user.fields.iter().find(|f| f.name == "manager").unwrap();
+        assert!(manager_field.is_optional);
+        assert_eq!(manager_field.field_type, AstFieldType::Relation("User".to_string()));
+        
+        let manager_id_field = user.fields.iter().find(|f| f.name == "managerId").unwrap();
+        assert!(manager_id_field.is_optional);
+        assert_eq!(manager_id_field.field_type, AstFieldType::Scalar("String".to_string()));
     }
 }

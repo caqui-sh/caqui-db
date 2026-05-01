@@ -9,7 +9,8 @@ custom     = { ident }
 
 // Capture arrays natively (e.g., String[])
 is_array   = { "[]" }
-field_type = { (scalar | custom) ~ is_array? }
+is_optional = { "?" }
+field_type = { (scalar | custom) ~ is_array? ~ is_optional? }
 
 // Values can be functions, strings, numbers, or array literals
 string_lit  = { "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
