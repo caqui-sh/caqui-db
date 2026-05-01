@@ -14,6 +14,8 @@ pub struct QueryNode {
 pub enum SelectField {
     /// A standard primitive column (e.g., 'id', 'name')
     Scalar(String),
+    /// A boolean primitive column, requires special JSON casting in SQLite
+    ScalarBoolean(String),
     /// A standard SQLite TEXT column containing a JSON array (e.g., 'tags')
     ScalarArray(String),
     /// A nested 1:N or N:M relationship, pointing to a sub-QueryNode

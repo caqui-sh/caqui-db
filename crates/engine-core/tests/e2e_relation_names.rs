@@ -99,7 +99,7 @@ async fn test_e2e_relation_names() {
     });
 
     let mut alias_counter = 0;
-    let ir = api_layer::translator::hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+    let ir = api_layer::translator::hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
     let sql = query_compiler::read::compile_select(&ir, None);
 
     let conn2 = pool.get().await.unwrap();
@@ -200,7 +200,7 @@ async fn test_e2e_self_referential_relations() {
     });
 
     let mut alias_counter = 0;
-    let ir = api_layer::translator::hydrate_payload_to_ir(&ast, "Employee", &payload, &mut alias_counter).unwrap();
+    let ir = api_layer::translator::hydrate_payload_to_ir(&ast, "Employee", &payload, &mut alias_counter, 0).unwrap();
     let sql = query_compiler::read::compile_select(&ir, None);
     println!("GENERATED SQL:\n{}", sql);
 

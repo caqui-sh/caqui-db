@@ -2150,4 +2150,91 @@ mod tests {
         assert!(interns.iter().any(|i| i["name"] == "Intern 1"));
         assert!(interns.iter().any(|i| i["name"] == "Intern 2"));
     }
+
+    async fn build_scalar_test_state() -> EngineState {
+        let mut ast = SchemaAst {
+            models: HashMap::new(),
+            unions: HashMap::new(),
+        };
+
+        ast.models.insert("Config".to_string(), ModelNode {
+            name: "Config".to_string(),
+            fields: vec![
+                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
+                FieldNode { name: "isPublished".to_string(), field_type: AstFieldType::Scalar("Boolean".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "rating".to_string(), field_type: AstFieldType::Scalar("Float".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "scores".to_string(), field_type: AstFieldType::ScalarArray("Int".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "nickname".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: true, attributes: vec![] },
+            ]
+        });
+
+        let db_name = format!("file:memdb{}?mode=memory&cache=shared", DB_COUNTER.fetch_add(1, Ordering::SeqCst));
+        let pool = crate::db::create_pool(&db_name);
+
+        let conn = pool.get().await.unwrap();
+        conn.interact(|db| -> Result<(), rusqlite::Error> {
+            db.execute("CREATE TABLE Config (
+                id TEXT PRIMARY KEY DEFAULT (gen_uuid7()),
+                isPublished INTEGER NOT NULL,
+                rating REAL NOT NULL,
+                scores TEXT NOT NULL,
+                nickname TEXT
+            ) STRICT;", [])?;
+            Ok(())
+        }).await.unwrap().unwrap();
+
+        EngineState {
+            db_pool: pool,
+            ast: Arc::new(ast),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_api_scalar_types_and_optionals() {
+        let state = build_scalar_test_state().await;
+        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
+
+        // Create a record
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "model": "Config",
+                    "action": "create",
+                    "data": {
+                        "isPublished": true,
+                        "rating": 4.5,
+                        "scores": [90, 100, 85]
+                    },
+                    "select": { "id": true, "isPublished": true, "rating": true, "scores": true, "nickname": true }
+                }"#
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        
+        let root = &json_body["data"];
+        
+        // Assert Boolean correctly formatted as JSON true (not 1)
+        assert_eq!(root["isPublished"], true);
+        
+        // Assert Float is correctly formatted as a number (not string)
+        assert_eq!(root["rating"], 4.5);
+        
+        // Assert Int[] array contains numeric types
+        let scores = root["scores"].as_array().unwrap();
+        assert_eq!(scores.len(), 3);
+        assert_eq!(scores[0], 90);
+        assert_eq!(scores[1], 100);
+        assert_eq!(scores[2], 85);
+        
+        // Assert missing optional field safely falls back to explicit JSON null
+        assert!(root["nickname"].is_null());
+    }
 }

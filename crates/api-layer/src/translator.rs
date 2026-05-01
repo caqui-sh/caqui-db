@@ -38,7 +38,13 @@ pub fn hydrate_payload_to_ir(
         }
 
         match &field_def.field_type {
-            AstFieldType::Scalar(_) => selections.push(SelectField::Scalar(field_name.clone())),
+            AstFieldType::Scalar(type_name) => {
+                if type_name == "Boolean" {
+                    selections.push(SelectField::ScalarBoolean(field_name.clone()));
+                } else {
+                    selections.push(SelectField::Scalar(field_name.clone()));
+                }
+            },
             AstFieldType::ScalarArray(_) => selections.push(SelectField::ScalarArray(field_name.clone())),
             
             AstFieldType::Relation(target_model) | AstFieldType::RelationArray(target_model) => {

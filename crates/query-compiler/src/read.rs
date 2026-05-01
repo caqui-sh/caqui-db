@@ -78,6 +78,10 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                 // Generates: 'name', t0.name
                 json_pairs.push(format!("'{}', {}.{}", name, node.alias, name));
             },
+            SelectField::ScalarBoolean(name) => {
+                // Generates: 'isPublished', CASE t0.isPublished WHEN 1 THEN json('true') WHEN 0 THEN json('false') ELSE NULL END
+                json_pairs.push(format!("'{}', CASE {}.{} WHEN 1 THEN json('true') WHEN 0 THEN json('false') ELSE NULL END", name, node.alias, name));
+            },
             SelectField::ScalarArray(name) => {
                 // json() forces SQLite to parse the TEXT column as valid JSON before embedding, 
                 // preventing double-escaped strings like "[\"a\"]".
