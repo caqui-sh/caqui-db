@@ -87,6 +87,10 @@ For a comprehensive guide on all features, please refer to our modular documenta
 - 🔍 **[API Query Reference (Read)](./docs/queries.md)**: `findMany`, filtering, projections, and relational filters.
 - ✍️ **[API Mutation Reference (Write)](./docs/mutations.md)**: `create`, `update`, `delete`, `upsert`, and nested writes.
 - 💻 **[CLI Commands Reference](./docs/cli.md)**: Initialization, migrations, API server, and git proxy behaviors.
+- 🔄 **[Decentralized Git Workflow](./docs/workflow.md)**: Understanding the sync loop and `sqlitevfs` merge driver.
+- 📈 **[Database Lifecycle & Migrations](./docs/migrations.md)**: `db-push` vs `migrate-dev`, shadow databases, and table rebuilds.
+- 🔗 **[Advanced Relational Rules](./docs/relations.md)**: Named relations, self-referential models, and deferrable constraints.
+- 🚫 **[Error Handling & API Responses](./docs/errors.md)**: HTTP status codes, error shapes, and troubleshooting.
 
 ---
 
