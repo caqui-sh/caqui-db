@@ -7,9 +7,14 @@ pub fn hydrate_payload_to_ir(
     ast: &SchemaAst,
     model_name: &str,
     payload: &Value, 
-    alias_counter: &mut usize
+    alias_counter: &mut usize,
+    depth: usize
 ) -> Result<QueryNode, String> {
     
+    if depth > 10 {
+        return Err("Security Exception: Maximum query depth exceeded.".to_string());
+    }
+
     // 1. Strict Schema Validation: Verify model exists physically
     let model_def = ast.models.get(model_name)
         .ok_or_else(|| format!("Security Exception: Model '{}' undefined.", model_name))?;
@@ -38,7 +43,7 @@ pub fn hydrate_payload_to_ir(
             
             AstFieldType::Relation(target_model) | AstFieldType::RelationArray(target_model) => {
                 // 3. Recursive Graph Traversal for nested relational queries
-                let child_node = hydrate_payload_to_ir(ast, target_model, sub_payload, alias_counter)?;
+                let child_node = hydrate_payload_to_ir(ast, target_model, sub_payload, alias_counter, depth + 1)?;
                 let is_list = matches!(field_def.field_type, AstFieldType::RelationArray(_));
                 
                 // Determine foreign key by inspecting the AST
@@ -100,7 +105,7 @@ pub fn hydrate_payload_to_ir(
                             return Err(format!("Invalid union target '{}' for union '{}'.", target_model_name, union_name));
                         }
                         
-                        let fragment_node = hydrate_payload_to_ir(ast, target_model_name, target_payload, alias_counter)?;
+                        let fragment_node = hydrate_payload_to_ir(ast, target_model_name, target_payload, alias_counter, depth + 1)?;
                         target_fragments.insert(target_model_name.clone(), fragment_node);
                     }
                 }
@@ -220,7 +225,7 @@ mod tests {
         });
         
         let mut alias_counter = 0;
-        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
         
         assert_eq!(ir.target_model, "User");
         assert_eq!(ir.alias, "t0");
@@ -269,7 +274,7 @@ mod tests {
         });
         
         let mut alias_counter = 0;
-        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
         
         assert_eq!(ir.target_model, "User");
         assert_eq!(ir.alias, "t0");
@@ -300,7 +305,7 @@ mod tests {
             }
         });
         let mut alias_counter = 0;
-        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
         
         let union_field = ir.selections.iter().find(|s| matches!(s, SelectField::PolymorphicUnion { .. })).unwrap();
         if let SelectField::PolymorphicUnion { field_name, is_list, target_fragments } = union_field {
@@ -326,7 +331,7 @@ mod tests {
             }
         });
         let mut alias_counter = 0;
-        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
         
         let union_field = ir.selections.iter().find(|s| matches!(s, SelectField::PolymorphicUnion { .. })).unwrap();
         if let SelectField::PolymorphicUnion { field_name, is_list, target_fragments } = union_field {
@@ -351,7 +356,7 @@ mod tests {
             }
         });
         let mut alias_counter = 0;
-        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap_err();
+        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap_err();
         assert!(err.contains("Invalid union target 'UnknownModel'"));
     }
 
@@ -363,7 +368,7 @@ mod tests {
             "limit": 10
         });
         let mut alias_counter = 0;
-        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
         assert_eq!(ir.limit, Some(10));
     }
 
@@ -376,7 +381,7 @@ mod tests {
             }
         });
         let mut alias_counter = 0;
-        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
         
         let relation = ir.selections.first().unwrap();
         if let SelectField::Relation { is_list, .. } = relation {
@@ -393,7 +398,7 @@ mod tests {
             "select": { "tags": true }
         });
         let mut alias_counter = 0;
-        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
         assert!(matches!(ir.selections[0], SelectField::ScalarArray(_)));
     }
 
@@ -402,7 +407,7 @@ mod tests {
         let ast = mock_ast();
         let payload = json!({ "not_select": {} });
         let mut alias_counter = 0;
-        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap_err();
+        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap_err();
         assert!(err.contains("Missing 'select' projection block"));
     }
 
@@ -412,7 +417,7 @@ mod tests {
         let payload = json!({ "select": { "id": true } });
         let mut alias_counter = 0;
         
-        let err = hydrate_payload_to_ir(&ast, "UnknownModel", &payload, &mut alias_counter).unwrap_err();
+        let err = hydrate_payload_to_ir(&ast, "UnknownModel", &payload, &mut alias_counter, 0).unwrap_err();
         assert!(err.contains("Security Exception"));
     }
 
@@ -422,7 +427,7 @@ mod tests {
         let payload = json!({ "select": { "hacker_field": true } });
         let mut alias_counter = 0;
         
-        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap_err();
+        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap_err();
         assert!(err.contains("Invalid field 'hacker_field'"));
     }
 
@@ -432,7 +437,7 @@ mod tests {
         let payload = json!({ "select": { "password": true } });
         let mut alias_counter = 0;
         
-        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap_err();
+        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap_err();
         assert!(err.contains("Security Exception: Prohibited access to ignored field 'password'"));
     }
 
@@ -454,7 +459,7 @@ mod tests {
         });
         
         let mut alias_counter = 0;
-        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
         
         assert_eq!(ir.limit, Some(10));
         assert_eq!(ir.offset, Some(20));
@@ -489,7 +494,7 @@ mod tests {
         });
         
         let mut alias_counter = 0;
-        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
         
         let relation = ir.selections.first().unwrap();
         if let SelectField::Relation { query, .. } = relation {
@@ -510,7 +515,7 @@ mod tests {
         });
         
         let mut alias_counter = 0;
-        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap_err();
+        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap_err();
         assert!(err.contains("Invalid field 'hacker_field' in where clause"));
     }
 
@@ -523,7 +528,7 @@ mod tests {
         });
         
         let mut alias_counter = 0;
-        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap_err();
+        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap_err();
         assert!(err.contains("Security Exception: Prohibited filter on ignored field 'password'"));
     }
 
@@ -542,7 +547,7 @@ mod tests {
         });
         
         let mut alias_counter = 0;
-        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter).unwrap();
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
         
         if let Some(WhereClause::And(clauses)) = ir.filters {
             assert_eq!(clauses.len(), 3);
@@ -552,5 +557,34 @@ mod tests {
         } else {
             panic!("Expected AND where clause");
         }
+    }
+
+    #[test]
+    fn test_hydrate_max_depth_exceeded() {
+        let mut ast = mock_ast();
+        
+        // Insert a self-referencing relationship
+        ast.models.get_mut("User").unwrap().fields.push(
+            FieldNode { name: "manager".to_string(), field_type: AstFieldType::Relation("User".to_string()), is_optional: true, attributes: vec![] }
+        );
+        
+        let mut select_block = json!({"id": true});
+        for _ in 0..15 {
+            select_block = json!({
+                "manager": {
+                    "select": select_block
+                }
+            });
+        }
+        
+        let payload = json!({
+            "select": select_block
+        });
+        
+        let mut alias_counter = 0;
+        let result = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0);
+        
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Security Exception: Maximum query depth exceeded.");
     }
 }

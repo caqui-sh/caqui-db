@@ -15,7 +15,7 @@ pub async fn api_execution_handler(
         let mut alias_idx = 0;
         
         // 1. Validate & Hydrate to IR (Phase 5)
-        let query_ir = match hydrate_payload_to_ir(&state.ast, model, &payload, &mut alias_idx) {
+        let query_ir = match hydrate_payload_to_ir(&state.ast, model, &payload, &mut alias_idx, 0) {
             Ok(ir) => ir,
             Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
         };
@@ -57,7 +57,7 @@ pub async fn api_execution_handler(
                 "where": payload.get("where")
             });
             let mut read_alias_idx = 0;
-            if let Ok(query_ir) = hydrate_payload_to_ir(&state.ast, model, &temp_payload, &mut read_alias_idx) {
+            if let Ok(query_ir) = hydrate_payload_to_ir(&state.ast, model, &temp_payload, &mut read_alias_idx, 0) {
                 let sql_query = query_compiler::read::compile_select(&query_ir, None);
                 let conn = state.db_pool.get().await.unwrap();
                 let raw_json_string = conn.interact(move |db| {
@@ -95,7 +95,7 @@ pub async fn api_execution_handler(
             });
             
             let mut read_alias_idx = 0;
-            let query_ir = match hydrate_payload_to_ir(&state.ast, model, &temp_payload, &mut read_alias_idx) {
+            let query_ir = match hydrate_payload_to_ir(&state.ast, model, &temp_payload, &mut read_alias_idx, 0) {
                 Ok(ir) => ir,
                 Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
             };
@@ -251,6 +251,35 @@ mod tests {
             ]
         });
 
+        ast.models.insert("Employee".to_string(), ModelNode {
+            name: "Employee".to_string(),
+            fields: vec![
+                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
+                FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "managerId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: true, attributes: vec![] },
+                FieldNode { name: "manager".to_string(), field_type: AstFieldType::Relation("Employee".to_string()), is_optional: true, attributes: vec![
+                    FieldAttribute::Relation {
+                        name: Some("Management".to_string()),
+                        fields: vec!["managerId".to_string()],
+                        references: vec!["id".to_string()],
+                        on_delete: None,
+                        deferrable: false,
+                        column: None,
+                    }
+                ] },
+                FieldNode { name: "subordinates".to_string(), field_type: AstFieldType::RelationArray("Employee".to_string()), is_optional: false, attributes: vec![
+                    FieldAttribute::Relation {
+                        name: Some("Management".to_string()),
+                        fields: vec![],
+                        references: vec![],
+                        on_delete: None,
+                        deferrable: false,
+                        column: None,
+                    }
+                ] },
+            ]
+        });
+
         // Setup the Deadpool sqlite using a unique shared cache name for isolation between tests
         let db_name = format!("file:memdb{}?mode=memory&cache=shared", DB_COUNTER.fetch_add(1, Ordering::SeqCst));
         let pool = crate::db::create_pool(&db_name);
@@ -258,6 +287,11 @@ mod tests {
         // Seed DB directly through the pool
         let conn = pool.get().await.unwrap();
         conn.interact(|db| -> Result<(), rusqlite::Error> {
+            db.execute("CREATE TABLE Employee (
+                id TEXT PRIMARY KEY DEFAULT (gen_uuid7()),
+                name TEXT NOT NULL,
+                managerId TEXT REFERENCES Employee(id)
+            ) STRICT;", [])?;
             db.execute("CREATE TABLE Profile (
                 id TEXT PRIMARY KEY DEFAULT (gen_uuid7()),
                 bio TEXT
@@ -2050,5 +2084,70 @@ mod tests {
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         let posts = json_body["data"]["posts"].as_array().unwrap();
         assert_eq!(posts[0]["title"].as_str().unwrap(), "Flagged"); 
+    }
+
+    #[tokio::test]
+    async fn test_api_deeply_nested_hierarchical_create() {
+        let state = build_test_state().await;
+        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "model": "Employee",
+                    "action": "create",
+                    "data": {
+                        "name": "CEO",
+                        "subordinates": {
+                            "create": [
+                                {
+                                    "name": "Manager",
+                                    "subordinates": {
+                                        "create": [
+                                            { "name": "Intern 1" },
+                                            { "name": "Intern 2" }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "select": {
+                        "id": true,
+                        "name": true,
+                        "subordinates": {
+                            "select": {
+                                "name": true,
+                                "subordinates": {
+                                    "select": {
+                                        "name": true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }"#
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        
+        let root = &json_body["data"];
+        assert_eq!(root["name"], "CEO");
+        
+        let manager = &root["subordinates"][0];
+        assert_eq!(manager["name"], "Manager");
+        
+        let interns = manager["subordinates"].as_array().unwrap();
+        assert_eq!(interns.len(), 2);
+        assert!(interns.iter().any(|i| i["name"] == "Intern 1"));
+        assert!(interns.iter().any(|i| i["name"] == "Intern 2"));
     }
 }

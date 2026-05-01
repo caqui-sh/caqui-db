@@ -126,3 +126,70 @@ async fn test_e2e_on_delete() {
         Ok::<(), rusqlite::Error>(())
     }).await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn test_e2e_self_referential_cascade() {
+    let dir = tempdir().unwrap();
+    let workspace = dir.path();
+    // Re-initialize VFS isn't strictly necessary per-test, but safe
+    let _ = engine_core::vfs::bootstrap_custom_vfs();
+    
+    let caqui_bin = env!("CARGO_BIN_EXE_caqui");
+    let db_uri = format!("file:{}?vfs=git", workspace.join("app.db").display());
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.arg("init").current_dir(workspace);
+    run_cmd(cmd);
+
+    let schema = "
+        model Employee {
+            id: String @id
+            name: String
+            managerId: String?
+            manager: Employee? @relation(fields: [managerId], references: [id], onDelete: Cascade)
+            subordinates: Employee[]
+        }
+    ";
+    fs::write(workspace.join("schema.cq"), schema).unwrap();
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["schema", "db-push"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let pool = api_layer::db::create_pool(&db_uri);
+    
+    let conn = pool.get().await.unwrap();
+    conn.interact(|db| {
+        // CEO
+        db.execute("INSERT INTO Employee (id, name) VALUES ('ceo', 'CEO')", []).unwrap();
+        // Manager (reports to CEO)
+        db.execute("INSERT INTO Employee (id, name, managerId) VALUES ('mgr', 'Manager', 'ceo')", []).unwrap();
+        // Intern (reports to Manager)
+        db.execute("INSERT INTO Employee (id, name, managerId) VALUES ('intern', 'Intern', 'mgr')", []).unwrap();
+        // Sibling Manager (reports to CEO)
+        db.execute("INSERT INTO Employee (id, name, managerId) VALUES ('mgr2', 'Manager 2', 'ceo')", []).unwrap();
+        
+        // Delete Manager 1
+        db.execute("DELETE FROM Employee WHERE id = 'mgr'", []).unwrap();
+        
+        // Assert Intern was cascaded
+        let mut stmt = db.prepare("SELECT count(*) FROM Employee WHERE id = 'intern'").unwrap();
+        let intern_count: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
+        assert_eq!(intern_count, 0, "Intern should have been cascaded");
+        
+        // Assert Manager 2 is untouched
+        let mut stmt = db.prepare("SELECT count(*) FROM Employee WHERE id = 'mgr2'").unwrap();
+        let mgr2_count: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
+        assert_eq!(mgr2_count, 1, "Manager 2 should be untouched");
+        
+        // Delete CEO
+        db.execute("DELETE FROM Employee WHERE id = 'ceo'", []).unwrap();
+        
+        // Assert Manager 2 is cascaded
+        let mut stmt = db.prepare("SELECT count(*) FROM Employee WHERE id = 'mgr2'").unwrap();
+        let mgr2_count_after: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
+        assert_eq!(mgr2_count_after, 0, "Manager 2 should have been cascaded when CEO was deleted");
+        
+        Ok::<(), rusqlite::Error>(())
+    }).await.unwrap().unwrap();
+}

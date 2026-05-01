@@ -31,6 +31,10 @@ fn setup_db() -> Connection {
         
         -- Scenario C: Schema Evolution (Legacy/Unknown Discriminator)
         INSERT INTO User (id, contents) VALUES ('u3', '[{\"type\":\"UnknownType\",\"id\":\"99\"}, {\"type\":\"Post\",\"id\":\"p1\"}]');
+
+        -- Scenario D: Recursive Scoping
+        INSERT INTO User (id, contents) VALUES ('u4', '[{\"type\":\"User\",\"id\":\"u5\"}]');
+        INSERT INTO User (id, contents) VALUES ('u5', '[{\"type\":\"Post\",\"id\":\"p1\"}]');
     ").unwrap();
     
     conn
@@ -144,4 +148,74 @@ fn test_e2e_union_array_legacy_discriminator() {
     // The "UnknownType" should have triggered the ELSE NULL branch
     assert!(contents[0].is_null());
     assert_eq!(contents[1]["title"], "Hello World");
+}
+
+fn build_recursive_query() -> QueryNode {
+    let post_fragment = QueryNode {
+        target_model: "Post".to_string(),
+        alias: "t2".to_string(), // deep alias
+        selections: vec![SelectField::Scalar("title".to_string())],
+        filters: None,
+        limit: None,
+        offset: None,
+    };
+    
+    let mut inner_fragments = HashMap::new();
+    inner_fragments.insert("Post".to_string(), post_fragment);
+    
+    let user_fragment = QueryNode {
+        target_model: "User".to_string(),
+        alias: "t1".to_string(), // inner alias
+        selections: vec![
+            SelectField::Scalar("id".to_string()),
+            SelectField::PolymorphicUnion {
+                field_name: "contents".to_string(),
+                is_list: true,
+                target_fragments: inner_fragments,
+            }
+        ],
+        filters: None,
+        limit: None,
+        offset: None,
+    };
+    
+    let mut outer_fragments = HashMap::new();
+    outer_fragments.insert("User".to_string(), user_fragment);
+    
+    QueryNode {
+        target_model: "User".to_string(),
+        alias: "t0".to_string(),
+        selections: vec![
+            SelectField::Scalar("id".to_string()),
+            SelectField::PolymorphicUnion {
+                field_name: "contents".to_string(),
+                is_list: true,
+                target_fragments: outer_fragments,
+            }
+        ],
+        filters: None,
+        limit: None,
+        offset: None,
+    }
+}
+
+#[test]
+fn test_e2e_union_array_recursive_scoping() {
+    let conn = setup_db();
+    let query = build_recursive_query();
+    
+    let payload = fetch_payload(&conn, &query, "u4");
+    let json: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    let user = &json.as_array().unwrap()[0];
+    
+    assert_eq!(user["id"], "u4");
+    let contents = user["contents"].as_array().unwrap();
+    assert_eq!(contents.len(), 1);
+    
+    let inner_user = &contents[0];
+    assert_eq!(inner_user["id"], "u5");
+    
+    let inner_contents = inner_user["contents"].as_array().unwrap();
+    assert_eq!(inner_contents.len(), 1);
+    assert_eq!(inner_contents[0]["title"], "Hello World");
 }
