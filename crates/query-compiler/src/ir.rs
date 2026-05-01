@@ -1,8 +1,17 @@
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum QueryIrSource {
+    Table(String),
+    PolymorphicUnion {
+        alias: String,
+        branches: Vec<QueryNode>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct QueryNode {
-    pub target_model: String,
+    pub source: QueryIrSource,
     pub primary_key: String,
     pub alias: String, // Crucial for preventing namespace collisions in self-joins (e.g., t0, t1)
     pub selections: Vec<SelectField>,
@@ -32,7 +41,8 @@ pub enum SelectField {
         field_name: String,
         is_list: bool,
         target_fragments: HashMap<String, QueryNode>, // e.g., "Article" -> QueryNode
-    }
+    },
+    SyntheticNull(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

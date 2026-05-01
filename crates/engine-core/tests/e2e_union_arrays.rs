@@ -43,7 +43,7 @@ fn setup_db() -> Connection {
 fn build_query() -> QueryNode {
     let post_fragment = QueryNode {
         primary_key: "id".to_string(),
-        target_model: "Post".to_string(),
+        source: query_compiler::ir::QueryIrSource::Table("Post".to_string()),
         alias: "t1".to_string(),
         selections: vec![SelectField::Scalar("title".to_string())],
         filters: None,
@@ -53,7 +53,7 @@ fn build_query() -> QueryNode {
     
     let video_fragment = QueryNode {
         primary_key: "id".to_string(),
-        target_model: "Video".to_string(),
+        source: query_compiler::ir::QueryIrSource::Table("Video".to_string()),
         alias: "t2".to_string(),
         selections: vec![SelectField::Scalar("url".to_string())],
         filters: None,
@@ -67,7 +67,7 @@ fn build_query() -> QueryNode {
     
     QueryNode {
         primary_key: "id".to_string(),
-        target_model: "User".to_string(),
+        source: query_compiler::ir::QueryIrSource::Table("User".to_string()),
         alias: "t0".to_string(),
         selections: vec![
             SelectField::Scalar("id".to_string()),
@@ -156,7 +156,7 @@ fn test_e2e_union_array_legacy_discriminator() {
 fn build_recursive_query() -> QueryNode {
     let post_fragment = QueryNode {
         primary_key: "id".to_string(),
-        target_model: "Post".to_string(),
+        source: query_compiler::ir::QueryIrSource::Table("Post".to_string()),
         alias: "t2".to_string(), // deep alias
         selections: vec![SelectField::Scalar("title".to_string())],
         filters: None,
@@ -169,7 +169,7 @@ fn build_recursive_query() -> QueryNode {
     
     let user_fragment = QueryNode {
         primary_key: "id".to_string(),
-        target_model: "User".to_string(),
+        source: query_compiler::ir::QueryIrSource::Table("User".to_string()),
         alias: "t1".to_string(), // inner alias
         selections: vec![
             SelectField::Scalar("id".to_string()),
@@ -189,7 +189,7 @@ fn build_recursive_query() -> QueryNode {
     
     QueryNode {
         primary_key: "id".to_string(),
-        target_model: "User".to_string(),
+        source: query_compiler::ir::QueryIrSource::Table("User".to_string()),
         alias: "t0".to_string(),
         selections: vec![
             SelectField::Scalar("id".to_string()),

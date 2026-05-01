@@ -1,15 +1,30 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeSet};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct SchemaAst {
     pub models: HashMap<String, ModelNode>,
+    pub bases: HashMap<String, BaseNode>,
     pub unions: HashMap<String, Vec<String>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct BaseNode {
+    pub name: String,
+    pub fields: Vec<FieldNode>,
+    pub extends: Vec<String>,
+    // --- COMPILER STATE (Hydrated in Phase 2) ---
+    pub resolved_fields: Vec<FieldNode>,
+    pub resolved_bases: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ModelNode {
     pub name: String,
     pub fields: Vec<FieldNode>,
+    pub extends: Vec<String>,
+    // --- COMPILER STATE (Hydrated in Phase 2) ---
+    pub resolved_fields: Vec<FieldNode>,
+    pub resolved_bases: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

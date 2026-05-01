@@ -1,5 +1,4 @@
-use crate::ir::{QueryNode, SelectField, WhereClause, WhereCondition, RelationFilter};
-
+use crate::ir::{QueryNode, SelectField, WhereClause, WhereCondition, RelationFilter, QueryIrSource};
 pub fn compile_where_clause(clause: &WhereClause, alias: &str) -> String {
     match clause {
         WhereClause::And(clauses) => {
@@ -114,11 +113,55 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                 }
                 
                 let subquery = if *is_list {
+                    let source_table = match &query.source {
+                        QueryIrSource::Table(t) => t.clone(),
+                        QueryIrSource::PolymorphicUnion { alias: _, branches } => {
+                            let mut inner_branch_sqls = Vec::new();
+                            for branch in branches {
+                                let mut branch_selects = Vec::new();
+                                for sel in &branch.selections {
+                                    match sel {
+                                        SelectField::Scalar(name) | SelectField::ScalarArray(name) | SelectField::ScalarBoolean(name) => {
+                                            branch_selects.push(format!("{}.{}", branch.alias, name))
+                                        },
+                                        SelectField::SyntheticNull(name) => branch_selects.push(name.clone()),
+                                        _ => {}
+                                    }
+                                }
+                                let b_where = branch.filters.as_ref().map(|w| format!(" WHERE {}", compile_where_clause(w, &branch.alias))).unwrap_or_default();
+                                let b_table = match &branch.source { QueryIrSource::Table(t) => t.clone(), _ => panic!() };
+                                inner_branch_sqls.push(format!("SELECT {} FROM {} AS {}{}", branch_selects.join(", "), b_table, branch.alias, b_where));
+                            }
+                            format!("(\n{}\n)", inner_branch_sqls.join("\nUNION ALL\n"))
+                        },
+                    };
                     format!("(SELECT json_group_array({}) FROM {} AS {} WHERE {}{})",
-                        child_json_obj, query.target_model, query.alias, where_str, limit_offset)
+                        child_json_obj, source_table, query.alias, where_str, limit_offset)
                 } else {
+                    let source_table = match &query.source {
+                        QueryIrSource::Table(t) => t.clone(),
+                        QueryIrSource::PolymorphicUnion { alias: _, branches } => {
+                            let mut inner_branch_sqls = Vec::new();
+                            for branch in branches {
+                                let mut branch_selects = Vec::new();
+                                for sel in &branch.selections {
+                                    match sel {
+                                        SelectField::Scalar(name) | SelectField::ScalarArray(name) | SelectField::ScalarBoolean(name) => {
+                                            branch_selects.push(format!("{}.{}", branch.alias, name))
+                                        },
+                                        SelectField::SyntheticNull(name) => branch_selects.push(name.clone()),
+                                        _ => {}
+                                    }
+                                }
+                                let b_where = branch.filters.as_ref().map(|w| format!(" WHERE {}", compile_where_clause(w, &branch.alias))).unwrap_or_default();
+                                let b_table = match &branch.source { QueryIrSource::Table(t) => t.clone(), _ => panic!() };
+                                inner_branch_sqls.push(format!("SELECT {} FROM {} AS {}{}", branch_selects.join(", "), b_table, branch.alias, b_where));
+                            }
+                            format!("(\n{}\n)", inner_branch_sqls.join("\nUNION ALL\n"))
+                        },
+                    };
                     format!("(SELECT {} FROM {} AS {} WHERE {}{})",
-                        child_json_obj, query.target_model, query.alias, where_str, limit_offset)
+                        child_json_obj, source_table, query.alias, where_str, limit_offset)
                 };
                 
                 json_pairs.push(format!("'{}', {}", field_name, subquery));
@@ -190,6 +233,9 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                     json_pairs.push(format!("'{}', CASE {} {} ELSE NULL END", field_name, type_col, case_statements.join(" ")));
                 }
             }
+            SelectField::SyntheticNull(field_name) => {
+                json_pairs.push(format!("'{}', CASE {}.{} WHEN 1 THEN json('true') WHEN 0 THEN json('false') ELSE NULL END", field_name, node.alias, field_name));
+            }
         }
     }
 
@@ -212,7 +258,26 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
         }
 
         // Root query: Wrap execution in a final SELECT returning a JSON array
-        format!("SELECT json_group_array({}) AS payload FROM {} AS {}{}{}{};", json_obj, node.target_model, node.alias, root_where, limit_clause, offset_clause)
+            let source_table = match &node.source {
+                QueryIrSource::Table(t) => t.clone(),
+                QueryIrSource::PolymorphicUnion { alias: _, branches } => {
+                    let mut inner_branch_sqls = Vec::new();
+                    for branch in branches {
+                        let mut branch_selects = Vec::new();
+                        for sel in &branch.selections {
+                            match sel {
+                                SelectField::Scalar(name) | SelectField::ScalarArray(name) | SelectField::ScalarBoolean(name) => branch_selects.push(format!("{}.{}", branch.alias, name)),
+                                _ => {}
+                            }
+                        }
+                        let b_where = branch.filters.as_ref().map(|w| format!(" WHERE {}", compile_where_clause(w, &branch.alias))).unwrap_or_default();
+                        let b_table = match &branch.source { QueryIrSource::Table(t) => t.clone(), _ => panic!() };
+                        inner_branch_sqls.push(format!("SELECT {} FROM {} AS {}{}", branch_selects.join(", "), b_table, branch.alias, b_where));
+                    }
+                    format!("(\n{}\n)", inner_branch_sqls.join("\nUNION ALL\n"))
+                },
+            };
+            format!("SELECT json_group_array({}) AS payload FROM {} AS {}{}{}{};", json_obj, source_table, node.alias, root_where, limit_clause, offset_clause)
     } else {
         // Child query: Return inner object formulation for subquery injection
         json_obj
@@ -228,7 +293,7 @@ mod tests {
     fn test_compile_basic_select() {
         let query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "User".to_string(),
+            source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
@@ -246,7 +311,7 @@ mod tests {
     fn test_compile_relation_select() {
         let child_query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "Post".to_string(),
+            source: QueryIrSource::Table("Post".to_string()),
             alias: "t1".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
@@ -259,7 +324,7 @@ mod tests {
         
         let query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "User".to_string(),
+            source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
@@ -286,7 +351,7 @@ mod tests {
     fn test_compile_polymorphic_union() {
         let article_fragment = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "Article".to_string(),
+            source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
@@ -302,7 +367,7 @@ mod tests {
         
         let query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "User".to_string(),
+            source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
@@ -327,7 +392,7 @@ mod tests {
     fn test_compile_deep_recursive_relation() {
         let comments_query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "Comment".to_string(),
+            source: QueryIrSource::Table("Comment".to_string()),
             alias: "t2".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
@@ -340,7 +405,7 @@ mod tests {
         
         let posts_query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "Post".to_string(),
+            source: QueryIrSource::Table("Post".to_string()),
             alias: "t1".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
@@ -359,7 +424,7 @@ mod tests {
         
         let user_query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "User".to_string(),
+            source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
@@ -387,7 +452,7 @@ mod tests {
     fn test_compile_scalar_array() {
         let query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "User".to_string(),
+            source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
@@ -405,7 +470,7 @@ mod tests {
     fn test_compile_single_relation() {
         let child_query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "Profile".to_string(),
+            source: QueryIrSource::Table("Profile".to_string()),
             alias: "t1".to_string(),
             selections: vec![
                 SelectField::Scalar("bio".to_string()),
@@ -417,7 +482,7 @@ mod tests {
         
         let query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "User".to_string(),
+            source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
@@ -444,14 +509,14 @@ mod tests {
     fn test_compile_multi_fragment_polymorphic_union() {
         let article_fragment = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "Article".to_string(),
+            source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
             selections: vec![SelectField::Scalar("title".to_string())],
             filters: None, limit: None, offset: None,
         };
         let video_fragment = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "Video".to_string(),
+            source: QueryIrSource::Table("Video".to_string()),
             alias: "t2".to_string(),
             selections: vec![SelectField::Scalar("duration".to_string())],
             filters: None, limit: None, offset: None,
@@ -464,7 +529,7 @@ mod tests {
         
         let query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "User".to_string(),
+            source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
@@ -490,7 +555,7 @@ mod tests {
     fn test_compile_pagination_and_filtering() {
         let query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "User".to_string(),
+            source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
             selections: vec![SelectField::Scalar("id".to_string())],
             filters: Some(WhereClause::Field("name".to_string(), WhereCondition::Eq("Alice".to_string()))),
@@ -537,7 +602,7 @@ mod tests {
     fn test_compile_relation_with_pagination_and_filtering() {
         let child_query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "Post".to_string(),
+            source: QueryIrSource::Table("Post".to_string()),
             alias: "t1".to_string(),
             selections: vec![SelectField::Scalar("title".to_string())],
             filters: Some(WhereClause::Field("published".to_string(), WhereCondition::Eq("true".to_string()))),
@@ -547,7 +612,7 @@ mod tests {
         
         let query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "User".to_string(),
+            source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
@@ -575,7 +640,7 @@ mod tests {
     fn test_compile_polymorphic_union_with_filtering() {
         let article_fragment = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "Article".to_string(),
+            source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
             selections: vec![SelectField::Scalar("title".to_string())],
             filters: Some(WhereClause::Field("status".to_string(), WhereCondition::Eq("published".to_string()))),
@@ -587,7 +652,7 @@ mod tests {
         
         let query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "User".to_string(),
+            source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
@@ -613,7 +678,7 @@ mod tests {
     fn test_compile_polymorphic_union_array() {
         let article_fragment = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "Article".to_string(),
+            source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
             selections: vec![SelectField::Scalar("title".to_string())],
             filters: Some(WhereClause::Field("status".to_string(), WhereCondition::Eq("published".to_string()))),
@@ -626,7 +691,7 @@ mod tests {
         
         let query = QueryNode {
             primary_key: "id".to_string(),
-            target_model: "User".to_string(),
+            source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
@@ -640,7 +705,6 @@ mod tests {
             limit: None,
             offset: None,
         };
-        
         let sql = compile_select(&query, None);
         assert_eq!(
             sql,

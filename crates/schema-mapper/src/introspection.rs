@@ -46,6 +46,9 @@ pub fn introspect_table_columns(conn: &Connection, table_name: &str) -> Result<H
     
     let mut col_map = HashMap::new();
     for col in columns.filter_map(Result::ok) {
+        if col.name.starts_with("__") {
+            continue;
+        }
         col_map.insert(col.name.clone(), col);
     }
     
@@ -92,5 +95,28 @@ mod tests {
         assert!(!name_col.is_pk);
         assert!(!name_col.not_null);
         assert_eq!(name_col.default_value, None);
+    }
+
+    #[test]
+    fn test_introspection_ignores_synthetic_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE Developer (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                __Employee INTEGER DEFAULT 1 NOT NULL,
+                __Human INTEGER DEFAULT 1 NOT NULL
+            )",
+            [],
+        ).unwrap();
+
+        let columns = introspect_table_columns(&conn, "Developer").unwrap();
+        
+        // Assert that only id and name are captured, synthetics are ignored
+        assert_eq!(columns.len(), 2);
+        assert!(columns.contains_key("id"));
+        assert!(columns.contains_key("name"));
+        assert!(!columns.contains_key("__Employee"));
+        assert!(!columns.contains_key("__Human"));
     }
 }

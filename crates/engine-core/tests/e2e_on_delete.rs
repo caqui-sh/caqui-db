@@ -146,8 +146,8 @@ async fn test_e2e_self_referential_cascade() {
             id: String @id
             name: String
             managerId: String?
-            manager: Employee? @relation(fields: [managerId], references: [id], onDelete: Cascade)
-            subordinates: Employee[]
+            manager: Employee? @relation(\"Management\", fields: [managerId], references: [id], onDelete: Cascade)
+            subordinates: Employee[] @relation(\"Management\")
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();

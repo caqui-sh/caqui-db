@@ -49,8 +49,8 @@ pub fn run_diff(old_ref: &str) {
     let old_schema_text = fs::read_to_string(&old_schema_path).unwrap_or_default();
     let new_schema_text = fs::read_to_string(current_dir.join("schema.cq")).unwrap_or_default();
     
-    let old_ast = parse_schema(&old_schema_text).unwrap_or_else(|_| SchemaAst { models: HashMap::new(), unions: HashMap::new() });
-    let new_ast = parse_schema(&new_schema_text).unwrap_or_else(|_| SchemaAst { models: HashMap::new(), unions: HashMap::new() });
+    let old_ast = parse_schema(&old_schema_text).unwrap_or_else(|_| SchemaAst { bases: std::collections::HashMap::new(), models: HashMap::new(), unions: HashMap::new() });
+    let new_ast = parse_schema(&new_schema_text).unwrap_or_else(|_| SchemaAst { bases: std::collections::HashMap::new(), models: HashMap::new(), unions: HashMap::new() });
     
     let mut diff_report: HashMap<String, ModelDiff> = HashMap::new();
     

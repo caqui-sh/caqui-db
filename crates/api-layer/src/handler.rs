@@ -46,6 +46,9 @@ pub async fn api_execution_handler(
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Execution Error: {}", e)).into_response(),
         }
     } else if action == "create" || action == "update" || action == "delete" || action == "upsert" {
+        if state.ast.bases.contains_key(model) {
+            return (StatusCode::METHOD_NOT_ALLOWED, "Security Exception: Cannot mutate abstract bases directly.").into_response();
+        }
         let mut alias_idx = 0;
         
         // 1. If it's a delete, we MUST fetch the data before it's gone
@@ -156,14 +159,14 @@ mod tests {
 
     async fn build_test_state() -> EngineState {
         // Setup an AST
-        let mut ast = SchemaAst {
+        let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
         };
 
-        ast.models.insert("User".to_string(), ModelNode {
+        ast.models.insert("User".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "User".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
                 FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Unique] },
                 FieldNode { name: "age".to_string(), field_type: AstFieldType::Scalar("Int".to_string()), is_optional: false, attributes: vec![] },
@@ -195,17 +198,17 @@ mod tests {
             ]
         });
 
-        ast.models.insert("Profile".to_string(), ModelNode {
+        ast.models.insert("Profile".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Profile".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
                 FieldNode { name: "bio".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
 
-        ast.models.insert("Post".to_string(), ModelNode {
+        ast.models.insert("Post".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Post".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
                 FieldNode { name: "title".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "authorId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
@@ -232,9 +235,9 @@ mod tests {
             ]
         });
 
-        ast.models.insert("Comment".to_string(), ModelNode {
+        ast.models.insert("Comment".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Comment".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
                 FieldNode { name: "text".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "postId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
@@ -251,9 +254,9 @@ mod tests {
             ]
         });
 
-        ast.models.insert("Employee".to_string(), ModelNode {
+        ast.models.insert("Employee".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Employee".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
                 FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "managerId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: true, attributes: vec![] },
@@ -366,7 +369,11 @@ mod tests {
 
         let response = app.oneshot(request).await.unwrap();
 
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -433,9 +440,9 @@ mod tests {
         
         // Add a model to AST that DOES NOT have a table in DB
         let mut ast = (*state.ast).clone();
-        ast.models.insert("Ghost".to_string(), ModelNode {
+        ast.models.insert("Ghost".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Ghost".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
@@ -558,7 +565,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -593,7 +604,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -622,7 +637,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -658,7 +677,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -757,7 +780,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -848,7 +875,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -877,7 +908,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -912,7 +947,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let conn = state.db_pool.get().await.unwrap();
         let count: i64 = conn.interact(|db| {
@@ -942,7 +981,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -978,7 +1021,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -1018,7 +1065,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -1093,7 +1144,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         // Verify the post was actually connected to Charlie
         let conn = state.db_pool.get().await.unwrap();
@@ -1133,7 +1188,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -1182,7 +1241,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         // Verify that the comment was inserted into the database and linked properly
         let conn = state.db_pool.get().await.unwrap();
@@ -1222,7 +1285,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         // Verify Eve owns both the new post and the connected post
         let conn = state.db_pool.get().await.unwrap();
@@ -1258,7 +1325,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
         
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -1296,7 +1367,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let conn = state.db_pool.get().await.unwrap();
         let updated_title: String = conn.interact(|db| {
@@ -1338,7 +1413,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let conn = state.db_pool.get().await.unwrap();
         let count: i64 = conn.interact(|db| {
@@ -1372,7 +1451,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let conn = state.db_pool.get().await.unwrap();
         let profile_id: Option<String> = conn.interact(|db| {
@@ -1455,7 +1538,11 @@ mod tests {
             let body_str = String::from_utf8_lossy(&body_bytes);
             panic!("Request failed with 500: {}", body_str);
         }
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let conn = state.db_pool.get().await.unwrap();
         let author_id: String = conn.interact(|db| {
@@ -1487,7 +1574,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
 
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -1525,7 +1616,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
         
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -1593,7 +1688,11 @@ mod tests {
             .unwrap();
 
         let response = app.clone().oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
         
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -1662,7 +1761,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
         
         let conn = state.db_pool.get().await.unwrap();
         let count: i64 = conn.interact(|db| {
@@ -1774,7 +1877,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
         
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -1806,7 +1913,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
         
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -1845,7 +1956,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
         
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -1902,7 +2017,11 @@ mod tests {
         }).await.unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
         
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -1938,7 +2057,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
         
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -1975,7 +2098,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
         
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -2012,7 +2139,11 @@ mod tests {
             .unwrap();
 
         let response = app.clone().oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
         
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -2078,7 +2209,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
         
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -2134,7 +2269,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
         
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -2152,14 +2291,14 @@ mod tests {
     }
 
     async fn build_scalar_test_state() -> EngineState {
-        let mut ast = SchemaAst {
+        let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
         };
 
-        ast.models.insert("Config".to_string(), ModelNode {
+        ast.models.insert("Config".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Config".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
                 FieldNode { name: "isPublished".to_string(), field_type: AstFieldType::Scalar("Boolean".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "rating".to_string(), field_type: AstFieldType::Scalar("Float".to_string()), is_optional: false, attributes: vec![] },
@@ -2214,7 +2353,11 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        if status != StatusCode::OK {
+            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
+        }
         
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();

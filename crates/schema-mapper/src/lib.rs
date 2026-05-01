@@ -47,7 +47,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
         let mut triggers = Vec::new();
         let mut foreign_keys = Vec::new();
 
-        for field in &model.fields {
+        for field in &model.resolved_fields {
             let is_unique = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Unique));
             if is_unique {
                 indexes.push(PhysicalIndex {
@@ -119,6 +119,16 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                         if is_uuid {
                             sql_type = format!("{} DEFAULT (gen_uuid7())", sql_type);
                         }
+                    } else if field.name.starts_with("__") {
+                        if let Some(FieldAttribute::Default(DefaultFunc::Static(val))) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Default(DefaultFunc::Static(_)))) {
+                            if sql_type == "INTEGER" && val == "true" {
+                                sql_type = format!("{} DEFAULT 1 NOT NULL", sql_type);
+                            } else if sql_type == "INTEGER" && val == "false" {
+                                sql_type = format!("{} DEFAULT 0 NOT NULL", sql_type);
+                            } else {
+                                sql_type = format!("{} DEFAULT '{}' NOT NULL", sql_type, val);
+                            }
+                        }
                     }
 
                     columns.push(PhysicalColumn {
@@ -128,27 +138,32 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                     });
                 },
                 AstFieldType::Relation(ref_model) => {
-                    // Map @relation attributes to physical FOREIGN KEY definitions
-                    if let Some(FieldAttribute::Relation { name: _, fields, references, on_delete, deferrable, .. }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
-                        if !fields.is_empty() && !references.is_empty() {
-                            let mut fk_def = format!("FOREIGN KEY ({}) REFERENCES \"{}\" ({})", fields.join(", "), ref_model, references.join(", "));
-                            
-                            if let Some(action) = on_delete {
-                                let sql_action = match action.to_uppercase().as_str() {
-                                    "CASCADE" => "CASCADE",
-                                    "SETNULL" => "SET NULL",
-                                    "SETDEFAULT" => "SET DEFAULT",
-                                    "RESTRICT" => "RESTRICT",
-                                    _ => "NO ACTION" // default fallback
-                                };
-                                fk_def.push_str(&format!(" ON DELETE {}", sql_action));
-                            }
+                    // Skip foreign key generation if the target is an abstract base
+                    let is_base_target = ast.bases.contains_key(ref_model);
 
-                            if *deferrable {
-                                fk_def.push_str(" DEFERRABLE INITIALLY DEFERRED");
+                    if !is_base_target {
+                        // Map @relation attributes to physical FOREIGN KEY definitions
+                        if let Some(FieldAttribute::Relation { name: _, fields, references, on_delete, deferrable, .. }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                            if !fields.is_empty() && !references.is_empty() {
+                                let mut fk_def = format!("FOREIGN KEY ({}) REFERENCES \"{}\" ({})", fields.join(", "), ref_model, references.join(", "));
+                                
+                                if let Some(action) = on_delete {
+                                    let sql_action = match action.to_uppercase().as_str() {
+                                        "CASCADE" => "CASCADE",
+                                        "SETNULL" => "SET NULL",
+                                        "SETDEFAULT" => "SET DEFAULT",
+                                        "RESTRICT" => "RESTRICT",
+                                        _ => "NO ACTION" // default fallback
+                                    };
+                                    fk_def.push_str(&format!(" ON DELETE {}", sql_action));
+                                }
+
+                                if *deferrable {
+                                    fk_def.push_str(" DEFERRABLE INITIALLY DEFERRED");
+                                }
+                                
+                                foreign_keys.push(fk_def);
                             }
-                            
-                            foreign_keys.push(fk_def);
                         }
                     }
                 }
@@ -166,14 +181,14 @@ mod tests {
 
     #[test]
     fn test_lower_ast_to_physical() {
-        let mut ast = SchemaAst {
+        let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
         };
         
-        ast.models.insert("User".to_string(), ModelNode {
+        ast.models.insert("User".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "User".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
@@ -229,14 +244,14 @@ mod tests {
 
     #[test]
     fn test_lower_ast_to_physical_advanced() {
-        let mut ast = SchemaAst {
+        let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
         };
         
-        ast.models.insert("Device".to_string(), ModelNode {
+        ast.models.insert("Device".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Device".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
@@ -258,9 +273,9 @@ mod tests {
             ]
         });
 
-        ast.models.insert("Counter".to_string(), ModelNode {
+        ast.models.insert("Counter".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Counter".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("Int".to_string()),
@@ -292,14 +307,14 @@ mod tests {
 
     #[test]
     fn test_lower_ast_to_physical_relations() {
-        let mut ast = SchemaAst {
+        let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
         };
         
-        ast.models.insert("Post".to_string(), ModelNode {
+        ast.models.insert("Post".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Post".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode {
                     name: "id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
@@ -336,5 +351,125 @@ mod tests {
         let post_table = tables.iter().find(|t| t.name == "Post").unwrap();
         assert_eq!(post_table.foreign_keys.len(), 1);
         assert_eq!(post_table.foreign_keys[0], "FOREIGN KEY (authorId) REFERENCES \"User\" (id) ON DELETE CASCADE");
+    }
+
+    #[test]
+    fn test_ddl_ignores_abstract_bases() {
+        let mut ast = SchemaAst {
+            bases: std::collections::HashMap::new(),
+            models: HashMap::new(),
+            unions: HashMap::new(),
+        };
+
+        ast.bases.insert("Identifiable".to_string(), BaseNode {
+            name: "Identifiable".to_string(),
+            ..Default::default()
+        });
+
+        ast.models.insert("User".to_string(), ModelNode {
+            name: "User".to_string(),
+            ..Default::default()
+        });
+
+        let tables = lower_ast_to_physical(&ast);
+        
+        // Assert the base table does NOT exist
+        assert!(tables.iter().find(|t| t.name == "Identifiable").is_none());
+        
+        // Assert the concrete model DOES exist
+        let user_table = tables.iter().find(|t| t.name == "User").unwrap();
+        assert_eq!(user_table.name, "User");
+    }
+
+    #[test]
+    fn test_ddl_adds_synthetic_marker_columns_with_defaults() {
+        let mut ast = SchemaAst {
+            bases: std::collections::HashMap::new(),
+            models: HashMap::new(),
+            unions: HashMap::new(),
+        };
+
+        ast.models.insert("Manager".to_string(), ModelNode {
+            name: "Manager".to_string(),
+            resolved_fields: vec![
+                FieldNode {
+                    name: "id".to_string(),
+                    field_type: AstFieldType::Scalar("Int".to_string()),
+                    is_optional: false,
+                    attributes: vec![],
+                },
+                FieldNode {
+                    name: "__Employee".to_string(),
+                    field_type: AstFieldType::Scalar("Boolean".to_string()),
+                    is_optional: false,
+                    attributes: vec![FieldAttribute::Default(DefaultFunc::Static("true".to_string()))],
+                }
+            ],
+            ..Default::default()
+        });
+
+        let tables = lower_ast_to_physical(&ast);
+        let user_table = tables.iter().find(|t| t.name == "Manager").unwrap();
+        
+        // Assert Physical Marker is mapped with DEFAULT 1 NOT NULL
+        let marker = user_table.columns.iter().find(|c| c.name == "__Employee").unwrap();
+        assert_eq!(marker.sqlite_type, "INTEGER DEFAULT 1 NOT NULL");
+    }
+
+    #[test]
+    fn test_polymorphic_relations_drop_fks() {
+        let mut ast = SchemaAst {
+            bases: std::collections::HashMap::new(),
+            models: HashMap::new(),
+            unions: HashMap::new(),
+        };
+
+        ast.bases.insert("Vehicle".to_string(), BaseNode {
+            name: "Vehicle".to_string(),
+            ..Default::default()
+        });
+
+        ast.models.insert("Person".to_string(), ModelNode {
+            name: "Person".to_string(),
+            resolved_fields: vec![
+                FieldNode {
+                    name: "id".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
+                    attributes: vec![FieldAttribute::Id],
+                },
+                FieldNode {
+                    name: "carId".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
+                    attributes: vec![],
+                },
+                FieldNode {
+                    name: "car".to_string(),
+                    field_type: AstFieldType::Relation("Vehicle".to_string()),
+                    is_optional: false,
+                    attributes: vec![
+                        FieldAttribute::Relation {
+                            name: None,
+                            fields: vec!["carId".to_string()],
+                            references: vec!["id".to_string()],
+                            on_delete: None,
+                            deferrable: false,
+                            column: None,
+                        }
+                    ],
+                }
+            ],
+            ..Default::default()
+        });
+
+        let tables = lower_ast_to_physical(&ast);
+        let person_table = tables.iter().find(|t| t.name == "Person").unwrap();
+        
+        // The column should exist to store the ID
+        assert!(person_table.columns.iter().any(|c| c.name == "carId"));
+        
+        // BUT the DB constraint MUST be intentionally omitted
+        assert!(person_table.foreign_keys.is_empty());
     }
 }

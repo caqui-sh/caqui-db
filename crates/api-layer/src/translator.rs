@@ -15,6 +15,10 @@ pub fn hydrate_payload_to_ir(
         return Err("Security Exception: Maximum query depth exceeded.".to_string());
     }
 
+    if let Some(base_def) = ast.bases.get(model_name) {
+        return compile_polymorphic_read(ast, base_def, payload, alias_counter, depth);
+    }
+
     // 1. Strict Schema Validation: Verify model exists physically
     let model_def = ast.models.get(model_name)
         .ok_or_else(|| format!("Security Exception: Model '{}' undefined.", model_name))?;
@@ -29,7 +33,7 @@ pub fn hydrate_payload_to_ir(
     // 2. Dynamic Field Resolution
     for (field_name, sub_payload) in requested_fields {
         // Find field in AST
-        let field_def = model_def.fields.iter().find(|f| &f.name == field_name)
+        let field_def = model_def.resolved_fields.iter().find(|f| &f.name == field_name)
             .ok_or_else(|| format!("Invalid field '{}' on '{}'.", field_name, model_name))?;
 
         // SECURITY INTERCEPTOR
@@ -62,17 +66,22 @@ pub fn hydrate_payload_to_ir(
                     None
                 };
 
-                let target_model_def = ast.models.get(target_model).unwrap();
-                
-                for target_field in &target_model_def.fields {
+                let target_resolved_fields = if let Some(m) = ast.models.get(target_model) {
+                    &m.resolved_fields
+                } else if let Some(b) = ast.bases.get(target_model) {
+                    &b.resolved_fields
+                } else {
+                    return Err(format!("Security Exception: Model '{}' undefined.", target_model));
+                };
+                for target_field in target_resolved_fields {
                     if let AstFieldType::Relation(ref_model) | AstFieldType::RelationArray(ref_model) = &target_field.field_type {
                         if ref_model == model_name {
                             if let Some(FieldAttribute::Relation { name: target_name, fields, .. }) = target_field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
                                 if relation_name == *target_name {
                                     if !fields.is_empty() {
                                         resolved_fk = fields[0].clone();
+                                        break;
                                     }
-                                    break;
                                 }
                             }
                         }
@@ -82,10 +91,33 @@ pub fn hydrate_payload_to_ir(
                 let mut is_forward = false;
                 
                 // If we are on the child side (we own the foreign key), our own @relation holds the fields
-                if let Some(FieldAttribute::Relation { fields, .. }) = relation_attr {
+                if let Some(FieldAttribute::Relation { fields, references, .. }) = relation_attr {
                     if !fields.is_empty() {
-                        resolved_fk = fields[0].clone();
-                        is_forward = true;
+                        let is_pk = model_def.resolved_fields.iter().any(|f| &f.name == &fields[0] && f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)));
+                        if is_pk {
+                            is_forward = false;
+                            resolved_fk = if !references.is_empty() { references[0].clone() } else { format!("{}_id", model_name.to_lowercase()) };
+                        } else {
+                            resolved_fk = fields[0].clone();
+                            is_forward = true;
+                        }
+                    }
+                }
+                
+                // We also need to inject the foreign key (teamId) into the INNER branches of the target polymorphic union!
+                // Since child_node is a PolymorphicUnion, we must mutate its branches to select resolved_fk.
+                let mut child_node = child_node;
+                if !is_forward {
+                    if !child_node.selections.iter().any(|s| match s { query_compiler::ir::SelectField::Scalar(name) => name == &resolved_fk, _ => false }) {
+                        child_node.selections.push(query_compiler::ir::SelectField::Scalar(resolved_fk.clone()));
+                    }
+                    
+                    if let query_compiler::ir::QueryIrSource::PolymorphicUnion { branches, .. } = &mut child_node.source {
+                        for branch in branches {
+                            if !branch.selections.iter().any(|s| match s { query_compiler::ir::SelectField::Scalar(name) => name == &resolved_fk, _ => false }) {
+                                branch.selections.push(query_compiler::ir::SelectField::Scalar(resolved_fk.clone()));
+                            }
+                        }
                     }
                 }
                 
@@ -139,13 +171,13 @@ pub fn hydrate_payload_to_ir(
         None
     };
 
-    let primary_key = model_def.fields.iter()
+    let primary_key = model_def.resolved_fields.iter()
         .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
         .map(|f| f.name.clone())
         .unwrap_or_else(|| "id".to_string());
 
     Ok(QueryNode {
-        target_model: model_name.to_string(),
+        source: query_compiler::ir::QueryIrSource::Table(model_name.to_string()),
         primary_key,
         alias: current_alias,
         selections,
@@ -163,14 +195,14 @@ mod tests {
     use query_compiler::ir::{WhereClause, WhereCondition};
 
     fn mock_ast() -> SchemaAst {
-        let mut ast = SchemaAst {
+        let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: std::collections::HashMap::new(),
             unions: std::collections::HashMap::new(),
         };
 
-        ast.models.insert("User".to_string(), ModelNode {
+        ast.models.insert("User".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "User".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "tags".to_string(), field_type: AstFieldType::ScalarArray("String".to_string()), is_optional: false, attributes: vec![] },
@@ -182,27 +214,27 @@ mod tests {
             ]
         });
 
-        ast.models.insert("Post".to_string(), ModelNode {
+        ast.models.insert("Post".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Post".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "title".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "comments".to_string(), field_type: AstFieldType::RelationArray("Comment".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
 
-        ast.models.insert("Comment".to_string(), ModelNode {
+        ast.models.insert("Comment".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Comment".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "body".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "author".to_string(), field_type: AstFieldType::Relation("User".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
 
-        ast.models.insert("Profile".to_string(), ModelNode {
+        ast.models.insert("Profile".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Profile".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode { name: "bio".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
@@ -239,25 +271,25 @@ mod tests {
         let mut alias_counter = 0;
         let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
         
-        assert_eq!(ir.target_model, "User");
+        assert_eq!(ir.source, query_compiler::ir::QueryIrSource::Table("User".to_string()));
         assert_eq!(ir.alias, "t0");
         
         // posts relation
         let posts_relation = ir.selections.iter().find(|s| matches!(s, SelectField::Relation { field_name, .. } if field_name == "posts")).unwrap();
         if let SelectField::Relation { query: posts_query, .. } = posts_relation {
-            assert_eq!(posts_query.target_model, "Post");
+            assert_eq!(posts_query.source, query_compiler::ir::QueryIrSource::Table("Post".to_string()));
             assert_eq!(posts_query.alias, "t1");
             
             // comments relation
             let comments_relation = posts_query.selections.iter().find(|s| matches!(s, SelectField::Relation { field_name, .. } if field_name == "comments")).unwrap();
             if let SelectField::Relation { query: comments_query, .. } = comments_relation {
-                assert_eq!(comments_query.target_model, "Comment");
+                assert_eq!(comments_query.source, query_compiler::ir::QueryIrSource::Table("Comment".to_string()));
                 assert_eq!(comments_query.alias, "t2");
                 
                 // author relation
                 let author_relation = comments_query.selections.iter().find(|s| matches!(s, SelectField::Relation { field_name, .. } if field_name == "author")).unwrap();
                 if let SelectField::Relation { query: author_query, .. } = author_relation {
-                    assert_eq!(author_query.target_model, "User");
+                    assert_eq!(author_query.source, query_compiler::ir::QueryIrSource::Table("User".to_string()));
                     assert_eq!(author_query.alias, "t3");
                     assert!(author_query.selections.contains(&SelectField::Scalar("name".to_string())));
                 } else {
@@ -288,7 +320,7 @@ mod tests {
         let mut alias_counter = 0;
         let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
         
-        assert_eq!(ir.target_model, "User");
+        assert_eq!(ir.source, query_compiler::ir::QueryIrSource::Table("User".to_string()));
         assert_eq!(ir.alias, "t0");
         assert_eq!(ir.selections.len(), 2);
         
@@ -297,9 +329,9 @@ mod tests {
         if let SelectField::Relation { field_name, is_list, query, .. } = relation {
             assert_eq!(field_name, "posts");
             assert!(*is_list);
-            assert_eq!(query.target_model, "Post");
+            assert_eq!(query.source, query_compiler::ir::QueryIrSource::Table("Post".to_string()));
             assert_eq!(query.alias, "t1");
-            assert_eq!(query.selections.len(), 1);
+            assert_eq!(query.selections.len(), 2);
         } else {
             panic!("Expected Relation");
         }
@@ -576,7 +608,7 @@ mod tests {
         let mut ast = mock_ast();
         
         // Insert a self-referencing relationship
-        ast.models.get_mut("User").unwrap().fields.push(
+        ast.models.get_mut("User").unwrap().resolved_fields.push(
             FieldNode { name: "manager".to_string(), field_type: AstFieldType::Relation("User".to_string()), is_optional: true, attributes: vec![] }
         );
         
@@ -605,9 +637,9 @@ mod tests {
         let mut ast = mock_ast();
         
         // Let's create a new model with a custom ID field named "uuid"
-        ast.models.insert("Device".to_string(), ModelNode {
+        ast.models.insert("Device".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Device".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode { name: "uuid".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id] },
                 FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
             ]
@@ -620,7 +652,223 @@ mod tests {
         let mut alias_counter = 0;
         let ir = hydrate_payload_to_ir(&ast, "Device", &payload, &mut alias_counter, 0).unwrap();
         
-        assert_eq!(ir.target_model, "Device");
+        assert_eq!(ir.source, query_compiler::ir::QueryIrSource::Table("Device".to_string()));
         assert_eq!(ir.primary_key, "uuid", "The IR should dynamically extract the correct primary key field name based on the @id attribute");
     }
+}
+
+fn compile_polymorphic_read(
+    ast: &schema_parser::ast::SchemaAst,
+    base_def: &schema_parser::ast::BaseNode,
+    payload: &serde_json::Value,
+    alias_counter: &mut usize,
+    depth: usize
+) -> Result<query_compiler::ir::QueryNode, String> {
+    let mut branches = Vec::new();
+    
+    let mut symmetric_projection: std::collections::BTreeSet<String> = base_def.resolved_fields.iter().map(|f| f.name.clone()).collect();
+    if let Some(requested_fields) = payload.get("select").and_then(|v| v.as_object()) {
+        for key in requested_fields.keys() {
+            symmetric_projection.insert(key.clone());
+        }
+    }
+    
+    let implementing_models: Vec<&schema_parser::ast::ModelNode> = ast.models.values()
+        .filter(|m| m.resolved_bases.contains(&base_def.name))
+        .collect();
+
+    if implementing_models.is_empty() {
+        return Err(format!("NoImplementations: Base '{}' has no concrete implementations.", base_def.name));
+    }
+    
+    for model in implementing_models {
+        let current_alias = format!("t{}", alias_counter);
+        *alias_counter += 1;
+        
+        let mut inner_selections = Vec::new();
+        for field_name in &symmetric_projection {
+            if let Some(field_def) = model.resolved_fields.iter().find(|f| &f.name == field_name) {
+                match &field_def.field_type {
+                    schema_parser::ast::AstFieldType::Scalar(type_name) => {
+                        if type_name == "Boolean" {
+                            inner_selections.push(query_compiler::ir::SelectField::ScalarBoolean(field_name.clone()));
+                        } else {
+                            inner_selections.push(query_compiler::ir::SelectField::Scalar(field_name.clone()));
+                        }
+                    },
+                    schema_parser::ast::AstFieldType::ScalarArray(_) => inner_selections.push(query_compiler::ir::SelectField::ScalarArray(field_name.clone())),
+                    _ => {}
+                }
+            } else if field_name.starts_with("__") {
+                if model.name == field_name.replace("__", "") {
+                    inner_selections.push(query_compiler::ir::SelectField::SyntheticNull(format!("1 AS {}", field_name.clone())));
+                } else if model.resolved_bases.contains(&field_name.replace("__", "")) {
+                    inner_selections.push(query_compiler::ir::SelectField::Scalar(field_name.clone()));
+                } else {
+                    inner_selections.push(query_compiler::ir::SelectField::SyntheticNull(format!("0 AS {}", field_name.clone())));
+                }
+            } else {
+                return Err(format!("Invalid field '{}' on '{}'.", field_name, model.name));
+            }
+        }
+        
+        let inner_filters = if let Some(where_obj) = payload.get("where").and_then(|v| v.as_object()) {
+            if where_obj.is_empty() {
+                None
+            } else {
+                Some(crate::where_parser::parse_where_clause(ast, where_obj, model)?)
+            }
+        } else {
+            None
+        };
+        
+        let primary_key = model.resolved_fields.iter()
+            .find(|f| f.attributes.iter().any(|a| matches!(a, schema_parser::ast::FieldAttribute::Id)))
+            .map(|f| f.name.clone())
+            .unwrap_or_else(|| "id".to_string());
+            
+        branches.push(query_compiler::ir::QueryNode {
+            source: query_compiler::ir::QueryIrSource::Table(model.name.clone()),
+            primary_key,
+            alias: current_alias,
+            selections: inner_selections,
+            filters: inner_filters,
+            limit: None,
+            offset: None,
+        });
+    }
+    
+    let current_alias = format!("t{}", alias_counter);
+    *alias_counter += 1;
+    
+    let mut outer_selections = Vec::new();
+    let requested_fields = payload.get("select").and_then(|v| v.as_object())
+        .ok_or("Missing 'select' projection block")?;
+        
+    for (field_name, sub_payload) in requested_fields {
+        let field_def = base_def.resolved_fields.iter().find(|f| &f.name == field_name);
+        
+        if let Some(fd) = field_def {
+            match &fd.field_type {
+                schema_parser::ast::AstFieldType::Scalar(type_name) => {
+                    if type_name == "Boolean" {
+                        outer_selections.push(query_compiler::ir::SelectField::ScalarBoolean(field_name.clone()));
+                    } else {
+                        outer_selections.push(query_compiler::ir::SelectField::Scalar(field_name.clone()));
+                    }
+                },
+                schema_parser::ast::AstFieldType::ScalarArray(_) => outer_selections.push(query_compiler::ir::SelectField::ScalarArray(field_name.clone())),
+                schema_parser::ast::AstFieldType::Relation(target_model) | schema_parser::ast::AstFieldType::RelationArray(target_model) => {
+                    let child_node = hydrate_payload_to_ir(ast, target_model, sub_payload, alias_counter, depth + 1)?;
+                    let is_list = matches!(fd.field_type, schema_parser::ast::AstFieldType::RelationArray(_));
+                    
+                    let mut resolved_fk = format!("{}_id", base_def.name.to_lowercase()); 
+                    let relation_attr = fd.attributes.iter().find(|a| matches!(a, schema_parser::ast::FieldAttribute::Relation { .. }));
+                    let mut is_forward = true;
+                    if let Some(schema_parser::ast::FieldAttribute::Relation { fields, references, .. }) = relation_attr {
+                        if !fields.is_empty() {
+                            let is_pk = base_def.resolved_fields.iter().any(|f| &f.name == &fields[0] && f.attributes.iter().any(|a| matches!(a, schema_parser::ast::FieldAttribute::Id)));
+                            if is_pk {
+                                is_forward = false;
+                                resolved_fk = if !references.is_empty() { references[0].clone() } else { format!("{}_id", base_def.name.to_lowercase()) };
+                            } else {
+                                resolved_fk = fields[0].clone();
+                            }
+                        } else {
+                            is_forward = false;
+                        }
+                    }
+                    if let Some(schema_parser::ast::FieldAttribute::Relation { references, .. }) = relation_attr {
+                        if !is_forward && !references.is_empty() {
+                            resolved_fk = references[0].clone();
+                        }
+                    }
+                    
+                    if !is_forward {
+                        let target_resolved_fields = if let Some(m) = ast.models.get(target_model) {
+                            &m.resolved_fields
+                        } else if let Some(b) = ast.bases.get(target_model) {
+                            &b.resolved_fields
+                        } else {
+                            return Err(format!("Security Exception: Model '{}' undefined.", target_model));
+                        };
+                        let relation_name = if let Some(schema_parser::ast::FieldAttribute::Relation { name: Some(n), .. }) = relation_attr { Some(n.clone()) } else { None };
+                        
+                        for target_field in target_resolved_fields {
+                            if let schema_parser::ast::AstFieldType::Relation(ref_model) | schema_parser::ast::AstFieldType::RelationArray(ref_model) = &target_field.field_type {
+                                if ref_model == &base_def.name {
+                                    if let Some(schema_parser::ast::FieldAttribute::Relation { name: target_name, fields, .. }) = target_field.attributes.iter().find(|a| matches!(a, schema_parser::ast::FieldAttribute::Relation { .. })) {
+                                        let name_matches = match (&relation_name, target_name) {
+                                            (Some(a), Some(b)) => a == b,
+                                            (None, None) => true,
+                                            _ => false,
+                                        };
+                                        if name_matches {
+                                            if !fields.is_empty() {
+                                                resolved_fk = fields[0].clone();
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if is_forward {
+                        symmetric_projection.insert(resolved_fk.clone()); // MUST inject FK into inner payload so outer JOIN works
+                    } else {
+                        let pk = base_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, schema_parser::ast::FieldAttribute::Id))).map(|f| f.name.clone()).unwrap_or_else(|| "id".to_string());
+                        symmetric_projection.insert(pk);
+                    }
+                    
+                    let mut child_node = child_node;
+                    if !is_forward {
+                        if !child_node.selections.iter().any(|s| match s { query_compiler::ir::SelectField::Scalar(name) => name == &resolved_fk, _ => false }) {
+                            child_node.selections.push(query_compiler::ir::SelectField::Scalar(resolved_fk.clone()));
+                        }
+                        
+                        if let query_compiler::ir::QueryIrSource::PolymorphicUnion { branches, .. } = &mut child_node.source {
+                            for branch in branches {
+                                if !branch.selections.iter().any(|s| match s { query_compiler::ir::SelectField::Scalar(name) => name == &resolved_fk, _ => false }) {
+                                    branch.selections.push(query_compiler::ir::SelectField::Scalar(resolved_fk.clone()));
+                                }
+                            }
+                        }
+                    }
+
+                    outer_selections.push(query_compiler::ir::SelectField::Relation {
+                        field_name: field_name.clone(),
+                        foreign_key: resolved_fk, 
+                        is_list,
+                        is_forward,
+                        query: Box::new(child_node),
+                    });
+                },
+                _ => {}
+            }
+        } else if field_name.starts_with("__") {
+            outer_selections.push(query_compiler::ir::SelectField::SyntheticNull(field_name.clone()));
+        } else {
+            return Err(format!("Invalid field '{}' on '{}'.", field_name, base_def.name));
+        }
+    }
+    
+    let primary_key = base_def.resolved_fields.iter()
+        .find(|f| f.attributes.iter().any(|a| matches!(a, schema_parser::ast::FieldAttribute::Id)))
+        .map(|f| f.name.clone())
+        .unwrap_or_else(|| "id".to_string());
+
+    Ok(query_compiler::ir::QueryNode {
+        source: query_compiler::ir::QueryIrSource::PolymorphicUnion {
+            alias: base_def.name.clone(),
+            branches,
+        },
+        primary_key,
+        alias: current_alias,
+        selections: outer_selections,
+        filters: None,
+        limit: payload.get("limit").and_then(|l| l.as_u64()).map(|l| l as usize),
+        offset: payload.get("skip").and_then(|l| l.as_u64()).map(|l| l as usize),
+    })
 }

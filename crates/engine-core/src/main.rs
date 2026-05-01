@@ -85,7 +85,13 @@ union SearchResult = User | Post
     };
     
     let desired_ast = match parser::parse_schema(&schema_text) {
-        Ok(ast) => ast,
+        Ok(ast) => match schema_parser::validation::validate_schema(ast) {
+            Ok(valid_ast) => valid_ast,
+            Err(e) => {
+                eprintln!("Semantic Error in DSL:\n{}", e.0);
+                std::process::exit(1);
+            }
+        },
         Err(e) => {
             eprintln!("Syntax Error in DSL:\n{}", e);
             std::process::exit(1);

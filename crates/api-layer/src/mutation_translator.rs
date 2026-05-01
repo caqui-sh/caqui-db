@@ -10,6 +10,9 @@ pub fn hydrate_mutation_to_plan(
     payload: &Value,
     alias_counter: &mut usize,
 ) -> Result<ExecutionPlan, String> {
+    if ast.bases.contains_key(model_name) {
+        return Err("Security Exception: Cannot mutate abstract base shape".to_string());
+    }
     let mut steps = Vec::new();
     
     match action {
@@ -47,7 +50,7 @@ pub fn hydrate_mutation_to_plan(
             
             let model_def = ast.models.get(model_name)
                 .ok_or_else(|| format!("Security Exception: Model '{}' undefined.", model_name))?;
-            let pk_col = model_def.fields.iter()
+            let pk_col = model_def.resolved_fields.iter()
                 .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
                 .map(|f| f.name.as_str())
                 .unwrap_or("id");
@@ -129,7 +132,7 @@ fn translate_create_node(
     let model_def = ast.models.get(model_name)
         .ok_or_else(|| format!("Security Exception: Model '{}' undefined.", model_name))?;
         
-    let pk_col = model_def.fields.iter()
+    let pk_col = model_def.resolved_fields.iter()
         .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
         .map(|f| f.name.as_str())
         .unwrap_or("id");
@@ -146,11 +149,11 @@ fn translate_create_node(
     
     if let Some(rel) = &parent_rel {
         let parent_model_def = ast.models.get(&rel.parent_model).unwrap();
-        let parent_pk_col = parent_model_def.fields.iter()
+        let parent_pk_col = parent_model_def.resolved_fields.iter()
             .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
             .map(|f| f.name.as_str())
             .unwrap_or("id");
-        let parent_field_def = parent_model_def.fields.iter().find(|f| f.name == rel.relation_field_name).unwrap();
+        let parent_field_def = parent_model_def.resolved_fields.iter().find(|f| f.name == rel.relation_field_name).unwrap();
         
         let mut fk_column_name = None;
         let mut is_our_fk = false;
@@ -159,7 +162,7 @@ fn translate_create_node(
             if let FieldAttribute::Relation { fields, references, .. } = attr {
                 if fields.is_empty() && references.is_empty() {
                     // Parent does not hold the FK. We must hold it.
-                    for our_field in &model_def.fields {
+                    for our_field in &model_def.resolved_fields {
                         if let AstFieldType::Relation(target) = &our_field.field_type {
                             if target == &rel.parent_model {
                                 for our_attr in &our_field.attributes {
@@ -188,7 +191,9 @@ fn translate_create_node(
     }
     
     for (key, val) in data {
-        let field_def = model_def.fields.iter().find(|f| &f.name == key)
+        if key.starts_with("__") { continue; }
+        
+        let field_def = model_def.resolved_fields.iter().find(|f| &f.name == key)
             .ok_or_else(|| format!("Invalid field '{}' for model '{}'.", key, model_name))?;
 
         if field_def.attributes.iter().any(|a| matches!(a, FieldAttribute::Ignore)) {
@@ -233,7 +238,7 @@ fn translate_create_node(
                         let child_data = create_payload.as_object().ok_or("Expected object for 'create'")?;
                         let child_step_id = translate_create_node(ast, target_model, child_data, steps, alias_counter, None)?;
                         let child_model_def = ast.models.get(target_model).unwrap();
-                        let child_pk_col = child_model_def.fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
+                        let child_pk_col = child_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
                         
                         if let Some(col) = &fk_column {
                             columns.push(col.clone());
@@ -375,7 +380,7 @@ fn translate_update_node(
     let model_def = ast.models.get(model_name)
         .ok_or_else(|| format!("Security Exception: Model '{}' undefined.", model_name))?;
         
-    let pk_col = model_def.fields.iter()
+    let pk_col = model_def.resolved_fields.iter()
         .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
         .map(|f| f.name.as_str())
         .unwrap_or("id");
@@ -390,7 +395,9 @@ fn translate_update_node(
     let mut deferred_children = Vec::new();
     
     for (key, val) in data {
-        let field_def = model_def.fields.iter().find(|f| &f.name == key)
+        if key.starts_with("__") { continue; }
+        
+        let field_def = model_def.resolved_fields.iter().find(|f| &f.name == key)
             .ok_or_else(|| format!("Invalid field '{}' for model '{}'.", key, model_name))?;
 
         if field_def.attributes.iter().any(|a| matches!(a, FieldAttribute::Ignore)) {
@@ -446,7 +453,7 @@ fn translate_update_node(
                         let child_data = create_payload.as_object().ok_or("Expected object for 'create'")?;
                         let child_step_id = translate_create_node(ast, target_model, child_data, steps, alias_counter, None)?;
                         let child_model_def = ast.models.get(target_model).unwrap();
-                        let child_pk_col = child_model_def.fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
+                        let child_pk_col = child_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
                         
                         if let Some(col) = &fk_column {
                             set_clauses.push(format!("{} = ?{}", col, param_idx));
@@ -567,17 +574,17 @@ fn translate_update_node(
     
     if let Some(rel) = &parent_rel {
         let parent_model_def = ast.models.get(&rel.parent_model).unwrap();
-        let parent_pk_col = parent_model_def.fields.iter()
+        let parent_pk_col = parent_model_def.resolved_fields.iter()
             .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
             .map(|f| f.name.as_str())
             .unwrap_or("id");
         let mut fk_column_name = None;
         let mut is_our_fk = false;
 
-        for attr in parent_model_def.fields.iter().find(|f| f.name == rel.relation_field_name).unwrap().attributes.iter() {
+        for attr in parent_model_def.resolved_fields.iter().find(|f| f.name == rel.relation_field_name).unwrap().attributes.iter() {
             if let FieldAttribute::Relation { fields, references, .. } = attr {
                 if fields.is_empty() && references.is_empty() {
-                    for our_field in &model_def.fields {
+                    for our_field in &model_def.resolved_fields {
                         if let AstFieldType::Relation(target) = &our_field.field_type {
                             if target == &rel.parent_model {
                                 for our_attr in &our_field.attributes {
@@ -634,7 +641,7 @@ fn translate_root_upsert_node(
     let model_def = ast.models.get(model_name)
         .ok_or_else(|| format!("Security Exception: Model '{}' undefined.", model_name))?;
         
-    let pk_col = model_def.fields.iter()
+    let pk_col = model_def.resolved_fields.iter()
         .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
         .map(|f| f.name.as_str())
         .unwrap_or("id");
@@ -648,7 +655,7 @@ fn translate_root_upsert_node(
     // Safety check: Upserts must target a unique field
     // In Phase 4, we enforce this at the Rust layer since we don't rely on ON CONFLICT anymore.
     let conflict_target = where_obj.keys().next().ok_or("Upsert 'where' block must contain at least one key")?.clone();
-    let target_field = model_def.fields.iter().find(|f| f.name == conflict_target).unwrap();
+    let target_field = model_def.resolved_fields.iter().find(|f| f.name == conflict_target).unwrap();
     if !target_field.attributes.iter().any(|a| matches!(a, FieldAttribute::Id | FieldAttribute::Unique)) {
         return Err(format!("Security Exception: Upsert target '{}' is not marked as @id or @unique", conflict_target));
     }
@@ -702,13 +709,13 @@ fn process_deferred_children(
     alias_counter: &mut usize,
 ) -> Result<(), String> {
     let parent_model_def = ast.models.get(parent_model_name).unwrap();
-    let parent_pk_col = parent_model_def.fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
+    let parent_pk_col = parent_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
 
     for child in deferred_children {
         let child_model_def = ast.models.get(&child.target_model).unwrap();
-        let child_pk_col = child_model_def.fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
+        let child_pk_col = child_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
         let mut fk_column_name = None;
-        for our_field in &ast.models.get(&child.target_model).unwrap().fields {
+        for our_field in &ast.models.get(&child.target_model).unwrap().resolved_fields {
             if let AstFieldType::Relation(target) = &our_field.field_type {
                 if target == parent_model_name {
                     for our_attr in &our_field.attributes {
@@ -828,7 +835,7 @@ fn process_deferred_children(
             },
             DeferredAction::Upsert(create_data, update_data) => {
                 let mut parent_fk_col = None;
-                for attr in &ast.models.get(parent_model_name).unwrap().fields.iter().find(|f| f.name == child.relation_field_name).unwrap().attributes {
+                for attr in &ast.models.get(parent_model_name).unwrap().resolved_fields.iter().find(|f| f.name == child.relation_field_name).unwrap().attributes {
                     if let FieldAttribute::Relation { fields, references: _, .. } = attr {
                         if !fields.is_empty() {
                             parent_fk_col = Some(fields[0].clone());
@@ -1083,14 +1090,14 @@ mod tests {
     use serde_json::json;
 
     fn mock_ast() -> SchemaAst {
-        let mut ast = SchemaAst {
+        let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: std::collections::HashMap::new(),
             unions: std::collections::HashMap::new(),
         };
 
-        ast.models.insert("User".to_string(), ModelNode {
+        ast.models.insert("User".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "User".to_string(),
-            fields: vec![
+            resolved_fields: vec![
                 FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "age".to_string(), field_type: AstFieldType::Scalar("Int".to_string()), is_optional: false, attributes: vec![] },

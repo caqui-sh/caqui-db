@@ -81,6 +81,7 @@ async fn test_e2e_relation_names() {
 
     // 5. Build State & Execute API Payload directly via API core (bypassing HTTP router for E2E speed)
     let ast = schema_parser::parser::parse_schema(schema).unwrap();
+    let ast = schema_parser::validation::validate_schema(ast).unwrap();
     
     let payload = json!({
         "action": "findMany",
@@ -145,8 +146,8 @@ async fn test_e2e_self_referential_relations() {
         model Employee {
             id: String @id
             name: String
-            managerId: String
-            manager: Employee @relation(\"ManagerToEmployee\", fields: [managerId], references: [id])
+            managerId: String?
+            manager: Employee? @relation(\"ManagerToEmployee\", fields: [managerId], references: [id])
             directReports: Employee[] @relation(\"ManagerToEmployee\")
         }
     ";
@@ -172,6 +173,7 @@ async fn test_e2e_self_referential_relations() {
     }).await.unwrap().unwrap();
 
     let ast = schema_parser::parser::parse_schema(schema).unwrap();
+    let ast = schema_parser::validation::validate_schema(ast).unwrap();
     
     let payload = json!({
         "action": "findMany",

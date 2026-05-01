@@ -92,8 +92,20 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
             continue;
         }
 
-        let field_def = model_def.fields.iter().find(|f| &f.name == k)
-            .ok_or_else(|| format!("Invalid field '{}' in where clause for model '{}'.", k, model_def.name))?;
+        let field_def_opt = model_def.resolved_fields.iter().find(|f| &f.name == k);
+        let field_def = match field_def_opt {
+            Some(f) => f,
+            None => {
+                if k.starts_with("__") {
+                    // Synthetic markers injected by polymorphism are implicitly booleans
+                    let cond = parse_where_condition(v)?;
+                    clauses.push(WhereClause::Field(k.clone(), cond));
+                    continue;
+                } else {
+                    return Err(format!("Invalid field '{}' in where clause for model '{}'.", k, model_def.name));
+                }
+            }
+        };
 
         if field_def.attributes.iter().any(|a| matches!(a, FieldAttribute::Ignore)) {
             return Err(format!("Security Exception: Prohibited filter on ignored field '{}'", k));
@@ -134,7 +146,7 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
                     if !we_hold_fk {
                         // The other side holds the FK
                         let mut found_inverse = false;
-                        for target_field in &target_model_def.fields {
+                        for target_field in &target_model_def.resolved_fields {
                             if let AstFieldType::Relation(back_target) | AstFieldType::RelationArray(back_target) = &target_field.field_type {
                                 if back_target == &model_def.name {
                                     for attr in &target_field.attributes {

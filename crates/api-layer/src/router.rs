@@ -27,7 +27,7 @@ mod tests {
             .unwrap();
 
         EngineState {
-            ast: Arc::new(SchemaAst {
+            ast: Arc::new(SchemaAst { bases: std::collections::HashMap::new(),
                 models: HashMap::new(),
                 unions: HashMap::new(),
             }),
