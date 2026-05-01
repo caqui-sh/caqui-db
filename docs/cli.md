@@ -10,14 +10,14 @@ Generates a starter `schema.cq` file in the current directory if one does not al
 ## Schema Management
 
 ### `caqui schema push`
-Quickly syncs your `schema.cq` to your local SQLite database (`app.db`). This instantly generates and applies structural differences to the database. This command is best used during local prototyping and development.
+Quickly syncs your `schema.cq` to your local database. This instantly calculates and applies structural differences to the database. This command is best used for rapid local prototyping and does not generate migration history.
 
 ### `caqui schema migrate`
 The safe, historical deployment workflow. This command:
-1. Reads your `schema.cq`.
-2. Compares it against your previous migration files in the `migrations/` directory.
-3. Generates a new `_auto_migration.sql` script.
-4. Safely applies the new script to your live database.
+1. Determines the structural changes needed for your `schema.cq`.
+2. Generates a new timestamped SQL migration script in the `migrations/` directory.
+3. Safely applies the new script to your live database.
+This maintains a clean history of your database evolution.
 
 ## API Server
 
@@ -37,4 +37,4 @@ Passes commands directly to the underlying `git` executable, but intercepts spec
 `caqui git merge` (and related commands) automatically resolve database conflicts safely at the data level without binary file corruption.
 
 #### Specialized `diff` Behavior
-When you run `caqui git diff`, the CLI intercepts the command and runs a custom internal diffing engine tailored for comparing SQLite schemas and states, rather than showing a binary diff of the `app.db` file.
+When you run `caqui git diff`, the CLI intercepts the command and runs a custom internal diffing engine tailored for comparing schemas and states, rather than showing a binary diff of the database file.
