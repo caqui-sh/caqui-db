@@ -120,41 +120,71 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                 json_pairs.push(format!("'{}', {}", field_name, subquery));
             },
             SelectField::PolymorphicUnion { field_name, is_list, target_fragments } => {
-                if *is_list {
-                    unimplemented!("Polymorphic union arrays are currently supported in the AST and Schema, but not yet implemented in the Query Compiler.");
-                }
-                let type_col = format!("{}.{}_type", node.alias, field_name); // e.g., t0.result_type
-                let id_col = format!("{}.{}_id", node.alias, field_name);     // e.g., t0.result_id
-                
-                let mut case_statements = Vec::new();
-                
-                // We sort target_fragments keys to ensure deterministic query generation,
-                // which is helpful for unit testing.
                 let mut fragment_keys: Vec<_> = target_fragments.keys().collect();
                 fragment_keys.sort();
-                
-                for model_name in fragment_keys {
-                    let fragment_node = target_fragments.get(model_name).unwrap();
-                    let sub_obj = compile_select(fragment_node, Some((&node.alias, &id_col)));
-                    
-                    let mut where_conds = vec![format!("{}.id = {}", fragment_node.alias, id_col)];
-                    if let Some(filters) = &fragment_node.filters {
-                        where_conds.push(compile_where_clause(filters, &fragment_node.alias));
-                    }
-                    let where_str = where_conds.join(" AND ");
 
-                    case_statements.push(format!(
-                        "WHEN '{}' THEN (SELECT {} FROM {} AS {} WHERE {})",
-                        model_name,          // e.g., 'Article'
-                        sub_obj,             // e.g., json_object('title', t1.title, '__typename', 'Article')
-                        model_name,          // Target table
-                        fragment_node.alias, // Child table alias
-                        where_str
-                    ));
+                if *is_list {
+                    let j_alias = format!("j_{}_{}", node.alias, field_name);
+                    let mut case_statements = Vec::new();
+                    
+                    for model_name in &fragment_keys {
+                        let fragment_node = target_fragments.get(*model_name).unwrap();
+                        let sub_obj = compile_select(fragment_node, Some((&node.alias, &format!("{}.value->>'id'", j_alias))));
+                        
+                        let mut where_conds = vec![format!("{}.id = {}.value->>'id'", fragment_node.alias, j_alias)];
+                        if let Some(filters) = &fragment_node.filters {
+                            where_conds.push(compile_where_clause(filters, &fragment_node.alias));
+                        }
+                        let where_str = where_conds.join(" AND ");
+
+                        case_statements.push(format!(
+                            "WHEN '{}' THEN (SELECT {} FROM {} AS {} WHERE {})",
+                            model_name,
+                            sub_obj,
+                            model_name,
+                            fragment_node.alias,
+                            where_str
+                        ));
+                    }
+                    
+                    let case_block = format!("CASE {}.value->>'type' {} ELSE NULL END", j_alias, case_statements.join(" "));
+                    let subquery = format!(
+                        "(SELECT json_group_array(json({})) FROM (SELECT value, key FROM json_each({}.{}) ORDER BY key ASC) AS {})",
+                        case_block,
+                        node.alias,
+                        field_name,
+                        j_alias
+                    );
+                    json_pairs.push(format!("'{}', {}", field_name, subquery));
+                } else {
+                    let type_col = format!("{}.{}_type", node.alias, field_name); // e.g., t0.result_type
+                    let id_col = format!("{}.{}_id", node.alias, field_name);     // e.g., t0.result_id
+                    
+                    let mut case_statements = Vec::new();
+                    
+                    for model_name in &fragment_keys {
+                        let fragment_node = target_fragments.get(*model_name).unwrap();
+                        let sub_obj = compile_select(fragment_node, Some((&node.alias, &id_col)));
+                        
+                        let mut where_conds = vec![format!("{}.id = {}", fragment_node.alias, id_col)];
+                        if let Some(filters) = &fragment_node.filters {
+                            where_conds.push(compile_where_clause(filters, &fragment_node.alias));
+                        }
+                        let where_str = where_conds.join(" AND ");
+
+                        case_statements.push(format!(
+                            "WHEN '{}' THEN (SELECT {} FROM {} AS {} WHERE {})",
+                            model_name,          // e.g., 'Article'
+                            sub_obj,             // e.g., json_object('title', t1.title, '__typename', 'Article')
+                            model_name,          // Target table
+                            fragment_node.alias, // Child table alias
+                            where_str
+                        ));
+                    }
+                    
+                    // Generates: 'result', CASE t0.result_type WHEN 'Article' THEN (...) ELSE NULL END
+                    json_pairs.push(format!("'{}', CASE {} {} ELSE NULL END", field_name, type_col, case_statements.join(" ")));
                 }
-                
-                // Generates: 'result', CASE t0.result_type WHEN 'Article' THEN (...) ELSE NULL END
-                json_pairs.push(format!("'{}', CASE {} {} ELSE NULL END", field_name, type_col, case_statements.join(" ")));
             }
         }
     }
@@ -553,6 +583,43 @@ mod tests {
         assert_eq!(
             sql,
             "SELECT json_group_array(json_object('id', t0.id, 'search', CASE t0.search_type WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.id = t0.search_id AND t1.status = 'published') ELSE NULL END)) AS payload FROM User AS t0;"
+        );
+    }
+
+    #[test]
+    fn test_compile_polymorphic_union_array() {
+        let article_fragment = QueryNode {
+            target_model: "Article".to_string(),
+            alias: "t1".to_string(),
+            selections: vec![SelectField::Scalar("title".to_string())],
+            filters: Some(WhereClause::Field("status".to_string(), WhereCondition::Eq("published".to_string()))),
+            limit: None,
+            offset: None,
+        };
+        
+        let mut fragments = HashMap::new();
+        fragments.insert("Article".to_string(), article_fragment);
+        
+        let query = QueryNode {
+            target_model: "User".to_string(),
+            alias: "t0".to_string(),
+            selections: vec![
+                SelectField::Scalar("id".to_string()),
+                SelectField::PolymorphicUnion {
+                    field_name: "contents".to_string(),
+                    is_list: true,
+                    target_fragments: fragments,
+                }
+            ],
+            filters: None,
+            limit: None,
+            offset: None,
+        };
+        
+        let sql = compile_select(&query, None);
+        assert_eq!(
+            sql,
+            "SELECT json_group_array(json_object('id', t0.id, 'contents', (SELECT json_group_array(json(CASE j_t0_contents.value->>'type' WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.id = j_t0_contents.value->>'id' AND t1.status = 'published') ELSE NULL END)) FROM (SELECT value, key FROM json_each(t0.contents) ORDER BY key ASC) AS j_t0_contents))) AS payload FROM User AS t0;"
         );
     }
 }
