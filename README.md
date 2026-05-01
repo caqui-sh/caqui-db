@@ -4,6 +4,92 @@
 
 Simply write your schema, start the server, and instantly query your database via a powerful HTTP JSON API.
 
+## Features
+
+- **Single Binary**: No need to manage separate database, ORM, and API services.
+- **Schema-Driven**: Define your models in a simple DSL and let `caqui` handle the rest.
+- **Instant JSON API**: Automatically get a full CRUD HTTP JSON API based on your schema.
+- **Decentralized Concurrency**: Operates on unique local copies of the repository and database, merged via a custom `git-merge-sqlitevfs` driver.
+
+## Example
+
+### 1. The Schema (`schema.cq`)
+```
+model User {
+  id    ID     @id
+  name  String
+  email String @unique
+  posts [Post]
+}
+
+model Post {
+  id       ID     @id
+  title    String
+  content  String
+  author   User   @relation
+}
+```
+
+### 2. The JSON API Query
+
+**Request:**
+```bash
+curl -X POST http://localhost:4000/api/v1/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "User",
+    "action": "findMany",
+    "select": {
+      "id": true,
+      "name": true,
+      "posts": {
+        "select": { "title": true }
+      }
+    }
+  }'
+```
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "id": "1",
+      "name": "Alice",
+      "posts": [
+        { "title": "Hello World" },
+        { "title": "Caqui is awesome" }
+      ]
+    }
+  ]
+}
+```
+
+## Documentation
+
+### 1. Core Concepts
+- **Schema DSL** (`./docs/schema.md`)
+- **Primitive Types**
+
+### 2. Relational Data
+- **Relationships** (`./docs/relations.md`)
+
+### 3. API Reference
+- **Queries** (`./docs/queries.md`)
+- **Mutations** (`./docs/mutations.md`)
+- **Errors** (`./docs/errors.md`)
+
+### 4. CLI & Workflows
+- **Prototyping & Migrations** (`./docs/migrations.md`)
+- **Version Control** (`./docs/workflow.md`)
+- **CLI Commands** (`./docs/cli.md`)
+- **Configuration** (`./docs/configuration.md`)
+
+### 5. Quickstart
+- **Quickstart Guide** (`./docs/quickstart.md`)
+
+---
+
 ## Supported Platforms
 
 ⚠️ **Note:** Windows is strictly **not supported**.
@@ -12,85 +98,6 @@ Simply write your schema, start the server, and instantly query your database vi
 - **macOS (ARM / Apple Silicon)**
 - **Linux (ARM64)**
 - **Linux (x86_64)**
-
----
-
-## Concurrency & Performance Status
-
-The concurrency model of `caqui` is decentralized. Instead of scaling a single active database connection pool across thousands of parallel web requests, **each user/client operates on their own unique local copy of the repository and database.** 
-
-Users make changes in their isolated environments and push those changes to a remote repository, where the custom `git-merge-sqlitevfs` driver intelligently reconciles and merges the SQLite state globally.
-
----
-
-## Quick Start (5 Minutes)
-
-### 1. Initialize
-Generate a starter `schema.cq` file.
-
-```bash
-caqui init
-```
-
-### 2. Define your Schema
-Edit `schema.cq` to define your models.
-
-```graphql
-model User {
-  id:    String @id @default(uuid())
-  name:  String
-  posts: Post[]
-}
-
-model Post {
-  id:     String @id @default(uuid())
-  title:  String
-  author: User
-}
-```
-
-### 3. Push to Database
-Apply your schema changes to the local SQLite database (`app.db`).
-
-```bash
-caqui schema push
-```
-
-### 4. Start the API
-Launch the universal engine.
-
-```bash
-caqui api start
-```
-
-### 5. Query
-Fetch your data via HTTP POST.
-
-```bash
-curl -X POST http://localhost:4000/api/v1/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "User",
-    "action": "findMany",
-    "select": { "id": true, "name": true }
-  }'
-```
-
----
-
-## Detailed Documentation
-
-For a comprehensive guide on all features, please refer to our modular documentation:
-
-- 🏗️ **[Schema DSL Reference](./docs/schema.md)**: Models, types, relations, and attributes.
-- 🔍 **[API Query Reference (Read)](./docs/queries.md)**: `findMany`, filtering, projections, and relational filters.
-- ✍️ **[API Mutation Reference (Write)](./docs/mutations.md)**: `create`, `update`, `delete`, `upsert`, and nested writes.
-- 💻 **[CLI Commands Reference](./docs/cli.md)**: Initialization, migrations, API server, and git proxy behaviors.
-- 🔄 **[Decentralized Git Workflow](./docs/workflow.md)**: Understanding the sync loop and `sqlitevfs` merge driver.
-- 📈 **[Database Lifecycle & Migrations](./docs/migrations.md)**: `push` vs `migrate`, simulation environments, and structural changes.
-- 🔗 **[Advanced Relational Rules](./docs/relations.md)**: Named relations, self-referential models, and deferrable constraints.
-- 🚫 **[Error Handling & API Responses](./docs/errors.md)**: HTTP status codes, error shapes, and troubleshooting.
-- ⚙️ **[Configuration & Engine Pragmas](./docs/configuration.md)**: Ports, foreign key enforcement, and custom SQLite functions.
 
 ---
 

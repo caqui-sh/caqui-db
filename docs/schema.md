@@ -6,7 +6,7 @@
 
 A `model` represents a table in your SQLite database and an entity in your API.
 
-```graphql
+```
 model User {
   id:   String @id @default(uuid())
   name: String
@@ -29,7 +29,7 @@ The following scalar types are supported:
 
 `caqui` supports native storage of primitive arrays 
 
-```graphql
+```
 model Post {
   id:    String   @id @default(uuid())
   tags:  String[]
@@ -42,7 +42,7 @@ Relationships link models together. `caqui` handles foreign key generation and d
 
 ### 1:N (One-to-Many)
 
-```graphql
+```
 model Author {
   id:    String @id @default(uuid())
   posts: Post[]
@@ -56,7 +56,7 @@ model Post {
 
 ### 1:1 (One-to-One)
 
-```graphql
+```
 model User {
   id:      String   @id @default(uuid())
   profile: Profile? @relation(column: "profileId")
@@ -72,7 +72,7 @@ model Profile {
 
 N:M relationships currently require an explicit join table model.
 
-```graphql
+```
 model User {
   id:    String @id @default(uuid())
   roles: UserRole[]
@@ -96,7 +96,7 @@ model UserRole {
 
 Unions allow a single property to return different models dynamically.
 
-```graphql
+```
 union SearchResult = Post | Author
 
 model SearchQuery {
