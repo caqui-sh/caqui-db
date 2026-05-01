@@ -24,9 +24,9 @@ caqui schema migrate
 
 ### How `migrate` Works
 
-1. **Shadow Database:** `caqui` spins up a temporary, in-memory "Shadow Database".
-2. **Replay:** It replays all existing scripts in your `migrations/` folder into the Shadow Database to reach the current "production" state.
-3. **Diff:** It compares the Shadow Database schema against your desired `schema.cq`.
+1. **Simulation Environment:** `caqui` spins up a temporary, in-memory "Simulation Environment".
+2. **Replay:** It replays all existing scripts in your `migrations/` folder into the Simulation Environment to reach the current "production" state.
+3. **Diff:** It compares the Simulation Environment schema against your desired `schema.cq`.
 4. **Generate:** If there is a difference, it generates a new timestamped SQL file (e.g., `20231027120000_auto_migration.sql`) in the `migrations/` folder.
 5. **Apply:** Finally, it applies the new script to your live `app.db`.
 

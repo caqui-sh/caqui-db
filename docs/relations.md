@@ -6,7 +6,7 @@
 
 When you have multiple relationships between the same two models, you must name them to tell `caqui` which fields belong to which relation.
 
-```prisma
+```graphql
 model User {
   id:            String @id
   authoredPosts: Post[] @relation("AuthorToPost")
@@ -24,7 +24,7 @@ model Post {
 
 You can model hierarchies where a model points back to itself.
 
-```prisma
+```graphql
 model Employee {
   id:              String     @id
   name:            String
@@ -44,7 +44,7 @@ You can control what happens to related records when a parent record is deleted 
 | `SetNull` | Sets the foreign key in child records to `NULL` (requires the field to be optional). |
 | `Restrict` | Prevents the parent from being deleted if child records exist. |
 
-```prisma
+```graphql
 model User {
   id:    String @id
   posts: Post[]
@@ -63,7 +63,7 @@ By default, SQLite enforces foreign key constraints immediately. However, comple
 
 Using `deferrable: true` tells `caqui` to wait until the end of a transaction to verify the constraint.
 
-```prisma
+```graphql
 model User {
   id:      String  @id
   profile: Profile @relation(deferrable: true)

@@ -34,12 +34,7 @@ Because `caqui` utilizes a decentralized concurrency model based on Git, it prov
 Passes commands directly to the underlying `git` executable, but intercepts specific subcommands to enforce the custom `sqlitevfs` merge driver.
 
 #### Specialized `merge` Behavior
-When you run `caqui git merge <branch>` (or related commands like `pull`), the CLI automatically injects the `-s sqlitevfs` strategy flag.
-- **Enforced Strategy:** The custom `sqlitevfs` driver is strictly enforced to safely reconcile SQLite binary states globally.
-- **Overrides Prevented:** If you attempt to pass a custom strategy (e.g., `-s recursive` or `--strategy=...`), the CLI will block the command and return an error to prevent database corruption.
+`caqui git merge` (and related commands) automatically resolve database conflicts safely at the data level without binary file corruption.
 
 #### Specialized `diff` Behavior
 When you run `caqui git diff`, the CLI intercepts the command and runs a custom internal diffing engine tailored for comparing SQLite schemas and states, rather than showing a binary diff of the `app.db` file.
-
-#### Automatic Driver Setup
-Running `caqui git` commands will automatically bootstrap the custom Git VFS and merge driver into a hidden `.caqui/bin/` directory and temporarily add it to your `PATH` for the duration of the command. This ensures Git can always discover the `git-merge-sqlitevfs` binary without requiring a manual, system-wide installation.

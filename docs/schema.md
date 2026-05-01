@@ -1,12 +1,12 @@
 # Schema DSL Reference
 
-`caqui` uses a strict, declarative, Prisma-inspired DSL to define your database schema and API structure in a single `schema.cq` file.
+`caqui` uses a strict, declarative DSL to define your database schema and API structure in a single `schema.cq` file.
 
 ## Models
 
 A `model` represents a table in your SQLite database and an entity in your API.
 
-```prisma
+```graphql
 model User {
   id:   String @id @default(uuid())
   name: String
@@ -27,9 +27,9 @@ The following scalar types are supported:
 
 ## Arrays
 
-`caqui` supports native storage of primitive arrays using SQLite's JSON capabilities.
+`caqui` supports native storage of primitive arrays 
 
-```prisma
+```graphql
 model Post {
   id:    String   @id @default(uuid())
   tags:  String[]
@@ -42,7 +42,7 @@ Relationships link models together. `caqui` handles foreign key generation and d
 
 ### 1:N (One-to-Many)
 
-```prisma
+```graphql
 model Author {
   id:    String @id @default(uuid())
   posts: Post[]
@@ -56,7 +56,7 @@ model Post {
 
 ### 1:1 (One-to-One)
 
-```prisma
+```graphql
 model User {
   id:      String   @id @default(uuid())
   profile: Profile? @relation(column: "profileId")
@@ -72,7 +72,7 @@ model Profile {
 
 N:M relationships currently require an explicit join table model.
 
-```prisma
+```graphql
 model User {
   id:    String @id @default(uuid())
   roles: UserRole[]
@@ -96,7 +96,7 @@ model UserRole {
 
 Unions allow a single property to return different models dynamically.
 
-```prisma
+```graphql
 union SearchResult = Post | Author
 
 model SearchQuery {
@@ -122,7 +122,7 @@ Attributes customize the behavior of individual fields.
 ### Functions in `@default`
 
 - `uuid()`: Generates a sequential UUIDv7.
-- `autoincrement()`: Standard SQLite integer autoincrement.
+- `autoincrement()`: automatically incrementing IDs.
 - `now()`: The current UTC timestamp.
 - `"static"`: A static string, number, or boolean default.
 

@@ -28,20 +28,13 @@ To receive changes from others, you pull from the remote repository.
 ```bash
 caqui git pull origin main
 ```
-During a pull, `caqui` uses the custom **`sqlitevfs` merge driver** to automatically and safely reconcile the differences between your local `app.db` and the incoming one. This driver understands the SQLite file format and can merge data at the row level, preventing binary conflicts.
+During a pull, `caqui git merge` (and related commands) automatically resolve database conflicts safely at the data level without binary file corruption.
 
 ### 4. Pushing
 Once merged, you push your reconciled state back to the remote.
 ```bash
 caqui git push origin main
 ```
-
-## The `sqlitevfs` Merge Driver
-
-Unlike standard Git, which treats SQLite files as binary blobs and fails during a merge, `caqui` enforces the `sqlitevfs` strategy.
-- **Semantic Merging:** It reconciles data based on table structure and unique constraints.
-- **No Text Conflicts:** You won't see `<<<<<< HEAD` inside your database file.
-- **Integrity First:** The driver ensures that the resulting `app.db` is always a valid, consistent SQLite file.
 
 ## Deployment & Hosting
 

@@ -2,7 +2,7 @@
 
 `caqui` is a high-performance, schema-driven SQLite database and API engine. It replaces the traditional multi-tier web stack (database, migration CLI, ORM, and API layer) with a **single executable binary**.
 
-Simply write your schema, start the server, and instantly query your database via a powerful GraphQL-style HTTP JSON API.
+Simply write your schema, start the server, and instantly query your database via a powerful HTTP JSON API.
 
 ## Supported Platforms
 
@@ -35,7 +35,7 @@ caqui init
 ### 2. Define your Schema
 Edit `schema.cq` to define your models.
 
-```prisma
+```graphql
 model User {
   id:    String @id @default(uuid())
   name:  String
@@ -87,7 +87,7 @@ For a comprehensive guide on all features, please refer to our modular documenta
 - ✍️ **[API Mutation Reference (Write)](./docs/mutations.md)**: `create`, `update`, `delete`, `upsert`, and nested writes.
 - 💻 **[CLI Commands Reference](./docs/cli.md)**: Initialization, migrations, API server, and git proxy behaviors.
 - 🔄 **[Decentralized Git Workflow](./docs/workflow.md)**: Understanding the sync loop and `sqlitevfs` merge driver.
-- 📈 **[Database Lifecycle & Migrations](./docs/migrations.md)**: `push` vs `migrate`, shadow databases, and table rebuilds.
+- 📈 **[Database Lifecycle & Migrations](./docs/migrations.md)**: `push` vs `migrate`, simulation environments, and structural changes.
 - 🔗 **[Advanced Relational Rules](./docs/relations.md)**: Named relations, self-referential models, and deferrable constraints.
 - 🚫 **[Error Handling & API Responses](./docs/errors.md)**: HTTP status codes, error shapes, and troubleshooting.
 - ⚙️ **[Configuration & Engine Pragmas](./docs/configuration.md)**: Ports, foreign key enforcement, and custom SQLite functions.
