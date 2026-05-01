@@ -178,6 +178,7 @@ mod tests {
                         references: vec![],
                         on_delete: None,
                         deferrable: false,
+                        column: None,
                     }
                 ] },
                 FieldNode { name: "profileId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), attributes: vec![] },
@@ -188,6 +189,7 @@ mod tests {
                         references: vec!["id".to_string()],
                         on_delete: None,
                         deferrable: false,
+                        column: None,
                     }
                 ] },
             ]
@@ -214,6 +216,7 @@ mod tests {
                         references: vec!["id".to_string()],
                         on_delete: Some("Cascade".to_string()),
                         deferrable: false,
+                        column: None,
                     }
                 ] },
                 FieldNode { name: "comments".to_string(), field_type: AstFieldType::RelationArray("Comment".to_string()), attributes: vec![
@@ -223,6 +226,7 @@ mod tests {
                         references: vec![],
                         on_delete: None,
                         deferrable: false,
+                        column: None,
                     }
                 ] },
             ]
@@ -241,6 +245,7 @@ mod tests {
                         references: vec!["id".to_string()],
                         on_delete: Some("Cascade".to_string()),
                         deferrable: false,
+                        column: None,
                     }
                 ] },
             ]

@@ -121,6 +121,75 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
         }
     }
 
+    // Pass 4: Implicit Foreign Key Injection
+    let mut model_id_info = std::collections::HashMap::new();
+    for model in ast.models.values() {
+        if let Some(id_field) = model.fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))) {
+            model_id_info.insert(model.name.clone(), (id_field.name.clone(), id_field.field_type.clone()));
+        }
+    }
+
+    for model in ast.models.values_mut() {
+        let mut added_fields = Vec::new();
+        
+        for field in &mut model.fields {
+            if let AstFieldType::Relation(target_name) = &field.field_type {
+                let mut relation_attr_idx = None;
+                let mut needs_injection = false;
+                let mut col_name = format!("{}Id", field.name);
+                
+                for (idx, attr) in field.attributes.iter().enumerate() {
+                    if let FieldAttribute::Relation { fields, column, .. } = attr {
+                        relation_attr_idx = Some(idx);
+                        if fields.is_empty() {
+                            needs_injection = true;
+                            if let Some(c) = column {
+                                col_name = c.clone();
+                            }
+                        }
+                        break;
+                    }
+                }
+                
+                if relation_attr_idx.is_none() {
+                    needs_injection = true;
+                    field.attributes.push(FieldAttribute::Relation {
+                        name: None,
+                        fields: vec![],
+                        references: vec![],
+                        on_delete: None,
+                        deferrable: false,
+                        column: None,
+                    });
+                    relation_attr_idx = Some(field.attributes.len() - 1);
+                }
+
+                if needs_injection {
+                    if let Some((target_id_name, target_id_type)) = model_id_info.get(target_name) {
+                        added_fields.push(FieldNode {
+                            name: col_name.clone(),
+                            field_type: target_id_type.clone(),
+                            attributes: vec![],
+                        });
+                        
+                        if let Some(idx) = relation_attr_idx {
+                            if let FieldAttribute::Relation { fields, references, .. } = &mut field.attributes[idx] {
+                                *fields = vec![col_name.clone()];
+                                *references = vec![target_id_name.clone()];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        for added_field in added_fields {
+            if !model.fields.iter().any(|f| f.name == added_field.name) {
+                model.fields.push(added_field);
+            }
+        }
+    }
+
     Ok(ast)
 }
 
@@ -367,5 +436,49 @@ mod tests {
         let ast = crate::parser::parse_schema(input).unwrap();
         let result = validate_schema(ast);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_implicit_foreign_key_injection() {
+        let input = "
+            model User {
+                id: String @id
+            }
+            model Post {
+                id: String @id
+                author: User @relation(\"AuthorToPost\")
+                reviewer: User @relation(\"ReviewerToPost\", column: \"reviewer_id\")
+            }
+        ";
+        let mut ast = crate::parser::parse_schema(input).unwrap();
+        ast = validate_schema(ast).unwrap();
+        
+        let post = ast.models.get("Post").unwrap();
+        
+        let author_id_field = post.fields.iter().find(|f| f.name == "authorId").unwrap();
+        assert_eq!(author_id_field.field_type, AstFieldType::Scalar("String".to_string()));
+        
+        let reviewer_id_field = post.fields.iter().find(|f| f.name == "reviewer_id").unwrap();
+        assert_eq!(reviewer_id_field.field_type, AstFieldType::Scalar("String".to_string()));
+        
+        let author_rel = post.fields.iter().find(|f| f.name == "author").unwrap();
+        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation {
+            name: Some("AuthorToPost".to_string()),
+            fields: vec!["authorId".to_string()],
+            references: vec!["id".to_string()],
+            on_delete: None,
+            deferrable: false,
+            column: None,
+        }]);
+
+        let reviewer_rel = post.fields.iter().find(|f| f.name == "reviewer").unwrap();
+        assert_eq!(reviewer_rel.attributes, vec![FieldAttribute::Relation {
+            name: Some("ReviewerToPost".to_string()),
+            fields: vec!["reviewer_id".to_string()],
+            references: vec!["id".to_string()],
+            on_delete: None,
+            deferrable: false,
+            column: Some("reviewer_id".to_string()),
+        }]);
     }
 }
