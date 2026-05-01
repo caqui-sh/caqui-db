@@ -91,6 +91,7 @@ For a comprehensive guide on all features, please refer to our modular documenta
 - 📈 **[Database Lifecycle & Migrations](./docs/migrations.md)**: `db-push` vs `migrate-dev`, shadow databases, and table rebuilds.
 - 🔗 **[Advanced Relational Rules](./docs/relations.md)**: Named relations, self-referential models, and deferrable constraints.
 - 🚫 **[Error Handling & API Responses](./docs/errors.md)**: HTTP status codes, error shapes, and troubleshooting.
+- ⚙️ **[Configuration & Engine Pragmas](./docs/configuration.md)**: Ports, foreign key enforcement, and custom SQLite functions.
 
 ---
 

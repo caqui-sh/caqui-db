@@ -135,6 +135,30 @@ Combine multiple conditions.
 }
 ```
 
+## Querying Polymorphic Unions
+
+When a field is defined as a `union` in your schema, you must specify which fields to return for each possible model using **target fragments**.
+
+```json
+{
+  "model": "SearchQuery",
+  "action": "findMany",
+  "select": {
+    "id": true,
+    "content": {
+      "Post": { 
+        "select": { "title": true } 
+      },
+      "User": { 
+        "select": { "name": true } 
+      }
+    }
+  }
+}
+```
+
+If the `content` of a record is a `Post`, the API will return a `title`. If it is a `User`, it will return a `name`.
+
 ## Pagination
 
 Use `limit` and `offset` to paginate through large datasets.
