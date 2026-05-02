@@ -99,7 +99,7 @@ mod tests {
             PhysicalTable {
                 name: "User".to_string(),
                 columns: vec![
-                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
+                    PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
                 ],
                 indexes: vec![],
                 triggers: vec![],
@@ -120,7 +120,7 @@ mod tests {
             PhysicalTable {
                 name: "User".to_string(),
                 columns: vec![
-                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false },
+                    PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false },
                     PhysicalColumn { name: "name".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
                 ],
                 indexes: vec![],
@@ -131,7 +131,7 @@ mod tests {
         
         let mut live = HashMap::new();
         let mut live_cols = HashMap::new();
-        live_cols.insert("id".to_string(), LiveColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: true });
+        live_cols.insert("__id".to_string(), LiveColumn { name: "__id".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: true });
         
         live.insert("User".to_string(), LiveTable { name: "User".to_string(), columns: live_cols });
         
@@ -147,7 +147,7 @@ mod tests {
             PhysicalTable {
                 name: "User".to_string(),
                 columns: vec![
-                    PhysicalColumn { name: "id".to_string(), sqlite_type: "INTEGER".to_string(), is_json_array: false }
+                    PhysicalColumn { name: "__id".to_string(), sqlite_type: "INTEGER".to_string(), is_json_array: false }
                 ],
                 indexes: vec![],
                 triggers: vec![],
@@ -158,7 +158,7 @@ mod tests {
         let mut live = HashMap::new();
         let mut live_cols = HashMap::new();
         // Live is TEXT, Desired is INTEGER -> triggers rebuild
-        live_cols.insert("id".to_string(), LiveColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: true });
+        live_cols.insert("__id".to_string(), LiveColumn { name: "__id".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: true });
         
         live.insert("User".to_string(), LiveTable { name: "User".to_string(), columns: live_cols });
         
@@ -187,7 +187,7 @@ mod tests {
             PhysicalTable {
                 name: "User".to_string(),
                 columns: vec![
-                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
+                    PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
                 ],
                 indexes: vec![],
                 triggers: vec![],
@@ -197,7 +197,7 @@ mod tests {
         
         let mut live = HashMap::new();
         let mut live_cols = HashMap::new();
-        live_cols.insert("id".to_string(), LiveColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: true });
+        live_cols.insert("__id".to_string(), LiveColumn { name: "__id".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: true });
         live.insert("User".to_string(), LiveTable { name: "User".to_string(), columns: live_cols });
         
         let ops = compute_diff(&desired, &live);
@@ -211,7 +211,7 @@ mod tests {
             PhysicalTable {
                 name: "User".to_string(),
                 columns: vec![
-                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
+                    PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
                 ],
                 indexes: vec![
                     PhysicalIndex { name: "idx_User_email".to_string(), columns: vec!["email".to_string()], unique: true }
@@ -223,7 +223,7 @@ mod tests {
         
         let mut live = HashMap::new();
         let mut live_cols = HashMap::new();
-        live_cols.insert("id".to_string(), LiveColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: true });
+        live_cols.insert("__id".to_string(), LiveColumn { name: "__id".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: true });
         live.insert("User".to_string(), LiveTable { name: "User".to_string(), columns: live_cols });
         
         let ops = compute_diff(&desired, &live);
@@ -238,10 +238,10 @@ mod tests {
             PhysicalTable {
                 name: "User".to_string(),
                 columns: vec![
-                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
+                    PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
                 ],
                 indexes: vec![
-                    PhysicalIndex { name: "idx_User_id_polymorphic".to_string(), columns: vec!["id".to_string()], unique: false }
+                    PhysicalIndex { name: "idx_User_id_polymorphic".to_string(), columns: vec!["__id".to_string()], unique: false }
                 ],
                 triggers: vec![],
                 foreign_keys: vec![],
@@ -250,7 +250,7 @@ mod tests {
         
         let mut live = HashMap::new();
         let mut live_cols = HashMap::new();
-        live_cols.insert("id".to_string(), LiveColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: true });
+        live_cols.insert("__id".to_string(), LiveColumn { name: "__id".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: true });
         
         // The table columns perfectly match, so it won't be rebuilt
         live.insert("User".to_string(), LiveTable { name: "User".to_string(), columns: live_cols });
@@ -259,6 +259,6 @@ mod tests {
         
         // Assert that the index creation op is still emitted even though the table is identical
         assert_eq!(ops.len(), 1);
-        assert!(matches!(&ops[0], MigrationOp::CreateIndex { table, columns, unique } if table == "User" && columns[0] == "id" && !*unique));
+        assert!(matches!(&ops[0], MigrationOp::CreateIndex { table, columns, unique } if table == "User" && columns[0] == "__id" && !*unique));
     }
 }

@@ -59,7 +59,7 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> FieldNode {
             let attr_ident = attr_inner.next().unwrap().as_str();
             
             match attr_ident {
-                "id" => attributes.push(FieldAttribute::Id),
+                "__id" => attributes.push(FieldAttribute::Id),
                 "unique" => attributes.push(FieldAttribute::Unique),
                 "updatedAt" => attributes.push(FieldAttribute::UpdatedAt),
                 "ignore" => attributes.push(FieldAttribute::Ignore),
@@ -161,10 +161,33 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                 
                 let mut fields = Vec::new();
                 let mut extends = Vec::new();
+                let mut block_attributes = Vec::new();
                 for inner in inner_rules {
                     match inner.as_rule() {
                         Rule::extends_clause => extends = parse_extends_clause(inner),
                         Rule::field_def => fields.push(parse_field_def(inner)),
+                        Rule::block_attr => {
+                            let mut attr_inner = inner.into_inner();
+                            let attr_name = attr_inner.next().unwrap().as_str();
+                            
+                            if attr_name == "id" {
+                                let mut default_func = DefaultFunc::AutoIncrement;
+                                if let Some(args_pair) = attr_inner.next() {
+                                    if args_pair.as_rule() == Rule::attr_args {
+                                        if let Some(param) = args_pair.into_inner().next() {
+                                            let val_str = param.as_str();
+                                            println!("VAL STR IS '{}'", val_str); match val_str {
+                                                "uuid()" | "uuid" => default_func = DefaultFunc::Uuid,
+                                                "cuid()" | "cuid" => default_func = DefaultFunc::Cuid,
+                                                "autoincrement()" | "autoincrement" => default_func = DefaultFunc::AutoIncrement,
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                }
+                                block_attributes.push(ModelAttribute::Id(default_func));
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -173,6 +196,7 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                     name,
                     fields,
                     extends,
+                    block_attributes,
                     resolved_fields: Vec::new(),
                     resolved_bases: BTreeSet::new(),
                 });
@@ -183,10 +207,32 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                 
                 let mut fields = Vec::new();
                 let mut extends = Vec::new();
+                let mut block_attributes = Vec::new();
                 for inner in inner_rules {
                     match inner.as_rule() {
                         Rule::extends_clause => extends = parse_extends_clause(inner),
                         Rule::field_def => fields.push(parse_field_def(inner)),
+                        Rule::block_attr => {
+                            let mut attr_inner = inner.into_inner();
+                            let attr_name = attr_inner.next().unwrap().as_str();
+                            if attr_name == "id" {
+                                let mut default_func = DefaultFunc::AutoIncrement;
+                                if let Some(args_pair) = attr_inner.next() {
+                                    if args_pair.as_rule() == Rule::attr_args {
+                                        if let Some(param) = args_pair.into_inner().next() {
+                                            let val_str = param.as_str();
+                                            match val_str {
+                                                "uuid()" | "uuid" => default_func = DefaultFunc::Uuid,
+                                                "cuid()" | "cuid" => default_func = DefaultFunc::Cuid,
+                                                "autoincrement()" | "autoincrement" => default_func = DefaultFunc::AutoIncrement,
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                }
+                                block_attributes.push(ModelAttribute::Id(default_func));
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -195,6 +241,7 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                     name,
                     fields,
                     extends,
+                    block_attributes,
                     resolved_fields: Vec::new(),
                     resolved_bases: BTreeSet::new(),
                 });
@@ -226,14 +273,16 @@ mod tests {
     fn test_parse_schema() {
         let input = "
             model User {
-                id: String @id
+
                 name: String
                 posts: Post[]
+    @@id(uuid)
             }
             model Post {
-                id: String @id
+
                 title: String
                 author: User
+    @@id(uuid)
             }
             union SearchResult = User | Post
         ";
@@ -247,14 +296,9 @@ mod tests {
         };
         
         expected_ast.models.insert("User".to_string(), ModelNode {
+            block_attributes: vec![ModelAttribute::Id(DefaultFunc::Uuid)],
             name: "User".to_string(),
             fields: vec![
-                FieldNode {
-                    name: "id".to_string(),
-                    field_type: AstFieldType::Scalar("String".to_string()),
-                    is_optional: false,
-                    attributes: vec![FieldAttribute::Id],
-                },
                 FieldNode {
                     name: "name".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
@@ -274,14 +318,9 @@ mod tests {
         });
         
         expected_ast.models.insert("Post".to_string(), ModelNode {
+            block_attributes: vec![ModelAttribute::Id(DefaultFunc::Uuid)],
             name: "Post".to_string(),
             fields: vec![
-                FieldNode {
-                    name: "id".to_string(),
-                    field_type: AstFieldType::Scalar("String".to_string()),
-                    is_optional: false,
-                    attributes: vec![FieldAttribute::Id],
-                },
                 FieldNode {
                     name: "title".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
@@ -309,16 +348,17 @@ mod tests {
     fn test_parse_advanced_attributes() {
         let input = "
             model User {
-                id: String @id @map(\"user_id\")
-                email: String @unique
+                email: String @unique @map(\"user_id\")
                 bio: String @default(\"no bio\")
                 createdAt: DateTime @default(now())
                 token: String @ignore
-                posts: Post[] @relation(fields: [id], references: [authorId], onDelete: Cascade)
+                posts: Post[] @relation(fields: [__id], references: [authorId], onDelete: Cascade)
+    @@id(uuid)
             }
             model Post {
-                id: String @id
+
                 authorId: String
+    @@id(uuid)
             }
         ";
         
@@ -326,12 +366,11 @@ mod tests {
         let user = ast.models.get("User").unwrap();
         
         // @map
-        let id_field = user.fields.iter().find(|f| f.name == "id").unwrap();
-        assert_eq!(id_field.attributes, vec![FieldAttribute::Id, FieldAttribute::Map("user_id".to_string())]);
+        let block_id = user.block_attributes.iter().find(|a| matches!(a, ModelAttribute::Id(_))).unwrap();
         
-        // @unique
+        // @unique and @map
         let email_field = user.fields.iter().find(|f| f.name == "email").unwrap();
-        assert_eq!(email_field.attributes, vec![FieldAttribute::Unique]);
+        assert_eq!(email_field.attributes, vec![FieldAttribute::Unique, FieldAttribute::Map("user_id".to_string())]);
         
         // @default("string")
         let bio_field = user.fields.iter().find(|f| f.name == "bio").unwrap();
@@ -349,7 +388,7 @@ mod tests {
         let posts_field = user.fields.iter().find(|f| f.name == "posts").unwrap();
         assert_eq!(posts_field.attributes, vec![FieldAttribute::Relation {
             name: None,
-            fields: vec!["id".to_string()],
+            fields: vec!["__id".to_string()],
             references: vec!["authorId".to_string()],
             on_delete: Some("Cascade".to_string()),
             deferrable: false,
@@ -361,14 +400,16 @@ mod tests {
     fn test_parse_relation_names() {
         let input = "
             model Post {
-                id: String @id
+
                 authorId: String
                 reviewerId: String
-                author: User @relation(\"AuthorToPost\", fields: [authorId], references: [id])
-                reviewer: User @relation(\"ReviewerToPost\", fields: [reviewerId], references: [id])
+                author: User @relation(\"AuthorToPost\", fields: [authorId], references: [__id])
+                reviewer: User @relation(\"ReviewerToPost\", fields: [reviewerId], references: [__id])
+    @@id(uuid)
             }
             model User {
-                id: String @id
+    @@id(uuid)
+
             }
         ";
         
@@ -379,7 +420,7 @@ mod tests {
         assert_eq!(author_field.attributes, vec![FieldAttribute::Relation {
             name: Some("AuthorToPost".to_string()),
             fields: vec!["authorId".to_string()],
-            references: vec!["id".to_string()],
+            references: vec!["__id".to_string()],
             on_delete: None,
             deferrable: false,
             column: None,
@@ -389,7 +430,7 @@ mod tests {
         assert_eq!(reviewer_field.attributes, vec![FieldAttribute::Relation {
             name: Some("ReviewerToPost".to_string()),
             fields: vec!["reviewerId".to_string()],
-            references: vec!["id".to_string()],
+            references: vec!["__id".to_string()],
             on_delete: None,
             deferrable: false,
             column: None,
@@ -400,18 +441,16 @@ mod tests {
     fn test_parse_optional_fields() {
         let input = "
             model User {
-                id: String @id
+
                 bio: String?
-                manager: User? @relation(fields: [managerId], references: [id])
+                manager: User? @relation(fields: [managerId], references: [__id])
                 managerId: String?
+    @@id(uuid)
             }
         ";
         
         let ast = parse_schema(input).unwrap();
         let user = ast.models.get("User").unwrap();
-        
-        let id_field = user.fields.iter().find(|f| f.name == "id").unwrap();
-        assert!(!id_field.is_optional);
         
         let bio_field = user.fields.iter().find(|f| f.name == "bio").unwrap();
         assert!(bio_field.is_optional);
@@ -431,9 +470,11 @@ mod tests {
         let schema_str = r#"
             base Timestamped {
                 createdAt: DateTime
+    @@id(uuid)
             }
             base Record extends Timestamped {
-                id: String @id
+    @@id(uuid)
+
             }
             model User extends Record, Timestamped {
                 name: String
@@ -465,7 +506,7 @@ mod tests {
     #[test]
     fn test_parse_base_trailing_commas_and_whitespace() {
         let schema_str = r#"
-            base A { id: String }
+            base A { id: String @@id(uuid) }
             base B extends A, {
                 name: String
             }
@@ -485,9 +526,10 @@ mod tests {
     #[test]
     fn test_parse_empty_base_and_single_inheritance() {
         let schema_str = r#"
-            base Empty {}
+            base Empty { @@id(uuid)}
             base Single extends Empty {
                 id: String
+    @@id(uuid)
             }
         "#;
         
@@ -521,15 +563,5 @@ mod tests {
         assert!(parse_schema(schema_str).is_err());
     }
 
-    #[test]
-    fn test_parse_base_negative_block_attributes() {
-        // block_attr `@@index` is valid on models, but deliberately omitted from `base_def`
-        let schema_str = r#"
-            base InvalidBase {
-                id: String
-                @@index([id])
-            }
-        "#;
-        assert!(parse_schema(schema_str).is_err());
-    }
+
 }

@@ -8,33 +8,33 @@ fn setup_db() -> Connection {
     
     conn.execute_batch("
         CREATE TABLE User (
-            id TEXT PRIMARY KEY,
+            __id TEXT PRIMARY KEY,
             content_type TEXT, -- Polymorphic discriminator
             content_id TEXT    -- Polymorphic reference
         );
         CREATE TABLE Post (
-            id TEXT PRIMARY KEY,
+            __id TEXT PRIMARY KEY,
             title TEXT NOT NULL
         );
         CREATE TABLE Video (
-            id TEXT PRIMARY KEY,
+            __id TEXT PRIMARY KEY,
             url TEXT NOT NULL
         );
         
-        INSERT INTO Post (id, title) VALUES ('p1', 'Hello World');
-        INSERT INTO Video (id, url) VALUES ('v1', 'http://example.com/video');
+        INSERT INTO Post (__id, title) VALUES ('p1', 'Hello World');
+        INSERT INTO Video (__id, url) VALUES ('v1', 'http://example.com/video');
         
         -- User 1 points to a Post
-        INSERT INTO User (id, content_type, content_id) VALUES ('u1', 'Post', 'p1');
+        INSERT INTO User (__id, content_type, content_id) VALUES ('u1', 'Post', 'p1');
         
         -- User 2 points to a Video
-        INSERT INTO User (id, content_type, content_id) VALUES ('u2', 'Video', 'v1');
+        INSERT INTO User (__id, content_type, content_id) VALUES ('u2', 'Video', 'v1');
         
         -- User 3 points to NULL (empty)
-        INSERT INTO User (id, content_type, content_id) VALUES ('u3', NULL, NULL);
+        INSERT INTO User (__id, content_type, content_id) VALUES ('u3', NULL, NULL);
 
         -- User 4 points to an unknown discriminator
-        INSERT INTO User (id, content_type, content_id) VALUES ('u4', 'UnknownType', '99');
+        INSERT INTO User (__id, content_type, content_id) VALUES ('u4', 'UnknownType', '99');
     ").unwrap();
     
     conn
@@ -42,7 +42,7 @@ fn setup_db() -> Connection {
 
 fn build_query() -> QueryNode {
     let post_fragment = QueryNode {
-        primary_key: "id".to_string(),
+        primary_key: "__id".to_string(),
         source: query_compiler::ir::QueryIrSource::Table("Post".to_string()),
         alias: "t1".to_string(),
         selections: vec![SelectField::Scalar("title".to_string())],
@@ -52,7 +52,7 @@ fn build_query() -> QueryNode {
     };
     
     let video_fragment = QueryNode {
-        primary_key: "id".to_string(),
+        primary_key: "__id".to_string(),
         source: query_compiler::ir::QueryIrSource::Table("Video".to_string()),
         alias: "t2".to_string(),
         selections: vec![SelectField::Scalar("url".to_string())],
@@ -66,11 +66,11 @@ fn build_query() -> QueryNode {
     fragments.insert("Video".to_string(), video_fragment);
     
     QueryNode {
-        primary_key: "id".to_string(),
+        primary_key: "__id".to_string(),
         source: query_compiler::ir::QueryIrSource::Table("User".to_string()),
         alias: "t0".to_string(),
         selections: vec![
-            SelectField::Scalar("id".to_string()),
+            SelectField::Scalar("__id".to_string()),
             SelectField::Polymorphic {
                 field_name: "content".to_string(),
                 is_list: false,
@@ -85,7 +85,7 @@ fn build_query() -> QueryNode {
 
 fn fetch_payload(conn: &Connection, query: &QueryNode, user_id: &str) -> String {
     let mut scoped_query = query.clone();
-    scoped_query.filters = Some(WhereClause::Field("id".to_string(), WhereCondition::Eq(user_id.to_string())));
+    scoped_query.filters = Some(WhereClause::Field("__id".to_string(), WhereCondition::Eq(user_id.to_string())));
     
     let sql = compile_select(&scoped_query, None);
     
@@ -109,7 +109,7 @@ fn test_e2e_single_union_standard_hydration() {
     let json: serde_json::Value = serde_json::from_str(&payload).unwrap();
     let user = &json.as_array().unwrap()[0];
     
-    assert_eq!(user["id"], "u1");
+    assert_eq!(user["__id"], "u1");
     assert_eq!(user["content"]["title"], "Hello World");
 
     // Test Video hydration
@@ -117,7 +117,7 @@ fn test_e2e_single_union_standard_hydration() {
     let json2: serde_json::Value = serde_json::from_str(&payload2).unwrap();
     let user2 = &json2.as_array().unwrap()[0];
 
-    assert_eq!(user2["id"], "u2");
+    assert_eq!(user2["__id"], "u2");
     assert_eq!(user2["content"]["url"], "http://example.com/video");
 }
 
@@ -130,7 +130,7 @@ fn test_e2e_single_union_empty_state() {
     let json: serde_json::Value = serde_json::from_str(&payload).unwrap();
     let user = &json.as_array().unwrap()[0];
     
-    assert_eq!(user["id"], "u3");
+    assert_eq!(user["__id"], "u3");
     assert!(user["content"].is_null());
 }
 
@@ -143,6 +143,6 @@ fn test_e2e_single_union_legacy_discriminator() {
     let json: serde_json::Value = serde_json::from_str(&payload).unwrap();
     let user = &json.as_array().unwrap()[0];
     
-    assert_eq!(user["id"], "u4");
+    assert_eq!(user["__id"], "u4");
     assert!(user["content"].is_null()); // Should gracefully fallback to NULL
 }

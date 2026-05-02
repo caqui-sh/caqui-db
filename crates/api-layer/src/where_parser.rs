@@ -129,7 +129,7 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
                     let mut is_valid_target = false;
                     if let Some(union_targets) = ast.unions.get(target_name) {
                         is_valid_target = union_targets.contains(specific_target);
-                    } else if let Some(target_base) = target_model_def.resolved_bases.iter().find(|b| *b == target_name) {
+                    } else if let Some(_target_base) = target_model_def.resolved_bases.iter().find(|b| *b == target_name) {
                         is_valid_target = true;
                     }
                     

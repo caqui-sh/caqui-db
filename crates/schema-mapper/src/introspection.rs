@@ -46,9 +46,6 @@ pub fn introspect_table_columns(conn: &Connection, table_name: &str) -> Result<H
     
     let mut col_map = HashMap::new();
     for col in columns.filter_map(Result::ok) {
-        if col.name.starts_with("__") {
-            continue;
-        }
         col_map.insert(col.name.clone(), col);
     }
     
@@ -65,7 +62,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute(
             "CREATE TABLE User (
-                id TEXT PRIMARY KEY,
+                __id TEXT PRIMARY KEY,
                 age INTEGER NOT NULL DEFAULT 18,
                 name TEXT
             )",
@@ -79,7 +76,7 @@ mod tests {
         let columns = introspect_table_columns(&conn, "User").unwrap();
         assert_eq!(columns.len(), 3);
 
-        let id_col = columns.get("id").unwrap();
+        let id_col = columns.get("__id").unwrap();
         assert_eq!(id_col.sqlite_type, "TEXT");
         assert!(id_col.is_pk);
         assert!(!id_col.not_null); // SQLite PRIMARY KEY does not imply NOT NULL in PRAGMA table_info by default unless explicitly specified
@@ -102,7 +99,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute(
             "CREATE TABLE Developer (
-                id TEXT PRIMARY KEY,
+                __id TEXT PRIMARY KEY,
                 name TEXT,
                 __Employee INTEGER DEFAULT 1 NOT NULL,
                 __Human INTEGER DEFAULT 1 NOT NULL
@@ -112,11 +109,11 @@ mod tests {
 
         let columns = introspect_table_columns(&conn, "Developer").unwrap();
         
-        // Assert that only id and name are captured, synthetics are ignored
-        assert_eq!(columns.len(), 2);
-        assert!(columns.contains_key("id"));
+        // Assert that synthetics are now included
+        assert_eq!(columns.len(), 4);
+        assert!(columns.contains_key("__id"));
         assert!(columns.contains_key("name"));
-        assert!(!columns.contains_key("__Employee"));
-        assert!(!columns.contains_key("__Human"));
+        assert!(columns.contains_key("__Employee"));
+        assert!(columns.contains_key("__Human"));
     }
 }

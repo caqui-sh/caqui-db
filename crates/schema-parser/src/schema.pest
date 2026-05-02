@@ -1,7 +1,7 @@
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }
 
-ident      = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+ident      = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Differentiate scalar primitives vs custom types
 scalar     = { "String" | "Int" | "Float" | "Boolean" | "DateTime" }
@@ -30,8 +30,9 @@ block_attr  = { "@@" ~ ident ~ attr_args? }
 
 field_def  = { ident ~ ":" ~ field_type ~ field_attr* }
 extends_clause = { "extends" ~ ident ~ ("," ~ ident)* ~ ","? }
-base_def   = { "base" ~ ident ~ extends_clause? ~ "{" ~ field_def* ~ "}" }
-model_def  = { "model" ~ ident ~ extends_clause? ~ "{" ~ field_def* ~ block_attr* ~ "}" }
+body_item  = _{ field_def | block_attr }
+base_def   = { "base" ~ ident ~ extends_clause? ~ "{" ~ body_item* ~ "}" }
+model_def  = { "model" ~ ident ~ extends_clause? ~ "{" ~ body_item* ~ "}" }
 
 // Capture explicit Polymorphic Unions (e.g., union SearchResult = Article | User)
 union_def  = { "union" ~ ident ~ "=" ~ ident ~ ("|" ~ ident)* }

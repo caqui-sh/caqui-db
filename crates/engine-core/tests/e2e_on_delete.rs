@@ -33,32 +33,36 @@ async fn test_e2e_on_delete() {
     // 2. Define schema
     let schema = "
         model User {
-            id: String @id
+
             name: String
             posts: Post[]
             profiles: Profile[]
             comments: Comment[]
+    @@id(uuid)
         }
         
         model Post {
-            id: String @id
+
             title: String
             userId: String
-            user: User @relation(fields: [userId], references: [id], onDelete: Cascade)
+            user: User @relation(fields: [userId], references: [__id], onDelete: Cascade)
+    @@id(uuid)
         }
         
         model Profile {
-            id: String @id
+
             bio: String
             userId: String
-            user: User @relation(fields: [userId], references: [id], onDelete: SetNull)
+            user: User @relation(fields: [userId], references: [__id], onDelete: SetNull)
+    @@id(uuid)
         }
         
         model Comment {
-            id: String @id
+
             text: String
             userId: String
-            user: User @relation(fields: [userId], references: [id], onDelete: Restrict)
+            user: User @relation(fields: [userId], references: [__id], onDelete: Restrict)
+    @@id(uuid)
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -74,14 +78,14 @@ async fn test_e2e_on_delete() {
     // 5. Test Cascade
     let conn = pool.get().await.unwrap();
     conn.interact(|db| {
-        db.execute("INSERT INTO User (id, name) VALUES ('u1', 'Alice')", []).unwrap();
-        db.execute("INSERT INTO Post (id, title, userId) VALUES ('p1', 'Post 1', 'u1')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name) VALUES ('u1', 'Alice')", []).unwrap();
+        db.execute("INSERT INTO Post (__id, title, userId) VALUES ('p1', 'Post 1', 'u1')", []).unwrap();
         
         // Delete user
-        db.execute("DELETE FROM User WHERE id = 'u1'", []).unwrap();
+        db.execute("DELETE FROM User WHERE __id = 'u1'", []).unwrap();
         
         // Assert post is gone
-        let mut stmt = db.prepare("SELECT count(*) FROM Post WHERE id = 'p1'").unwrap();
+        let mut stmt = db.prepare("SELECT count(*) FROM Post WHERE __id = 'p1'").unwrap();
         let count: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
         assert_eq!(count, 0, "Post should have been cascaded");
         Ok::<(), rusqlite::Error>(())
@@ -90,14 +94,14 @@ async fn test_e2e_on_delete() {
     // 6. Test SetNull
     let conn = pool.get().await.unwrap();
     conn.interact(|db| {
-        db.execute("INSERT INTO User (id, name) VALUES ('u2', 'Bob')", []).unwrap();
-        db.execute("INSERT INTO Profile (id, bio, userId) VALUES ('pr1', 'Bio 1', 'u2')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name) VALUES ('u2', 'Bob')", []).unwrap();
+        db.execute("INSERT INTO Profile (__id, bio, userId) VALUES ('pr1', 'Bio 1', 'u2')", []).unwrap();
         
         // Delete user
-        db.execute("DELETE FROM User WHERE id = 'u2'", []).unwrap();
+        db.execute("DELETE FROM User WHERE __id = 'u2'", []).unwrap();
         
         // Assert profile exists but userId is NULL
-        let mut stmt = db.prepare("SELECT userId FROM Profile WHERE id = 'pr1'").unwrap();
+        let mut stmt = db.prepare("SELECT userId FROM Profile WHERE __id = 'pr1'").unwrap();
         let user_id: Option<String> = stmt.query_row([], |row| row.get(0)).unwrap();
         assert_eq!(user_id, None, "Profile userId should have been set to NULL");
         Ok::<(), rusqlite::Error>(())
@@ -106,11 +110,11 @@ async fn test_e2e_on_delete() {
     // 7. Test Restrict
     let conn = pool.get().await.unwrap();
     conn.interact(|db| {
-        db.execute("INSERT INTO User (id, name) VALUES ('u3', 'Charlie')", []).unwrap();
-        db.execute("INSERT INTO Comment (id, text, userId) VALUES ('c1', 'Comment 1', 'u3')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name) VALUES ('u3', 'Charlie')", []).unwrap();
+        db.execute("INSERT INTO Comment (__id, text, userId) VALUES ('c1', 'Comment 1', 'u3')", []).unwrap();
         
         // Attempt to delete user
-        let result = db.execute("DELETE FROM User WHERE id = 'u3'", []);
+        let result = db.execute("DELETE FROM User WHERE __id = 'u3'", []);
         assert!(result.is_err(), "Deletion should have been restricted");
         
         if let Err(rusqlite::Error::SqliteFailure(err, _)) = result {
@@ -120,7 +124,7 @@ async fn test_e2e_on_delete() {
         }
         
         // Assert user still exists
-        let mut stmt = db.prepare("SELECT count(*) FROM User WHERE id = 'u3'").unwrap();
+        let mut stmt = db.prepare("SELECT count(*) FROM User WHERE __id = 'u3'").unwrap();
         let count: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
         assert_eq!(count, 1, "User should still exist");
         Ok::<(), rusqlite::Error>(())
@@ -143,11 +147,12 @@ async fn test_e2e_self_referential_cascade() {
 
     let schema = "
         model Employee {
-            id: String @id
+
             name: String
             managerId: String?
-            manager: Employee? @relation(\"Management\", fields: [managerId], references: [id], onDelete: Cascade)
+            manager: Employee? @relation(\"Management\", fields: [managerId], references: [__id], onDelete: Cascade)
             subordinates: Employee[] @relation(\"Management\")
+    @@id(uuid)
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -161,32 +166,32 @@ async fn test_e2e_self_referential_cascade() {
     let conn = pool.get().await.unwrap();
     conn.interact(|db| {
         // CEO
-        db.execute("INSERT INTO Employee (id, name) VALUES ('ceo', 'CEO')", []).unwrap();
+        db.execute("INSERT INTO Employee (__id, name) VALUES ('ceo', 'CEO')", []).unwrap();
         // Manager (reports to CEO)
-        db.execute("INSERT INTO Employee (id, name, managerId) VALUES ('mgr', 'Manager', 'ceo')", []).unwrap();
+        db.execute("INSERT INTO Employee (__id, name, managerId) VALUES ('mgr', 'Manager', 'ceo')", []).unwrap();
         // Intern (reports to Manager)
-        db.execute("INSERT INTO Employee (id, name, managerId) VALUES ('intern', 'Intern', 'mgr')", []).unwrap();
+        db.execute("INSERT INTO Employee (__id, name, managerId) VALUES ('intern', 'Intern', 'mgr')", []).unwrap();
         // Sibling Manager (reports to CEO)
-        db.execute("INSERT INTO Employee (id, name, managerId) VALUES ('mgr2', 'Manager 2', 'ceo')", []).unwrap();
+        db.execute("INSERT INTO Employee (__id, name, managerId) VALUES ('mgr2', 'Manager 2', 'ceo')", []).unwrap();
         
         // Delete Manager 1
-        db.execute("DELETE FROM Employee WHERE id = 'mgr'", []).unwrap();
+        db.execute("DELETE FROM Employee WHERE __id = 'mgr'", []).unwrap();
         
         // Assert Intern was cascaded
-        let mut stmt = db.prepare("SELECT count(*) FROM Employee WHERE id = 'intern'").unwrap();
+        let mut stmt = db.prepare("SELECT count(*) FROM Employee WHERE __id = 'intern'").unwrap();
         let intern_count: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
         assert_eq!(intern_count, 0, "Intern should have been cascaded");
         
         // Assert Manager 2 is untouched
-        let mut stmt = db.prepare("SELECT count(*) FROM Employee WHERE id = 'mgr2'").unwrap();
+        let mut stmt = db.prepare("SELECT count(*) FROM Employee WHERE __id = 'mgr2'").unwrap();
         let mgr2_count: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
         assert_eq!(mgr2_count, 1, "Manager 2 should be untouched");
         
         // Delete CEO
-        db.execute("DELETE FROM Employee WHERE id = 'ceo'", []).unwrap();
+        db.execute("DELETE FROM Employee WHERE __id = 'ceo'", []).unwrap();
         
         // Assert Manager 2 is cascaded
-        let mut stmt = db.prepare("SELECT count(*) FROM Employee WHERE id = 'mgr2'").unwrap();
+        let mut stmt = db.prepare("SELECT count(*) FROM Employee WHERE __id = 'mgr2'").unwrap();
         let mgr2_count_after: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
         assert_eq!(mgr2_count_after, 0, "Manager 2 should have been cascaded when CEO was deleted");
         
@@ -208,14 +213,15 @@ async fn test_e2e_polymorphic_cascade_delete() {
     run_cmd(cmd);
 
     let schema = "
-        base Content { id: String @id }
-        model Article extends Content { title: String }
-        model Video extends Content { duration: Int }
+        base Content { @@id(uuid) }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
         
         model Comment {
-            id: String @id
+
             text: String
             parent: Content
+    @@id(uuid)
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -226,10 +232,10 @@ async fn test_e2e_polymorphic_cascade_delete() {
 
     let payload = serde_json::json!({
         "data": {
-            "id": "c1",
+            "__id": "c1",
             "text": "Great article!",
             "parent": {
-                "Article": { "create": { "id": "a1", "title": "Polymorphic Writes" } }
+                "Article": { "create": { "__id": "a1", "title": "Polymorphic Writes" } }
             }
         }
     });
@@ -251,7 +257,7 @@ async fn test_e2e_polymorphic_cascade_delete() {
     assert_eq!(count_before, 1, "Comment should exist");
 
     let article_id: String = conn.interact(|db| {
-        db.query_row("SELECT id FROM Article LIMIT 1", [], |r| r.get(0))
+        db.query_row("SELECT __id FROM Article LIMIT 1", [], |r| r.get(0))
     }).await.unwrap().unwrap();
     
     println!("ARTICLE ID: {}", article_id);
@@ -259,7 +265,7 @@ async fn test_e2e_polymorphic_cascade_delete() {
     // Delete the Article
     let delete_payload = serde_json::json!({
         "where": {
-            "id": article_id
+            "__id": article_id
         }
     });
     

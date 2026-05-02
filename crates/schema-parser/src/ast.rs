@@ -12,6 +12,7 @@ pub struct BaseNode {
     pub name: String,
     pub fields: Vec<FieldNode>,
     pub extends: Vec<String>,
+    pub block_attributes: Vec<ModelAttribute>,
     // --- COMPILER STATE (Hydrated in Phase 2) ---
     pub resolved_fields: Vec<FieldNode>,
     pub resolved_bases: BTreeSet<String>,
@@ -22,9 +23,15 @@ pub struct ModelNode {
     pub name: String,
     pub fields: Vec<FieldNode>,
     pub extends: Vec<String>,
+    pub block_attributes: Vec<ModelAttribute>,
     // --- COMPILER STATE (Hydrated in Phase 2) ---
     pub resolved_fields: Vec<FieldNode>,
     pub resolved_bases: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ModelAttribute {
+    Id(DefaultFunc),
 }
 
 #[derive(Debug, Clone, PartialEq)]

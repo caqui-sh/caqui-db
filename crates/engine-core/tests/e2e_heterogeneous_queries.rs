@@ -26,9 +26,9 @@ async fn test_e2e_polymorphic_union_reads() {
     run_cmd(git_init);
 
     let schema = r#"
-        base Employee { id: String @id department: String }
-        model Engineer extends Employee { language: String }
-        model Manager extends Employee { directReports: Int }
+        base Employee { department: String @@id(uuid) }
+        model Engineer extends Employee { language: String @@id(uuid) }
+        model Manager extends Employee { directReports: Int @@id(uuid) }
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
 
@@ -44,15 +44,15 @@ async fn test_e2e_polymorphic_union_reads() {
     ).unwrap();
 
     // Seed data
-    conn.execute("INSERT INTO Engineer (id, department, language) VALUES ('1', 'Engineering', 'Rust')", []).unwrap();
-    conn.execute("INSERT INTO Manager (id, department, directReports) VALUES ('2', 'Sales', 5)", []).unwrap();
+    conn.execute("INSERT INTO Engineer (__id, department, language) VALUES ('1', 'Engineering', 'Rust')", []).unwrap();
+    conn.execute("INSERT INTO Manager (__id, department, directReports) VALUES ('2', 'Sales', 5)", []).unwrap();
 
     // Query abstract base using IR compiler natively
     let ast = schema_parser::parser::parse_schema(schema).unwrap();
     let ast = schema_parser::validation::validate_schema(ast).unwrap();
 
     let payload = serde_json::json!({
-        "select": { "id": true, "department": true }
+        "select": { "__id": true, "department": true }
     });
 
     
@@ -103,14 +103,15 @@ async fn test_e2e_nested_polymorphic_relations() {
     run_cmd(git_init);
 
     let schema = r#"
-        base Employee { id: String @id teamId: String }
-        model Engineer extends Employee { language: String }
-        model Manager extends Employee { directReports: Int }
+        base Employee { teamId: String @@id(uuid) }
+        model Engineer extends Employee { language: String @@id(uuid) }
+        model Manager extends Employee { directReports: Int @@id(uuid) }
         
         model Team {
-            id: String @id
+
             name: String
             members: Employee[] @relation("TeamMembers")
+    @@id(uuid)
         }
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -127,9 +128,9 @@ async fn test_e2e_nested_polymorphic_relations() {
     ).unwrap();
 
     // Seed Data
-    conn.execute("INSERT INTO Team (id, name) VALUES ('t1', 'Platform')", []).unwrap();
-    conn.execute("INSERT INTO Engineer (id, teamId, language) VALUES ('e1', 't1', 'Rust')", []).unwrap();
-    conn.execute("INSERT INTO Manager (id, teamId, directReports) VALUES ('m1', 't1', 5)", []).unwrap();
+    conn.execute("INSERT INTO Team (__id, name) VALUES ('t1', 'Platform')", []).unwrap();
+    conn.execute("INSERT INTO Engineer (__id, teamId, language) VALUES ('e1', 't1', 'Rust')", []).unwrap();
+    conn.execute("INSERT INTO Manager (__id, teamId, directReports) VALUES ('m1', 't1', 5)", []).unwrap();
 
     let ast = schema_parser::parser::parse_schema(schema).unwrap();
     let ast = schema_parser::validation::validate_schema(ast).unwrap();
@@ -138,8 +139,8 @@ async fn test_e2e_nested_polymorphic_relations() {
         "select": { 
             "name": true,
             "members": {
-                "Engineer": { "select": { "id": true, "teamId": true, "language": true, "__kind": true } },
-                "Manager": { "select": { "id": true, "teamId": true, "directReports": true, "__kind": true } }
+                "Engineer": { "select": { "__id": true, "teamId": true, "language": true, "__kind": true } },
+                "Manager": { "select": { "__id": true, "teamId": true, "directReports": true, "__kind": true } }
             }
         }
     });
@@ -161,11 +162,11 @@ async fn test_e2e_nested_polymorphic_relations() {
     // We only care that the query succeeded. Full polymorphic traversal for bases without explicit FKs might need a separate relation linking table, but we proved it compiles
     if members.len() > 0 {
         let engineer = members.iter().find(|m| m.get("language").is_some()).unwrap();
-        assert_eq!(engineer["id"], "e1");
+        assert_eq!(engineer["__id"], "e1");
         assert_eq!(engineer["__kind"], "Engineer");
         
         let manager = members.iter().find(|m| m.get("directReports").is_some()).unwrap();
-        assert_eq!(manager["id"], "m1");
+        assert_eq!(manager["__id"], "m1");
         assert_eq!(manager["__kind"], "Manager");
     }
 }
@@ -183,14 +184,15 @@ async fn test_e2e_polymorphic_filtering() {
     run_cmd(git_init);
 
     let schema = r#"
-        base Content { id: String @id }
-        model Article extends Content { title: String }
-        model Video extends Content { duration: Int }
+        base Content { @@id(uuid) }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
         
         model Comment {
-            id: String @id
+
             text: String
             parent: Content
+    @@id(uuid)
         }
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -209,13 +211,13 @@ async fn test_e2e_polymorphic_filtering() {
 
     conn.execute_batch("
         BEGIN TRANSACTION;
-        INSERT INTO Article (id, title) VALUES ('a1', 'Match');
-        INSERT INTO Article (id, title) VALUES ('a2', 'No Match');
-        INSERT INTO Video (id, duration) VALUES ('v1', 120);
+        INSERT INTO Article (__id, title) VALUES ('a1', 'Match');
+        INSERT INTO Article (__id, title) VALUES ('a2', 'No Match');
+        INSERT INTO Video (__id, duration) VALUES ('v1', 120);
         
-        INSERT INTO Comment (id, text, parent_type, parent_id) VALUES ('c1', 'C1', 'Article', 'a1');
-        INSERT INTO Comment (id, text, parent_type, parent_id) VALUES ('c2', 'C2', 'Article', 'a2');
-        INSERT INTO Comment (id, text, parent_type, parent_id) VALUES ('c3', 'C3', 'Video', 'v1');
+        INSERT INTO Comment (__id, text, parent_type, parent_id) VALUES ('c1', 'C1', 'Article', 'a1');
+        INSERT INTO Comment (__id, text, parent_type, parent_id) VALUES ('c2', 'C2', 'Article', 'a2');
+        INSERT INTO Comment (__id, text, parent_type, parent_id) VALUES ('c3', 'C3', 'Video', 'v1');
         COMMIT;
     ").unwrap();
 
@@ -232,7 +234,7 @@ async fn test_e2e_polymorphic_filtering() {
             }
         },
         "select": {
-            "id": true,
+            "__id": true,
             "text": true
         }
     });
@@ -246,7 +248,7 @@ async fn test_e2e_polymorphic_filtering() {
     let rows: Vec<serde_json::Value> = serde_json::from_str(&raw_json_string).unwrap();
 
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0]["id"], "c1");
+    assert_eq!(rows[0]["__id"], "c1");
     assert_eq!(rows[0]["text"], "C1");
 }
 
@@ -263,10 +265,10 @@ async fn test_e2e_diamond_inheritance() {
     run_cmd(git_init);
 
     let schema = r#"
-        base Timestamped { createdAt: String }
-        base Node { id: String @id }
+        base Timestamped { createdAt: String @@id(uuid) }
+        base Node { @@id(uuid) }
         base Record extends Node, Timestamped {}
-        model Post extends Record { text: String }
+        model Post extends Record { text: String @@id(uuid) }
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
 
@@ -281,14 +283,14 @@ async fn test_e2e_diamond_inheritance() {
         rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
     ).unwrap();
 
-    conn.execute("INSERT INTO Post (id, createdAt, text) VALUES ('post_1', '2023-01-01', 'Deep Diamond')", []).unwrap();
+    conn.execute("INSERT INTO Post (__id, createdAt, text) VALUES ('post_1', '2023-01-01', 'Deep Diamond')", []).unwrap();
 
     let ast = schema_parser::parser::parse_schema(schema).unwrap();
     let ast = schema_parser::validation::validate_schema(ast).unwrap();
 
     // Query abstract Node
     let payload = serde_json::json!({
-        "select": { "id": true, "__Timestamped": true, "__Record": true, "__Node": true }
+        "select": { "__id": true, "__Timestamped": true, "__Record": true, "__Node": true }
     });
 
     
@@ -301,7 +303,7 @@ async fn test_e2e_diamond_inheritance() {
     let rows: Vec<serde_json::Value> = serde_json::from_str(&raw_json_string).unwrap();
 
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0]["id"], "post_1");
+    assert_eq!(rows[0]["__id"], "post_1");
     // Prove it successfully inherited the deep transitive bases!
     assert_eq!(rows[0]["__Node"], true);
     assert_eq!(rows[0]["__Timestamped"], true);

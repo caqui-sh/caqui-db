@@ -123,14 +123,8 @@ pub fn run_diff(old_ref: &str) {
             // Respect @map for table name if implemented, otherwise model name
             let table_name = model_name; 
             
-            // Find PK
-            let mut pk_field = "id".to_string();
-            for f in &new_model.fields {
-                if f.attributes.contains(&schema_parser::ast::FieldAttribute::Id) {
-                    pk_field = f.name.clone();
-                    break;
-                }
-            }
+            // Find PK (always __id now)
+            let pk_field = "__id".to_string();
             
             let mut table_exists_in_old = false;
             if let Ok(mut stmt) = db.prepare("SELECT 1 FROM old_db.sqlite_master WHERE type='table' AND name=?") {
@@ -140,6 +134,8 @@ pub fn run_diff(old_ref: &str) {
             // 1. Added
             // Actually we want all fields in json_object.
             let mut json_obj_args = Vec::new();
+            json_obj_args.push(format!("'__id'"));
+            json_obj_args.push(format!("\"__id\""));
             for f in &new_model.fields {
                 if let AstFieldType::Scalar(_) = f.field_type {
                     json_obj_args.push(format!("'{}'", f.name));
@@ -174,8 +170,7 @@ pub fn run_diff(old_ref: &str) {
                         if display_str.len() > 60 {
                             display_str = display_str[..60].to_string();
                         }
-                        report.added.push(format!("  \x1b[32m+ Inserted\x1b[0m (id: {}): {}...", id_val, display_str));
-                    }
+                        report.added.push(format!("  \x1b[32m+ Inserted\x1b[0m (__id: {}): {}...", id_val, display_str));                    }
                 }
             }
             
@@ -195,7 +190,7 @@ pub fn run_diff(old_ref: &str) {
                             if display_str.len() > 60 {
                                 display_str = display_str[..60].to_string();
                             }
-                            report.deleted.push(format!("  \x1b[31m- Deleted \x1b[0m (id: {}): {}...", id_val, display_str));
+                            report.deleted.push(format!("  \x1b[31m- Deleted \x1b[0m (__id: {}): {}...", id_val, display_str));
                         }
                     }
                 }
@@ -259,7 +254,7 @@ pub fn run_diff(old_ref: &str) {
                                         }
                                         
                                         if !mod_lines.is_empty() {
-                                            report.modified.push(format!("  \x1b[33m~ Modified\x1b[0m (id: {}):\n{}", id_val, mod_lines.join("\n")));
+                                            report.modified.push(format!("  \x1b[33m~ Modified\x1b[0m (__id: {}):\n{}", id_val, mod_lines.join("\n")));
                                         }
                                     }
                                 }

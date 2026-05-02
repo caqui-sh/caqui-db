@@ -8,33 +8,33 @@ fn setup_db() -> Connection {
     
     conn.execute_batch("
         CREATE TABLE User (
-            id TEXT PRIMARY KEY,
+            __id TEXT PRIMARY KEY,
             contents TEXT -- JSON array of polymorphic references
         );
         CREATE TABLE Post (
-            id TEXT PRIMARY KEY,
+            __id TEXT PRIMARY KEY,
             title TEXT NOT NULL
         );
         CREATE TABLE Video (
-            id TEXT PRIMARY KEY,
+            __id TEXT PRIMARY KEY,
             url TEXT NOT NULL
         );
         
-        INSERT INTO Post (id, title) VALUES ('p1', 'Hello World');
-        INSERT INTO Video (id, url) VALUES ('v1', 'http://example.com/video');
+        INSERT INTO Post (__id, title) VALUES ('p1', 'Hello World');
+        INSERT INTO Video (__id, url) VALUES ('v1', 'http://example.com/video');
         
         -- Scenario A: Standard Hydration
-        INSERT INTO User (id, contents) VALUES ('u1', '[{\"type\":\"Post\",\"id\":\"p1\"}, {\"type\":\"Video\",\"id\":\"v1\"}]');
+        INSERT INTO User (__id, contents) VALUES ('u1', '[{\"type\":\"Post\",\"__id\":\"p1\"}, {\"type\":\"Video\",\"__id\":\"v1\"}]');
         
         -- Scenario B: Empty State Execution (NULL)
-        INSERT INTO User (id, contents) VALUES ('u2', NULL);
+        INSERT INTO User (__id, contents) VALUES ('u2', NULL);
         
         -- Scenario C: Schema Evolution (Legacy/Unknown Discriminator)
-        INSERT INTO User (id, contents) VALUES ('u3', '[{\"type\":\"UnknownType\",\"id\":\"99\"}, {\"type\":\"Post\",\"id\":\"p1\"}]');
+        INSERT INTO User (__id, contents) VALUES ('u3', '[{\"type\":\"UnknownType\",\"__id\":\"99\"}, {\"type\":\"Post\",\"__id\":\"p1\"}]');
 
         -- Scenario D: Recursive Scoping
-        INSERT INTO User (id, contents) VALUES ('u4', '[{\"type\":\"User\",\"id\":\"u5\"}]');
-        INSERT INTO User (id, contents) VALUES ('u5', '[{\"type\":\"Post\",\"id\":\"p1\"}]');
+        INSERT INTO User (__id, contents) VALUES ('u4', '[{\"type\":\"User\",\"__id\":\"u5\"}]');
+        INSERT INTO User (__id, contents) VALUES ('u5', '[{\"type\":\"Post\",\"__id\":\"p1\"}]');
     ").unwrap();
     
     conn
@@ -42,7 +42,7 @@ fn setup_db() -> Connection {
 
 fn build_query() -> QueryNode {
     let post_fragment = QueryNode {
-        primary_key: "id".to_string(),
+        primary_key: "__id".to_string(),
         source: query_compiler::ir::QueryIrSource::Table("Post".to_string()),
         alias: "t1".to_string(),
         selections: vec![SelectField::Scalar("title".to_string())],
@@ -52,7 +52,7 @@ fn build_query() -> QueryNode {
     };
     
     let video_fragment = QueryNode {
-        primary_key: "id".to_string(),
+        primary_key: "__id".to_string(),
         source: query_compiler::ir::QueryIrSource::Table("Video".to_string()),
         alias: "t2".to_string(),
         selections: vec![SelectField::Scalar("url".to_string())],
@@ -66,11 +66,11 @@ fn build_query() -> QueryNode {
     fragments.insert("Video".to_string(), video_fragment);
     
     QueryNode {
-        primary_key: "id".to_string(),
+        primary_key: "__id".to_string(),
         source: query_compiler::ir::QueryIrSource::Table("User".to_string()),
         alias: "t0".to_string(),
         selections: vec![
-            SelectField::Scalar("id".to_string()),
+            SelectField::Scalar("__id".to_string()),
             SelectField::Polymorphic {
                 field_name: "contents".to_string(),
                 is_list: true,
@@ -85,7 +85,7 @@ fn build_query() -> QueryNode {
 
 fn fetch_payload(conn: &Connection, query: &QueryNode, user_id: &str) -> String {
     let mut scoped_query = query.clone();
-    scoped_query.filters = Some(WhereClause::Field("id".to_string(), WhereCondition::Eq(user_id.to_string())));
+    scoped_query.filters = Some(WhereClause::Field("__id".to_string(), WhereCondition::Eq(user_id.to_string())));
     
     let sql = compile_select(&scoped_query, None);
     
@@ -109,7 +109,7 @@ fn test_e2e_union_array_standard_hydration() {
     let json: serde_json::Value = serde_json::from_str(&payload).unwrap();
     let user = &json.as_array().unwrap()[0];
     
-    assert_eq!(user["id"], "u1");
+    assert_eq!(user["__id"], "u1");
     let contents = user["contents"].as_array().unwrap();
     assert_eq!(contents.len(), 2);
     assert_eq!(contents[0]["title"], "Hello World");
@@ -125,7 +125,7 @@ fn test_e2e_union_array_empty_state() {
     let json: serde_json::Value = serde_json::from_str(&payload).unwrap();
     let user = &json.as_array().unwrap()[0];
     
-    assert_eq!(user["id"], "u2");
+    assert_eq!(user["__id"], "u2");
     
     // SQLite json_each(NULL) returns zero rows, so json_group_array over an empty set
     // returns a string containing an empty array "[]", or null. We parse it:
@@ -144,7 +144,7 @@ fn test_e2e_union_array_legacy_discriminator() {
     let json: serde_json::Value = serde_json::from_str(&payload).unwrap();
     let user = &json.as_array().unwrap()[0];
     
-    assert_eq!(user["id"], "u3");
+    assert_eq!(user["__id"], "u3");
     let contents = user["contents"].as_array().unwrap();
     
     assert_eq!(contents.len(), 2);
@@ -155,7 +155,7 @@ fn test_e2e_union_array_legacy_discriminator() {
 
 fn build_recursive_query() -> QueryNode {
     let post_fragment = QueryNode {
-        primary_key: "id".to_string(),
+        primary_key: "__id".to_string(),
         source: query_compiler::ir::QueryIrSource::Table("Post".to_string()),
         alias: "t2".to_string(), // deep alias
         selections: vec![SelectField::Scalar("title".to_string())],
@@ -168,11 +168,11 @@ fn build_recursive_query() -> QueryNode {
     inner_fragments.insert("Post".to_string(), post_fragment);
     
     let user_fragment = QueryNode {
-        primary_key: "id".to_string(),
+        primary_key: "__id".to_string(),
         source: query_compiler::ir::QueryIrSource::Table("User".to_string()),
         alias: "t1".to_string(), // inner alias
         selections: vec![
-            SelectField::Scalar("id".to_string()),
+            SelectField::Scalar("__id".to_string()),
             SelectField::Polymorphic {
                 field_name: "contents".to_string(),
                 is_list: true,
@@ -188,11 +188,11 @@ fn build_recursive_query() -> QueryNode {
     outer_fragments.insert("User".to_string(), user_fragment);
     
     QueryNode {
-        primary_key: "id".to_string(),
+        primary_key: "__id".to_string(),
         source: query_compiler::ir::QueryIrSource::Table("User".to_string()),
         alias: "t0".to_string(),
         selections: vec![
-            SelectField::Scalar("id".to_string()),
+            SelectField::Scalar("__id".to_string()),
             SelectField::Polymorphic {
                 field_name: "contents".to_string(),
                 is_list: true,
@@ -214,12 +214,12 @@ fn test_e2e_union_array_recursive_scoping() {
     let json: serde_json::Value = serde_json::from_str(&payload).unwrap();
     let user = &json.as_array().unwrap()[0];
     
-    assert_eq!(user["id"], "u4");
+    assert_eq!(user["__id"], "u4");
     let contents = user["contents"].as_array().unwrap();
     assert_eq!(contents.len(), 1);
     
     let inner_user = &contents[0];
-    assert_eq!(inner_user["id"], "u5");
+    assert_eq!(inner_user["__id"], "u5");
     
     let inner_contents = inner_user["contents"].as_array().unwrap();
     assert_eq!(inner_contents.len(), 1);

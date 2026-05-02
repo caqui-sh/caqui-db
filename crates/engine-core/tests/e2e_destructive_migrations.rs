@@ -33,8 +33,9 @@ async fn test_e2e_destructive_migrations() {
     // 2. Define schema with a String column
     let schema_v1 = "
         model Config {
-            id: String @id
+
             value: String
+    @@id(uuid)
         }
     ";
     fs::write(workspace.join("schema.cq"), schema_v1).unwrap();
@@ -48,16 +49,17 @@ async fn test_e2e_destructive_migrations() {
     let pool = api_layer::db::create_pool(&db_uri);
     let conn = pool.get().await.unwrap();
     conn.interact(|db| {
-        db.execute("INSERT INTO Config (id, value) VALUES ('c1', 'hello_world')", []).unwrap();
-        db.execute("INSERT INTO Config (id, value) VALUES ('c2', '42')", []).unwrap();
+        db.execute("INSERT INTO Config (__id, value) VALUES ('c1', 'hello_world')", []).unwrap();
+        db.execute("INSERT INTO Config (__id, value) VALUES ('c2', '42')", []).unwrap();
         Ok::<(), rusqlite::Error>(())
     }).await.unwrap().unwrap();
 
     // 5. Evolve schema: Change `value` from String to Int
     let schema_v2 = "
         model Config {
-            id: String @id
+
             value: Int
+    @@id(uuid)
         }
     ";
     fs::write(workspace.join("schema.cq"), schema_v2).unwrap();
@@ -79,7 +81,7 @@ async fn test_e2e_destructive_migrations() {
 
     let conn2 = pool.get().await.unwrap();
     conn2.interact(|db| {
-        let mut stmt = db.prepare("SELECT value FROM Config ORDER BY id").unwrap();
+        let mut stmt = db.prepare("SELECT value FROM Config ORDER BY __id").unwrap();
         let rows: Vec<String> = stmt.query_map([], |row| {
             let val: rusqlite::types::Value = row.get(0)?;
             match val {

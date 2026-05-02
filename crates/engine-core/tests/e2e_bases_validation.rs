@@ -1,9 +1,7 @@
-use std::process::{Command, Stdio};
+use std::process::{Command};
 use std::env;
 use std::fs;
 use tempfile::tempdir;
-use std::time::Duration;
-use std::thread;
 
 fn run_cmd(mut cmd: Command) -> String {
     let output = cmd.output().unwrap_or_else(|e| panic!("Failed to execute process: {:?}", e));
@@ -32,8 +30,8 @@ fn test_e2e_rejects_cyclic_inheritance() {
     let caqui_bin = env!("CARGO_BIN_EXE_caqui");
 
     let schema = r#"
-        base Node extends Entity {}
-        base Entity extends Node {}
+        base Node extends Entity { @@id(uuid)}
+        base Entity extends Node { @@id(uuid)}
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
 
@@ -50,8 +48,8 @@ fn test_e2e_rejects_model_extending_model() {
     let caqui_bin = env!("CARGO_BIN_EXE_caqui");
 
     let schema = r#"
-        model User { id: String @id }
-        model Admin extends User { role: String }
+        model User { @@id(uuid) }
+        model Admin extends User { role: String @@id(uuid) }
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
 
@@ -68,8 +66,8 @@ fn test_e2e_rejects_bases_in_unions() {
     let caqui_bin = env!("CARGO_BIN_EXE_caqui");
 
     let schema = r#"
-        base Timestamped { createdAt: String }
-        model Task { id: String @id }
+        base Timestamped { createdAt: String @@id(uuid) }
+        model Task { @@id(uuid) }
         union SearchResult = Task | Timestamped
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -93,9 +91,9 @@ fn test_e2e_polymorphic_unique_isolation() {
 
     // Setup schema with unique trait
     let schema = r#"
-        base User { id: String @id email: String @unique }
-        model Admin extends User { role: String }
-        model Customer extends User { balance: Int }
+        base User { email: String @unique @@id(uuid) }
+        model Admin extends User { role: String @@id(uuid) }
+        model Customer extends User { balance: Int @@id(uuid) }
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
 
@@ -114,13 +112,13 @@ fn test_e2e_polymorphic_unique_isolation() {
     // We should be able to insert 'alice@test.com' into both Admin and Customer because
     // abstract bases don't have global physical tables.
     
-    conn.execute("INSERT INTO Admin (id, email, role) VALUES ('1', 'alice@test.com', 'super')", []).expect("Failed to insert Admin");
+    conn.execute("INSERT INTO Admin (__id, email, role) VALUES ('1', 'alice@test.com', 'super')", []).expect("Failed to insert Admin");
     
     // This MUST succeed! If it fails with a Unique Constraint error, our DDL generation
     // incorrectly tried to enforce uniqueness globally via a shared table/index instead of per-model.
-    conn.execute("INSERT INTO Customer (id, email, balance) VALUES ('2', 'alice@test.com', 100)", []).expect("Failed to insert Customer with identical 'unique' trait value");
+    conn.execute("INSERT INTO Customer (__id, email, balance) VALUES ('2', 'alice@test.com', 100)", []).expect("Failed to insert Customer with identical 'unique' trait value");
 
     // Sanity check: Inserting a second Admin with the same email MUST fail
-    let res = conn.execute("INSERT INTO Admin (id, email, role) VALUES ('3', 'alice@test.com', 'moderator')", []);
+    let res = conn.execute("INSERT INTO Admin (__id, email, role) VALUES ('3', 'alice@test.com', 'moderator')", []);
     assert!(res.is_err(), "Unique constraint failed to apply to the concrete table natively");
 }

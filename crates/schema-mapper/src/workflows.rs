@@ -91,7 +91,7 @@ pub fn migrate_dev(desired: &[PhysicalTable], db_path: &str, migrations_dir: &st
     
     // Insert timestamp into tracking table
     live_conn.execute(
-        "CREATE TABLE IF NOT EXISTS _engine_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, applied_at DATETIME DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE TABLE IF NOT EXISTS _engine_migrations (__id INTEGER PRIMARY KEY AUTOINCREMENT, applied_at DATETIME DEFAULT CURRENT_TIMESTAMP)",
         [],
     )?;
     live_conn.execute("INSERT INTO _engine_migrations DEFAULT VALUES", [])?;
@@ -117,7 +117,7 @@ mod tests {
         let old_migration = migrations_dir.join("001_init.sql");
         fs::write(
             &old_migration, 
-            "CREATE TABLE User (id TEXT PRIMARY KEY, name TEXT);"
+            "CREATE TABLE User (__id TEXT PRIMARY KEY, name TEXT);"
         ).unwrap();
 
         // The developer's new desired AST has an added 'age' column
@@ -125,7 +125,7 @@ mod tests {
             PhysicalTable {
                 name: "User".to_string(),
                 columns: vec![
-                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false },
+                    PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false },
                     PhysicalColumn { name: "name".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false },
                     PhysicalColumn { name: "age".to_string(), sqlite_type: "INTEGER".to_string(), is_json_array: false },
                 ],
@@ -137,7 +137,7 @@ mod tests {
 
         // Initialize live database with old schema
         let live_conn = Connection::open(&db_path).unwrap();
-        live_conn.execute("CREATE TABLE User (id TEXT PRIMARY KEY, name TEXT);", []).unwrap();
+        live_conn.execute("CREATE TABLE User (__id TEXT PRIMARY KEY, name TEXT);", []).unwrap();
 
         // Run the workflow
         let generated_sql = migrate_dev(&desired, db_path.to_str().unwrap(), migrations_dir.to_str().unwrap()).unwrap();
@@ -160,7 +160,7 @@ mod tests {
             PhysicalTable {
                 name: "User".to_string(),
                 columns: vec![
-                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
+                    PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
                 ],
                 indexes: vec![],
                 triggers: vec![],
@@ -179,7 +179,7 @@ mod tests {
             PhysicalTable {
                 name: "User".to_string(),
                 columns: vec![
-                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
+                    PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
                     PhysicalColumn { name: "age".to_string(), sqlite_type: "INTEGER".to_string(), is_json_array: false },
                 ],
                 indexes: vec![],
@@ -189,7 +189,7 @@ mod tests {
             PhysicalTable {
                 name: "Post".to_string(),
                 columns: vec![
-                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
+                    PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
                     PhysicalColumn { name: "title".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false },
                 ],
                 indexes: vec![],
@@ -220,7 +220,7 @@ mod tests {
         let old_migration = migrations_dir.join("001_init.sql");
         fs::write(
             &old_migration, 
-            "CREATE TABLE User (id TEXT PRIMARY KEY, name TEXT);"
+            "CREATE TABLE User (__id TEXT PRIMARY KEY, name TEXT);"
         ).unwrap();
 
         // The developer's desired AST perfectly matches the historical state
@@ -228,7 +228,7 @@ mod tests {
             PhysicalTable {
                 name: "User".to_string(),
                 columns: vec![
-                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false },
+                    PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false },
                     PhysicalColumn { name: "name".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false },
                 ],
                 indexes: vec![],
@@ -239,7 +239,7 @@ mod tests {
 
         // Initialize live database with old schema
         let live_conn = Connection::open(&db_path).unwrap();
-        live_conn.execute("CREATE TABLE User (id TEXT PRIMARY KEY, name TEXT);", []).unwrap();
+        live_conn.execute("CREATE TABLE User (__id TEXT PRIMARY KEY, name TEXT);", []).unwrap();
 
         // Run the workflow
         let generated_sql = migrate_dev(&desired, db_path.to_str().unwrap(), migrations_dir.to_str().unwrap()).unwrap();

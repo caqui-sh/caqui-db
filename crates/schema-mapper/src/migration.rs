@@ -87,7 +87,7 @@ mod tests {
         let table = PhysicalTable {
             name: "User".to_string(),
             columns: vec![
-                PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
+                PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
                 PhysicalColumn { name: "name".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
             ],
             indexes: vec![],
@@ -95,7 +95,7 @@ mod tests {
             foreign_keys: vec![],
         };
         let sql = generate_create_table_sql("User", &table);
-        assert_eq!(sql, "CREATE TABLE User (\n    id TEXT PRIMARY KEY,\n    name TEXT\n)");
+        assert_eq!(sql, "CREATE TABLE User (\n    __id TEXT PRIMARY KEY,\n    name TEXT\n)");
     }
 
     #[test]
@@ -113,24 +113,24 @@ mod tests {
         let table = PhysicalTable {
             name: "User".to_string(),
             columns: vec![
-                PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
+                PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
                 PhysicalColumn { name: "age".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false } // type changed
             ],
             indexes: vec![],
             triggers: vec![],
             foreign_keys: vec![],
         };
-        let live_cols = vec!["id".to_string(), "age".to_string()];
+        let live_cols = vec!["__id".to_string(), "age".to_string()];
         let op = MigrationOp::RebuildTable { table, live_cols };
         let sql = generate_sql(&op);
         
         let expected_sql = "PRAGMA foreign_keys=OFF;\n\
                             BEGIN TRANSACTION;\n\
                             CREATE TABLE _engine_new_User (\n    \
-                                id TEXT PRIMARY KEY,\n    \
+                                __id TEXT PRIMARY KEY,\n    \
                                 age TEXT\n\
                             );\n\
-                            INSERT INTO _engine_new_User (id, age) SELECT id, age FROM User;\n\
+                            INSERT INTO _engine_new_User (__id, age) SELECT __id, age FROM User;\n\
                             DROP TABLE User;\n\
                             ALTER TABLE _engine_new_User RENAME TO User;\n\
                             PRAGMA foreign_key_check;\n\
@@ -163,10 +163,10 @@ mod tests {
         let table = PhysicalTable {
             name: "Device".to_string(),
             columns: vec![
-                PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
+                PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
             ],
             indexes: vec![
-                PhysicalIndex { name: "idx_Device_id".to_string(), columns: vec!["id".to_string()], unique: true }
+                PhysicalIndex { name: "idx_Device_id".to_string(), columns: vec!["__id".to_string()], unique: true }
             ],
             triggers: vec![
                 PhysicalTrigger { name: "trg_test".to_string(), sql: "CREATE TRIGGER trg_test AFTER INSERT ON Device BEGIN SELECT 1; END;".to_string() }
@@ -177,7 +177,7 @@ mod tests {
         let sql = generate_sql(&op);
         
         assert!(sql.contains("CREATE TABLE Device"));
-        assert!(sql.contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_Device_id ON Device (id);"));
+        assert!(sql.contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_Device_id ON Device (__id);"));
         assert!(sql.contains("CREATE TRIGGER trg_test"));
         }
 
@@ -186,21 +186,21 @@ mod tests {
         let table = PhysicalTable {
             name: "User".to_string(),
             columns: vec![
-                PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
+                PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
             ],
             indexes: vec![
-                PhysicalIndex { name: "idx_User_id".to_string(), columns: vec!["id".to_string()], unique: true }
+                PhysicalIndex { name: "idx_User_id".to_string(), columns: vec!["__id".to_string()], unique: true }
             ],
             triggers: vec![],
             foreign_keys: vec![],
         };
-        let live_cols = vec!["id".to_string()];
+        let live_cols = vec!["__id".to_string()];
         let op = MigrationOp::RebuildTable { table, live_cols };
         let sql = generate_sql(&op);
 
         // Verify the atomic rebuild sequence correctly sequences the index with IF NOT EXISTS
         assert!(sql.contains("ALTER TABLE _engine_new_User RENAME TO User;"));
-        assert!(sql.contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_User_id ON User (id);"));
+        assert!(sql.contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_User_id ON User (__id);"));
         assert!(sql.contains("COMMIT;"));
         }
         }

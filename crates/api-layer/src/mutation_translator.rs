@@ -53,7 +53,7 @@ pub fn hydrate_mutation_to_plan(
             let pk_col = model_def.resolved_fields.iter()
                 .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
                 .map(|f| f.name.as_str())
-                .unwrap_or("id");
+                .unwrap_or("__id");
             
             let mut params = Vec::new();
             let mut param_idx = 1;
@@ -169,7 +169,7 @@ fn translate_create_node(
     let pk_col = model_def.resolved_fields.iter()
         .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
         .map(|f| f.name.as_str())
-        .unwrap_or("id");
+        .unwrap_or("__id");
 
     let step_id = format!("step_{}_{}", model_name.to_lowercase(), *alias_counter);
     *alias_counter += 1;
@@ -186,7 +186,7 @@ fn translate_create_node(
         let parent_pk_col = parent_model_def.resolved_fields.iter()
             .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
             .map(|f| f.name.as_str())
-            .unwrap_or("id");
+            .unwrap_or("__id");
         let parent_field_def = parent_model_def.resolved_fields.iter().find(|f| f.name == rel.relation_field_name).unwrap();
         
         let mut fk_column_name = None;
@@ -272,7 +272,7 @@ fn translate_create_node(
                         let child_data = create_payload.as_object().ok_or("Expected object for 'create'")?;
                         let child_step_id = translate_create_node(ast, target_model, child_data, steps, alias_counter, None)?;
                         let child_model_def = ast.models.get(target_model).unwrap();
-                        let child_pk_col = child_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
+                        let child_pk_col = child_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id");
                         
                         if let Some(col) = &fk_column {
                             columns.push(col.clone());
@@ -282,7 +282,7 @@ fn translate_create_node(
                         }
                     }
                     if let Some(connect_payload) = nested_mutations.get("connect") {
-                        if let Some(connect_id) = connect_payload.as_object().and_then(|o| o.get("id")) {
+                        if let Some(connect_id) = connect_payload.as_object().and_then(|o| o.get("__id")) {
                             if let Some(col) = &fk_column {
                                 columns.push(col.clone());
                                 placeholders.push(format!("?{}", param_idx));
@@ -379,7 +379,7 @@ fn translate_create_node(
             AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicBase(_) => {
                 let nested_mutations = val.as_object().ok_or(format!("Expected object for polymorphic field '{}'", key))?;
                 
-                // Expecting exactly one target type key (e.g. { "ModelA": { "connect": { "id": "1" } } })
+                // Expecting exactly one target type key (e.g. { "ModelA": { "connect": { "__id": "1" } } })
                 if nested_mutations.len() != 1 {
                     return Err(format!("Polymorphic field '{}' requires exactly one target type in the mutation payload.", key));
                 }
@@ -396,7 +396,7 @@ fn translate_create_node(
                 let id_col = format!("{}_id", key);
 
                 if let Some(connect_payload) = actions_obj.get("connect") {
-                    if let Some(connect_id) = connect_payload.as_object().and_then(|o| o.get("id")) {
+                    if let Some(connect_id) = connect_payload.as_object().and_then(|o| o.get("__id")) {
                         // 1. Set type column
                         columns.push(type_col.clone());
                         placeholders.push(format!("?{}", param_idx));
@@ -458,7 +458,7 @@ fn translate_update_node(
     let pk_col = model_def.resolved_fields.iter()
         .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
         .map(|f| f.name.as_str())
-        .unwrap_or("id");
+        .unwrap_or("__id");
 
     let step_id = format!("step_{}_{}", model_name.to_lowercase(), *alias_counter);
     *alias_counter += 1;
@@ -528,7 +528,7 @@ fn translate_update_node(
                         let child_data = create_payload.as_object().ok_or("Expected object for 'create'")?;
                         let child_step_id = translate_create_node(ast, target_model, child_data, steps, alias_counter, None)?;
                         let child_model_def = ast.models.get(target_model).unwrap();
-                        let child_pk_col = child_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
+                        let child_pk_col = child_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id");
                         
                         if let Some(col) = &fk_column {
                             set_clauses.push(format!("{} = ?{}", col, param_idx));
@@ -537,7 +537,7 @@ fn translate_update_node(
                         }
                     }
                     if let Some(connect_payload) = nested_mutations.get("connect") {
-                        if let Some(connect_id) = connect_payload.as_object().and_then(|o| o.get("id")) {
+                        if let Some(connect_id) = connect_payload.as_object().and_then(|o| o.get("__id")) {
                             if let Some(col) = &fk_column {
                                 set_clauses.push(format!("{} = ?{}", col, param_idx));
                                 params.push(Parameter::Literal(connect_id.clone()));
@@ -651,7 +651,7 @@ fn translate_update_node(
                     }
                 }
 
-                // Expecting exactly one target type key (e.g. { "ModelA": { "connect": { "id": "1" } } })
+                // Expecting exactly one target type key (e.g. { "ModelA": { "connect": { "__id": "1" } } })
                 if nested_mutations.len() != 1 {
                     return Err(format!("Polymorphic field '{}' requires exactly one target type in the mutation payload.", key));
                 }
@@ -665,7 +665,7 @@ fn translate_update_node(
                 }
 
                 if let Some(connect_payload) = actions_obj.get("connect") {
-                    if let Some(connect_id) = connect_payload.as_object().and_then(|o| o.get("id")) {
+                    if let Some(connect_id) = connect_payload.as_object().and_then(|o| o.get("__id")) {
                         // 1. Set type column
                         set_clauses.push(format!("{} = ?{}", type_col, param_idx));
                         params.push(Parameter::Literal(serde_json::Value::String(target_model.clone())));
@@ -699,7 +699,7 @@ fn translate_update_node(
         let parent_pk_col = parent_model_def.resolved_fields.iter()
             .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
             .map(|f| f.name.as_str())
-            .unwrap_or("id");
+            .unwrap_or("__id");
         let mut fk_column_name = None;
         let mut is_our_fk = false;
 
@@ -766,7 +766,7 @@ fn translate_root_upsert_node(
     let pk_col = model_def.resolved_fields.iter()
         .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
         .map(|f| f.name.as_str())
-        .unwrap_or("id");
+        .unwrap_or("__id");
 
     let step_id = format!("step_{}_{}", model_name.to_lowercase(), *alias_counter);
     *alias_counter += 1;
@@ -794,7 +794,7 @@ fn translate_root_upsert_node(
     
     // We need the executor to return `create_step_id` or `update_step_id` under `step_id`?
     // Actually, `ExecutionStep::UpsertBranch` currently uses `root_step_id: String` to know what to assign.
-    // In `executor.rs`: `returned_values.insert(id.clone(), returned_id);`
+    // In `executor.rs`: `returned_values.insert(__id.clone(), returned_id);`
     // But for `UpsertBranch`, we didn't insert a return value for the branch itself.
     // The `executor.rs` evaluates `exists_id` but then delegates to `execute_steps`.
     // Wait, the children steps will insert THEIR OWN IDs into `returned_values`.
@@ -831,11 +831,11 @@ fn process_deferred_children(
     alias_counter: &mut usize,
 ) -> Result<(), String> {
     let parent_model_def = ast.models.get(parent_model_name).unwrap();
-    let parent_pk_col = parent_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
+    let parent_pk_col = parent_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id");
 
     for child in deferred_children {
         let child_model_def = ast.models.get(&child.target_model).unwrap();
-        let child_pk_col = child_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
+        let child_pk_col = child_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id");
         
         let parent_field_def = parent_model_def.resolved_fields.iter().find(|f| f.name == child.relation_field_name).unwrap();
         let is_polymorphic = matches!(parent_field_def.field_type, AstFieldType::PolymorphicBase(_) | AstFieldType::PolymorphicBaseArray(_) | AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicUnionArray(_));
@@ -1101,7 +1101,7 @@ fn process_deferred_children(
                     params.extend(where_params);
                     
                     let sql = format!(
-                        "UPDATE {} SET {} WHERE {} RETURNING id;",
+                        "UPDATE {} SET {} WHERE {} RETURNING __id;",
                         child.target_model,
                         set_clause,
                         where_sql
@@ -1207,10 +1207,10 @@ fn compile_parameterized_where(
             
             let join_cond = if *is_forward {
                 // Parent holds FK
-                format!("{}.id = {}.{}", child_alias, alias, fk_column)
+                format!("{}.__id = {}.{}", child_alias, alias, fk_column)
             } else {
                 // Child holds FK
-                format!("{}.{} = {}.id", child_alias, fk_column, alias)
+                format!("{}.{} = {}.__id", child_alias, fk_column, alias)
             };
 
             match filter {
@@ -1257,10 +1257,10 @@ mod tests {
             unions: std::collections::HashMap::new(),
         };
 
-        ast.models.insert("User".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("User".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "User".to_string(),
             resolved_fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "__id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "age".to_string(), field_type: AstFieldType::Scalar("Int".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "password".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Ignore] },
@@ -1287,7 +1287,7 @@ mod tests {
         if let ExecutionStep::Query { id, sql, params } = &plan.steps[0] {
             assert_eq!(id, "step_user_0");
             assert!(sql.starts_with("INSERT INTO User"));
-            assert!(sql.contains("RETURNING id;"));
+            assert!(sql.contains("RETURNING __id;"));
             assert_eq!(params.len(), 2);
         } else {
             panic!("Expected Query step");
@@ -1301,7 +1301,7 @@ mod tests {
                 "age": 31
             },
             "where": {
-                "id": "user_123"
+                "__id": "user_123"
             }
         });
         
@@ -1311,7 +1311,7 @@ mod tests {
         assert_eq!(plan.steps.len(), 1);
         if let ExecutionStep::Query { id, sql, params } = &plan.steps[0] {
             assert_eq!(id, "step_user_0");
-            assert!(sql.starts_with("UPDATE User SET age = ?1 WHERE User.id = ?2 RETURNING id;"));
+            assert!(sql.starts_with("UPDATE User SET age = ?1 WHERE User.__id = ?2 RETURNING __id;"));
             assert_eq!(params.len(), 2);
         } else {
             panic!("Expected Query step");
@@ -1323,7 +1323,7 @@ mod tests {
         let ast = mock_ast();
         let payload = json!({
             "where": {
-                "id": "user_123"
+                "__id": "user_123"
             }
         });
         
@@ -1333,7 +1333,7 @@ mod tests {
         assert_eq!(plan.steps.len(), 1);
         if let ExecutionStep::Query { id, sql, params } = &plan.steps[0] {
             assert_eq!(id, "step_user_0");
-            assert!(sql.starts_with("DELETE FROM User WHERE User.id = ?1 RETURNING id;"));
+            assert!(sql.starts_with("DELETE FROM User WHERE User.__id = ?1 RETURNING __id;"));
             assert_eq!(params.len(), 1);
         } else {
             panic!("Expected Query step");

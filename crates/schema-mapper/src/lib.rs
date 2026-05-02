@@ -66,7 +66,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                      FOR EACH ROW \n\
                      WHEN OLD.{} IS NULL OR NEW.{} <= OLD.{} \n\
                      BEGIN \n\
-                         UPDATE {} SET {} = CURRENT_TIMESTAMP WHERE id = OLD.id; \n\
+                         UPDATE {} SET {} = CURRENT_TIMESTAMP WHERE __id = OLD.__id; \n\
                      END;",
                     trigger_name, model.name, field.name, field.name, field.name, model.name, field.name
                 );
@@ -195,11 +195,11 @@ mod tests {
             unions: HashMap::new(),
         };
         
-        ast.models.insert("User".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("User".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "User".to_string(),
             resolved_fields: vec![
                 FieldNode {
-                    name: "id".to_string(),
+                    name: "__id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
                     is_optional: false,
                     attributes: vec![FieldAttribute::Id],
@@ -237,7 +237,7 @@ mod tests {
         assert_eq!(idx.unique, false);
         assert_eq!(table.triggers.len(), 0);
         
-        let id_col = table.columns.iter().find(|c| c.name == "id").unwrap();
+        let id_col = table.columns.iter().find(|c| c.name == "__id").unwrap();
         assert_eq!(id_col.sqlite_type, "TEXT PRIMARY KEY");
         assert_eq!(id_col.is_json_array, false);
         
@@ -262,11 +262,11 @@ mod tests {
             unions: HashMap::new(),
         };
         
-        ast.models.insert("Device".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("Device".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Device".to_string(),
             resolved_fields: vec![
                 FieldNode {
-                    name: "id".to_string(),
+                    name: "__id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
                     is_optional: false,
                     attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)],
@@ -286,11 +286,11 @@ mod tests {
             ]
         });
 
-        ast.models.insert("Counter".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("Counter".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Counter".to_string(),
             resolved_fields: vec![
                 FieldNode {
-                    name: "id".to_string(),
+                    name: "__id".to_string(),
                     field_type: AstFieldType::Scalar("Int".to_string()),
                     is_optional: false,
                     attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::AutoIncrement)],
@@ -302,7 +302,7 @@ mod tests {
         assert_eq!(tables.len(), 2);
         
         let device = tables.iter().find(|t| t.name == "Device").unwrap();
-        let id_col = device.columns.iter().find(|c| c.name == "id").unwrap();
+        let id_col = device.columns.iter().find(|c| c.name == "__id").unwrap();
         assert_eq!(id_col.sqlite_type, "TEXT PRIMARY KEY DEFAULT (gen_uuid7())");
         
         assert_eq!(device.indexes.len(), 1);
@@ -314,7 +314,7 @@ mod tests {
         assert!(device.triggers[0].sql.contains("CREATE TRIGGER"));
 
         let counter = tables.iter().find(|t| t.name == "Counter").unwrap();
-        let c_id_col = counter.columns.iter().find(|c| c.name == "id").unwrap();
+        let c_id_col = counter.columns.iter().find(|c| c.name == "__id").unwrap();
         assert_eq!(c_id_col.sqlite_type, "INTEGER PRIMARY KEY AUTOINCREMENT");
     }
 
@@ -325,11 +325,11 @@ mod tests {
             unions: HashMap::new(),
         };
         
-        ast.models.insert("Post".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("Post".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Post".to_string(),
             resolved_fields: vec![
                 FieldNode {
-                    name: "id".to_string(),
+                    name: "__id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
                     is_optional: false,
                     attributes: vec![FieldAttribute::Id],
@@ -348,7 +348,7 @@ mod tests {
                         FieldAttribute::Relation {
                             name: None,
                             fields: vec!["authorId".to_string()],
-                            references: vec!["id".to_string()],
+                            references: vec!["__id".to_string()],
                             on_delete: Some("Cascade".to_string()),
                             deferrable: false,
                             column: None,
@@ -363,7 +363,7 @@ mod tests {
         
         let post_table = tables.iter().find(|t| t.name == "Post").unwrap();
         assert_eq!(post_table.foreign_keys.len(), 1);
-        assert_eq!(post_table.foreign_keys[0], "FOREIGN KEY (authorId) REFERENCES \"User\" (id) ON DELETE CASCADE");
+        assert_eq!(post_table.foreign_keys[0], "FOREIGN KEY (authorId) REFERENCES \"User\" (__id) ON DELETE CASCADE");
     }
 
     #[test]
@@ -406,7 +406,7 @@ mod tests {
             name: "Manager".to_string(),
             resolved_fields: vec![
                 FieldNode {
-                    name: "id".to_string(),
+                    name: "__id".to_string(),
                     field_type: AstFieldType::Scalar("Int".to_string()),
                     is_optional: false,
                     attributes: vec![],
@@ -446,7 +446,7 @@ mod tests {
             name: "Person".to_string(),
             resolved_fields: vec![
                 FieldNode {
-                    name: "id".to_string(),
+                    name: "__id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
                     is_optional: false,
                     attributes: vec![FieldAttribute::Id],
@@ -465,7 +465,7 @@ mod tests {
                         FieldAttribute::Relation {
                             name: None,
                             fields: vec!["carId".to_string()],
-                            references: vec!["id".to_string()],
+                            references: vec!["__id".to_string()],
                             on_delete: None,
                             deferrable: false,
                             column: None,
@@ -498,7 +498,7 @@ mod tests {
             name: "Comment".to_string(),
             resolved_fields: vec![
                 FieldNode {
-                    name: "id".to_string(),
+                    name: "__id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
                     is_optional: false,
                     attributes: vec![FieldAttribute::Id],
@@ -538,7 +538,7 @@ mod tests {
             name: "Folder".to_string(),
             resolved_fields: vec![
                 FieldNode {
-                    name: "id".to_string(),
+                    name: "__id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
                     is_optional: false,
                     attributes: vec![FieldAttribute::Id],

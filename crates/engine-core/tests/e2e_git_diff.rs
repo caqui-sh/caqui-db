@@ -53,9 +53,10 @@ fn test_e2e_git_diff() {
 
     let initial_schema = "
         model User {
-            id: String @id
+
             name: String
             age: Int
+    @@id(uuid)
         }
     ";
     fs::write(workspace.join("schema.cq"), initial_schema).unwrap();
@@ -70,9 +71,9 @@ fn test_e2e_git_diff() {
             &db_uri,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         ).unwrap();
-        conn.execute("INSERT INTO User (id, name, age) VALUES ('u1', 'Alice', 20)", []).unwrap();
-        conn.execute("INSERT INTO User (id, name, age) VALUES ('u2', 'Bob', 25)", []).unwrap();
-        conn.execute("INSERT INTO User (id, name, age) VALUES ('u3', 'Charlie', 30)", []).unwrap();
+        conn.execute("INSERT INTO User (__id, name, age) VALUES ('u1', 'Alice', 20)", []).unwrap();
+        conn.execute("INSERT INTO User (__id, name, age) VALUES ('u2', 'Bob', 25)", []).unwrap();
+        conn.execute("INSERT INTO User (__id, name, age) VALUES ('u3', 'Charlie', 30)", []).unwrap();
     }
 
     let mut cmd = Command::new(caqui_bin);
@@ -94,13 +95,15 @@ fn test_e2e_git_diff() {
     // 5. Mutate schema and data
     let evolved_schema = "
         model User {
-            id: String @id
+
             name: String
             email: String
+    @@id(uuid)
         }
         model Post {
-            id: String @id
+
             title: String
+    @@id(uuid)
         }
     ";
     fs::write(workspace.join("schema.cq"), evolved_schema).unwrap();
@@ -115,16 +118,16 @@ fn test_e2e_git_diff() {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         ).unwrap();
         // Drop Bob
-        conn.execute("DELETE FROM User WHERE id = 'u2'", []).unwrap();
+        conn.execute("DELETE FROM User WHERE __id = 'u2'", []).unwrap();
         // Modify Alice
-        conn.execute("UPDATE User SET name = 'Alice Updated', email = 'alice@test.com' WHERE id = 'u1'", []).unwrap();
+        conn.execute("UPDATE User SET name = 'Alice Updated', email = 'alice@test.com' WHERE __id = 'u1'", []).unwrap();
         // Update Charlie with email
-        conn.execute("UPDATE User SET email = 'charlie@test.com' WHERE id = 'u3'", []).unwrap();
+        conn.execute("UPDATE User SET email = 'charlie@test.com' WHERE __id = 'u3'", []).unwrap();
         // Insert Dave
-        conn.execute("INSERT INTO User (id, name, email) VALUES ('u4', 'Dave', 'dave@test.com')", []).unwrap();
+        conn.execute("INSERT INTO User (__id, name, email) VALUES ('u4', 'Dave', 'dave@test.com')", []).unwrap();
         
         // Insert Post
-        conn.execute("INSERT INTO Post (id, title) VALUES ('p1', 'Hello World')", []).unwrap();
+        conn.execute("INSERT INTO Post (__id, title) VALUES ('p1', 'Hello World')", []).unwrap();
     }
 
     // 6. Test diffing against HEAD
@@ -144,13 +147,13 @@ fn test_e2e_git_diff() {
     assert!(diff_text.contains("+ Added field `email` (String)"), "Missing Added field `email`");
 
     // Assert Record Changes - Inserted
-    assert!(diff_text.contains("+ Inserted\x1b[0m (id: p1)"), "Missing inserted post p1");
-    assert!(diff_text.contains("+ Inserted\x1b[0m (id: u4)"), "Missing inserted user u4");
+    assert!(diff_text.contains("+ Inserted\x1b[0m (__id: p1)"), "Missing inserted post p1");
+    assert!(diff_text.contains("+ Inserted\x1b[0m (__id: u4)"), "Missing inserted user u4");
 
     // Assert Record Changes - Deleted
-    assert!(diff_text.contains("- Deleted \x1b[0m (id: u2)"), "Missing deleted user u2");
+    assert!(diff_text.contains("- Deleted \x1b[0m (__id: u2)"), "Missing deleted user u2");
 
     // Assert Record Changes - Modified
-    assert!(diff_text.contains("~ Modified\x1b[0m (id: u1)"), "Missing modified user u1");
+    assert!(diff_text.contains("~ Modified\x1b[0m (__id: u1)"), "Missing modified user u1");
     assert!(diff_text.contains("↳ name: \x1b[31mAlice\x1b[0m -> \x1b[32mAlice Updated\x1b[0m"), "Missing modified value for user u1");
 }

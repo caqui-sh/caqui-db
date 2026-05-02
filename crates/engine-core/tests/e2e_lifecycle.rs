@@ -78,7 +78,7 @@ fn test_e2e_lifecycle() {
             &db_uri,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         ).unwrap();
-        conn.execute("INSERT INTO User (id, name) VALUES ('u1', 'Alice')", []).unwrap();
+        conn.execute("INSERT INTO User (__id, name) VALUES ('u1', 'Alice')", []).unwrap();
     }
 
     let mut git_add = Command::new(caqui_bin);
@@ -110,7 +110,7 @@ fn test_e2e_lifecycle() {
             &db_uri,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         ).unwrap();
-        conn.execute("INSERT INTO User (id, name, status) VALUES ('u2', 'Bob', 'pending')", []).unwrap();
+        conn.execute("INSERT INTO User (__id, name, status) VALUES ('u2', 'Bob', 'pending')", []).unwrap();
     }
 
     let mut git_add_feature = Command::new(caqui_bin);
@@ -132,7 +132,7 @@ fn test_e2e_lifecycle() {
             &db_uri,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         ).unwrap();
-        conn.execute("INSERT INTO User (id, name) VALUES ('u3', 'Charlie')", []).unwrap();
+        conn.execute("INSERT INTO User (__id, name) VALUES ('u3', 'Charlie')", []).unwrap();
     }
 
     let mut git_add_main = Command::new(caqui_bin);
@@ -188,7 +188,7 @@ fn test_e2e_lifecycle() {
     curl_cmd.args(&[
         "-s", "-X", "POST", "http://localhost:4001/api/v1/query",
         "-H", "Content-Type: application/json",
-        "-d", r#"{"model":"User","action":"findMany","select":{"id":true,"name":true}}"#
+        "-d", r#"{"model":"User","action":"findMany","select":{"__id":true,"name":true}}"#
     ]);
 
     let curl_output = curl_cmd.output().expect("Failed to execute curl");
@@ -264,7 +264,7 @@ fn test_e2e_hard_merge_conflict() {
             &db_uri,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         ).unwrap();
-        conn.execute("INSERT INTO User (id, name) VALUES ('u1', 'Alice')", []).unwrap();
+        conn.execute("INSERT INTO User (__id, name) VALUES ('u1', 'Alice')", []).unwrap();
     }
 
     let mut cmd = Command::new(caqui_bin);
@@ -284,7 +284,7 @@ fn test_e2e_hard_merge_conflict() {
             &db_uri,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         ).unwrap();
-        conn.execute("UPDATE User SET name = 'Bob' WHERE id = 'u1'", []).unwrap();
+        conn.execute("UPDATE User SET name = 'Bob' WHERE __id = 'u1'", []).unwrap();
     }
 
     let mut cmd = Command::new(caqui_bin);
@@ -304,7 +304,7 @@ fn test_e2e_hard_merge_conflict() {
             &db_uri,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         ).unwrap();
-        conn.execute("UPDATE User SET name = 'Charlie' WHERE id = 'u1'", []).unwrap();
+        conn.execute("UPDATE User SET name = 'Charlie' WHERE __id = 'u1'", []).unwrap();
     }
 
     let mut cmd = Command::new(caqui_bin);
@@ -346,20 +346,23 @@ fn test_e2e_complex_graph_traversal() {
 
     let schema = "
         model User {
-            id: String @id
+
             name: String
             posts: Post[]
+    @@id(uuid)
         }
         model Post {
-            id: String @id
+
             title: String
             user_id: String
             comments: Comment[]
+    @@id(uuid)
         }
         model Comment {
-            id: String @id
+
             body: String
             post_id: String
+    @@id(uuid)
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -372,9 +375,9 @@ fn test_e2e_complex_graph_traversal() {
             &db_uri,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         ).unwrap();
-        conn.execute("INSERT INTO User (id, name) VALUES ('u1', 'Alice')", []).unwrap();
-        conn.execute("INSERT INTO Post (id, title, user_id) VALUES ('p1', 'First Post', 'u1')", []).unwrap();
-        conn.execute("INSERT INTO Comment (id, body, post_id) VALUES ('c1', 'Nice post!', 'p1')", []).unwrap();
+        conn.execute("INSERT INTO User (__id, name) VALUES ('u1', 'Alice')", []).unwrap();
+        conn.execute("INSERT INTO Post (__id, title, user_id) VALUES ('p1', 'First Post', 'u1')", []).unwrap();
+        conn.execute("INSERT INTO Comment (__id, body, post_id) VALUES ('c1', 'Nice post!', 'p1')", []).unwrap();
     }
 
     let mut api_server = Command::new(caqui_bin).env("PORT", "4002").args(&["api", "start"]).current_dir(workspace).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
@@ -383,7 +386,7 @@ fn test_e2e_complex_graph_traversal() {
     let curl_output = Command::new("curl").args(&[
         "-s", "-X", "POST", "http://localhost:4002/api/v1/query",
         "-H", "Content-Type: application/json",
-        "-d", r#"{"model":"User","action":"findMany","select":{"id":true,"name":true,"posts":{"select":{"id":true,"title":true,"comments":{"select":{"id":true,"body":true}}}}}}"#
+        "-d", r#"{"model":"User","action":"findMany","select":{"__id":true,"name":true,"posts":{"select":{"__id":true,"title":true,"comments":{"select":{"__id":true,"body":true}}}}}}"#
     ]).output().unwrap();
 
     api_server.kill().unwrap();
@@ -448,9 +451,9 @@ fn test_e2e_custom_functions_and_triggers() {
 
     let schema = "
         model Item {
-            id: String @id @default(uuid())
             name: String
             updatedAt: DateTime @updatedAt
+    @@id(uuid)
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -475,7 +478,7 @@ fn test_e2e_custom_functions_and_triggers() {
     let curl_output = Command::new("curl").args(&[
         "-s", "-X", "POST", "http://localhost:4003/api/v1/query",
         "-H", "Content-Type: application/json",
-        "-d", r#"{"model":"Item","action":"findMany","select":{"id":true,"name":true,"updatedAt":true}}"#
+        "-d", r#"{"model":"Item","action":"findMany","select":{"__id":true,"name":true,"updatedAt":true}}"#
     ]).output().unwrap();
 
     api_server.kill().unwrap();
@@ -487,10 +490,10 @@ fn test_e2e_custom_functions_and_triggers() {
     let items = parsed["data"].as_array().unwrap();
     assert_eq!(items.len(), 1);
     
-    let id = items[0]["id"].as_str().unwrap();
+    let __id = items[0]["__id"].as_str().unwrap();
     let updated_at = items[0]["updatedAt"].as_str().unwrap();
 
-    assert_eq!(id.len(), 36);
-    assert!(id.contains('-'));
+    assert_eq!(__id.len(), 36);
+    assert!(__id.contains('-'));
     assert!(!updated_at.is_empty());
 }

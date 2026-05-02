@@ -26,8 +26,8 @@ fn test_e2e_ddl_ignores_bases_and_injects_markers() {
     run_cmd(git_init);
 
     let schema = r#"
-        base Identifiable { id: String @id }
-        model User extends Identifiable { name: String }
+        base Identifiable { @@id(uuid) }
+        model User extends Identifiable { name: String @@id(uuid) }
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
 
@@ -59,7 +59,7 @@ fn test_e2e_ddl_ignores_bases_and_injects_markers() {
         columns.insert(name);
     }
     
-    assert!(columns.contains("id"), "Inherited 'id' column missing.");
+    assert!(columns.contains("__id"), "Inherited 'id' column missing.");
     assert!(columns.contains("name"), "Native 'name' column missing.");
     assert!(columns.contains("__Identifiable"), "Synthetic '__Identifiable' marker missing.");
     assert!(columns.contains("__User"), "Synthetic '__User' model marker missing.");
@@ -79,23 +79,23 @@ fn test_e2e_retroactive_trait_implementation() {
     run_cmd(git_init);
 
     // Stage 1: Standalone model
-    fs::write(workspace.join("schema.cq"), "model Post { id: String @id text: String }").unwrap();
+    fs::write(workspace.join("schema.cq"), "model Post { text: String @@id(uuid) }").unwrap();
     let mut cmd = Command::new(caqui_bin);
     cmd.args(&["schema", "push"]).current_dir(workspace);
     run_cmd(cmd);
 
     let db_path = workspace.join("app.db");
     let db_uri = format!("file:{}?vfs=git", db_path.display());
-    let mut conn = rusqlite::Connection::open_with_flags(
+    let conn = rusqlite::Connection::open_with_flags(
         &db_uri,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
     ).unwrap();
-    conn.execute("INSERT INTO Post (id, text) VALUES ('1', 'Hello World')", []).unwrap();
+    conn.execute("INSERT INTO Post (__id, text) VALUES ('1', 'Hello World')", []).unwrap();
 
     // Stage 2: Abstract trait introduced and inherited
     let v2_schema = r#"
-        base Auditable { updatedAt: String }
-        model Post extends Auditable { id: String @id text: String }
+        base Auditable { updatedAt: String @@id(uuid) }
+        model Post extends Auditable { text: String @@id(uuid) }
     "#;
     fs::write(workspace.join("schema.cq"), v2_schema).unwrap();
     let mut cmd2 = Command::new(caqui_bin);
@@ -109,7 +109,7 @@ fn test_e2e_retroactive_trait_implementation() {
     ).unwrap();
 
     // Verify retroactive columns were added with defaults
-    let mut stmt = conn2.prepare("SELECT __Auditable FROM Post WHERE id = '1'").unwrap();
+    let mut stmt = conn2.prepare("SELECT __Auditable FROM Post WHERE __id = '1'").unwrap();
     let mut rows = stmt.query([]).unwrap();
     let row = rows.next().unwrap().expect("Row 1 should exist");
     

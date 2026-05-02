@@ -54,7 +54,7 @@ pub async fn api_execution_handler(
         // 1. If it's a delete, we MUST fetch the data before it's gone
         let mut deleted_data: Option<String> = None;
         if action == "delete" {
-            let select_block = payload.get("select").cloned().unwrap_or_else(|| serde_json::json!({ "id": true }));
+            let select_block = payload.get("select").cloned().unwrap_or_else(|| serde_json::json!({ "__id": true }));
             let temp_payload = serde_json::json!({
                 "select": select_block,
                 "where": payload.get("where")
@@ -89,11 +89,11 @@ pub async fn api_execution_handler(
             Ok(Ok(deleted_data.unwrap_or_else(|| format!("[{{\"id\": \"{}\"}}]", root_id))))
         } else {
             // 4. Create a temporary synthetic read payload to fetch the mutated record
-            let select_block = payload.get("select").cloned().unwrap_or_else(|| serde_json::json!({ "id": true }));
+            let select_block = payload.get("select").cloned().unwrap_or_else(|| serde_json::json!({ "__id": true }));
             let temp_payload = serde_json::json!({
                 "select": select_block,
                 "where": {
-                    "id": root_id
+                    "__id": root_id
                 }
             });
             
@@ -164,10 +164,10 @@ mod tests {
             unions: HashMap::new(),
         };
 
-        ast.models.insert("User".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("User".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "User".to_string(),
             resolved_fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
+                FieldNode { name: "__id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
                 FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Unique] },
                 FieldNode { name: "age".to_string(), field_type: AstFieldType::Scalar("Int".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "bio".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
@@ -189,7 +189,7 @@ mod tests {
                     FieldAttribute::Relation {
                         name: None,
                         fields: vec!["profileId".to_string()],
-                        references: vec!["id".to_string()],
+                        references: vec!["__id".to_string()],
                         on_delete: None,
                         deferrable: false,
                         column: None,
@@ -198,25 +198,25 @@ mod tests {
             ]
         });
 
-        ast.models.insert("Profile".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("Profile".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Profile".to_string(),
             resolved_fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
+                FieldNode { name: "__id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
                 FieldNode { name: "bio".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
 
-        ast.models.insert("Post".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("Post".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Post".to_string(),
             resolved_fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
+                FieldNode { name: "__id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
                 FieldNode { name: "title".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "authorId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "author".to_string(), field_type: AstFieldType::Relation("User".to_string()), is_optional: false, attributes: vec![
                     FieldAttribute::Relation {
                         name: None,
                         fields: vec!["authorId".to_string()],
-                        references: vec!["id".to_string()],
+                        references: vec!["__id".to_string()],
                         on_delete: Some("Cascade".to_string()),
                         deferrable: false,
                         column: None,
@@ -235,17 +235,17 @@ mod tests {
             ]
         });
 
-        ast.models.insert("Comment".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("Comment".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Comment".to_string(),
             resolved_fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
+                FieldNode { name: "__id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
                 FieldNode { name: "text".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "postId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "post".to_string(), field_type: AstFieldType::Relation("Post".to_string()), is_optional: false, attributes: vec![
                     FieldAttribute::Relation {
                         name: None,
                         fields: vec!["postId".to_string()],
-                        references: vec!["id".to_string()],
+                        references: vec!["__id".to_string()],
                         on_delete: Some("Cascade".to_string()),
                         deferrable: false,
                         column: None,
@@ -254,17 +254,17 @@ mod tests {
             ]
         });
 
-        ast.models.insert("Employee".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("Employee".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Employee".to_string(),
             resolved_fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
+                FieldNode { name: "__id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
                 FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "managerId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: true, attributes: vec![] },
                 FieldNode { name: "manager".to_string(), field_type: AstFieldType::Relation("Employee".to_string()), is_optional: true, attributes: vec![
                     FieldAttribute::Relation {
                         name: Some("Management".to_string()),
                         fields: vec!["managerId".to_string()],
-                        references: vec!["id".to_string()],
+                        references: vec!["__id".to_string()],
                         on_delete: None,
                         deferrable: false,
                         column: None,
@@ -291,17 +291,17 @@ mod tests {
         let conn = pool.get().await.unwrap();
         conn.interact(|db| -> Result<(), rusqlite::Error> {
             db.execute("CREATE TABLE Employee (
-                id TEXT PRIMARY KEY DEFAULT (gen_uuid7()),
+                __id TEXT PRIMARY KEY DEFAULT (gen_uuid7()),
                 name TEXT NOT NULL,
-                managerId TEXT REFERENCES Employee(id)
+                managerId TEXT REFERENCES Employee(__id)
             ) STRICT;", [])?;
             db.execute("CREATE TABLE Profile (
-                id TEXT PRIMARY KEY DEFAULT (gen_uuid7()),
+                __id TEXT PRIMARY KEY DEFAULT (gen_uuid7()),
                 bio TEXT
             ) STRICT;", [])?;
 
             db.execute("CREATE TABLE User (
-                id TEXT PRIMARY KEY DEFAULT (gen_uuid7()), 
+                __id TEXT PRIMARY KEY DEFAULT (gen_uuid7()), 
                 name TEXT NOT NULL UNIQUE, 
                 age INTEGER, 
                 bio TEXT,
@@ -309,34 +309,34 @@ mod tests {
                 tags TEXT,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 profileId TEXT,
-                FOREIGN KEY(profileId) REFERENCES Profile(id) ON DELETE SET NULL
+                FOREIGN KEY(profileId) REFERENCES Profile(__id) ON DELETE SET NULL
             ) STRICT;", [])?;
 
             db.execute("CREATE TABLE Post (
-                id TEXT PRIMARY KEY DEFAULT (gen_uuid7()), 
+                __id TEXT PRIMARY KEY DEFAULT (gen_uuid7()), 
                 title TEXT NOT NULL, 
                 authorId TEXT NOT NULL,
-                FOREIGN KEY(authorId) REFERENCES User(id) ON DELETE CASCADE
+                FOREIGN KEY(authorId) REFERENCES User(__id) ON DELETE CASCADE
             ) STRICT;", [])?;
 
             db.execute("CREATE TABLE Comment (
-                id TEXT PRIMARY KEY DEFAULT (gen_uuid7()),
+                __id TEXT PRIMARY KEY DEFAULT (gen_uuid7()),
                 text TEXT NOT NULL,
                 postId TEXT NOT NULL,
-                FOREIGN KEY(postId) REFERENCES Post(id) ON DELETE CASCADE
+                FOREIGN KEY(postId) REFERENCES Post(__id) ON DELETE CASCADE
             ) STRICT;", [])?;
 
             db.execute("CREATE TRIGGER trg_user_updated_at 
                 AFTER UPDATE ON User 
                 FOR EACH ROW 
                 BEGIN 
-                    UPDATE User SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id; 
+                    UPDATE User SET updated_at = CURRENT_TIMESTAMP WHERE __id = OLD.__id; 
                 END;", [])?;
 
-            db.execute("INSERT INTO Profile (id, bio) VALUES ('prof1', 'Existing Profile');", [])?;
-            db.execute("INSERT INTO User (id, name, age, bio, secret, tags, updated_at, profileId) VALUES ('u1', 'Bob', 25, 'Original Bio', 'Hidden', '[\"rust\", \"sql\"]', '2020-01-01 00:00:00', 'prof1');", [])?;
-            db.execute("INSERT INTO Post (id, title, authorId) VALUES ('p1', 'First Post', 'u1');", [])?;
-            db.execute("INSERT INTO Comment (id, text, postId) VALUES ('c1', 'First Comment', 'p1');", [])?;
+            db.execute("INSERT INTO Profile (__id, bio) VALUES ('prof1', 'Existing Profile');", [])?;
+            db.execute("INSERT INTO User (__id, name, age, bio, secret, tags, updated_at, profileId) VALUES ('u1', 'Bob', 25, 'Original Bio', 'Hidden', '[\"rust\", \"sql\"]', '2020-01-01 00:00:00', 'prof1');", [])?;
+            db.execute("INSERT INTO Post (__id, title, authorId) VALUES ('p1', 'First Post', 'u1');", [])?;
+            db.execute("INSERT INTO Comment (__id, text, postId) VALUES ('c1', 'First Comment', 'p1');", [])?;
             Ok(())
         }).await.unwrap().unwrap();
 
@@ -360,7 +360,7 @@ mod tests {
                     "model": "User",
                     "action": "findMany",
                     "select": {
-                        "id": true,
+                        "__id": true,
                         "name": true
                     }
                 }"#
@@ -380,7 +380,7 @@ mod tests {
         
         let users = json_body["data"].as_array().expect("Expected data to be an array");
         assert_eq!(users.len(), 1);
-        assert_eq!(users[0]["id"], "u1");
+        assert_eq!(users[0]["__id"], "u1");
         assert_eq!(users[0]["name"], "Bob");
     }
 
@@ -440,10 +440,10 @@ mod tests {
         
         // Add a model to AST that DOES NOT have a table in DB
         let mut ast = (*state.ast).clone();
-        ast.models.insert("Ghost".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("Ghost".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Ghost".to_string(),
             resolved_fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "__id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
         state.ast = Arc::new(ast);
@@ -458,7 +458,7 @@ mod tests {
                 r#"{
                     "model": "Ghost",
                     "action": "findMany",
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -480,7 +480,7 @@ mod tests {
             .body(Body::from(
                 r#"{
                     "action": "findMany",
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -505,7 +505,7 @@ mod tests {
             .body(Body::from(
                 r#"{
                     "model": "User",
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -553,11 +553,10 @@ mod tests {
                     "model": "User",
                     "action": "create",
                     "data": {
-                        "id": "u2",
                         "name": "Alice"
                     },
                     "select": {
-                        "id": true,
+                        "__id": true,
                         "name": true
                     }
                 }"#
@@ -574,7 +573,7 @@ mod tests {
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         
-        assert_eq!(json_body["data"]["id"], "u2");
+        assert_eq!(json_body["data"]["__id"].as_str().unwrap().len(), 36);
         assert_eq!(json_body["data"]["name"], "Alice");
     }
 
@@ -591,12 +590,12 @@ mod tests {
                 r#"{
                     "model": "User",
                     "action": "update",
-                    "where": { "id": "u1" },
+                    "where": { "__id": "u1" },
                     "data": {
                         "name": "Bobby"
                     },
                     "select": {
-                        "id": true,
+                        "__id": true,
                         "name": true
                     }
                 }"#
@@ -613,7 +612,7 @@ mod tests {
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         
-        assert_eq!(json_body["data"]["id"], "u1");
+        assert_eq!(json_body["data"]["__id"], "u1");
         assert_eq!(json_body["data"]["name"], "Bobby");
     }
 
@@ -630,8 +629,8 @@ mod tests {
                 r#"{
                     "model": "User",
                     "action": "delete",
-                    "where": { "id": "u1" },
-                    "select": { "id": true }
+                    "where": { "__id": "u1" },
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -645,12 +644,12 @@ mod tests {
 
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
-        assert_eq!(json_body["data"]["id"], "u1");
+        assert_eq!(json_body["data"]["__id"], "u1");
 
         // Verify it's gone
         let conn = state.db_pool.get().await.unwrap();
         let count: i64 = conn.interact(|db| {
-            db.query_row("SELECT COUNT(*) FROM User WHERE id = 'u1'", [], |row| row.get(0))
+            db.query_row("SELECT COUNT(*) FROM User WHERE __id = 'u1'", [], |row| row.get(0))
         }).await.unwrap().unwrap();
         assert_eq!(count, 0);
     }
@@ -671,7 +670,7 @@ mod tests {
                     "data": {
                         "name": "AutoIDUser"
                     },
-                    "select": { "id": true, "name": true }
+                    "select": { "__id": true, "name": true }
                 }"#
             ))
             .unwrap();
@@ -686,7 +685,7 @@ mod tests {
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         
-        let generated_id = json_body["data"]["id"].as_str().expect("Expected a generated ID");
+        let generated_id = json_body["data"]["__id"].as_str().expect("Expected a generated ID");
         assert_eq!(json_body["data"]["name"], "AutoIDUser");
         assert!(generated_id.len() > 10, "ID should be a long string (UUID)");
     }
@@ -706,10 +705,10 @@ mod tests {
                     "model": "User",
                     "action": "create",
                     "data": {
-                        "id": "u2",
+                        "__id": "u2",
                         "name": "Bob" 
                     },
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -720,7 +719,7 @@ mod tests {
         // Verify that 'u2' was NOT created due to rollback
         let conn = state.db_pool.get().await.unwrap();
         let count: i64 = conn.interact(|db| {
-            db.query_row("SELECT COUNT(*) FROM User WHERE id = 'u2'", [], |row| row.get(0))
+            db.query_row("SELECT COUNT(*) FROM User WHERE __id = 'u2'", [], |row| row.get(0))
         }).await.unwrap().unwrap();
         assert_eq!(count, 0);
     }
@@ -743,7 +742,7 @@ mod tests {
                         "name": "Hacker",
                         "secret": "MALICIOUS"
                     },
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -770,11 +769,11 @@ mod tests {
                 r#"{
                     "model": "User",
                     "action": "update",
-                    "where": { "id": "u1" },
+                    "where": { "__id": "u1" },
                     "data": {
                         "bio": null
                     },
-                    "select": { "id": true, "bio": true }
+                    "select": { "__id": true, "bio": true }
                 }"#
             ))
             .unwrap();
@@ -810,7 +809,7 @@ mod tests {
                         "name": "OldMan",
                         "age": "Ninety"
                     },
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -833,9 +832,9 @@ mod tests {
                 r#"{
                     "model": "User",
                     "action": "update",
-                    "where": { "id": "does_not_exist" },
+                    "where": { "__id": "does_not_exist" },
                     "data": { "age": 99 },
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -855,7 +854,7 @@ mod tests {
         // Get initial updated_at
         let conn = state.db_pool.get().await.unwrap();
         let initial_time: String = conn.interact(|db| {
-            db.query_row("SELECT updated_at FROM User WHERE id = 'u1'", [], |row| row.get(0))
+            db.query_row("SELECT updated_at FROM User WHERE __id = 'u1'", [], |row| row.get(0))
         }).await.unwrap().unwrap();
         
         // Wait a tiny bit (simulated via update)
@@ -867,9 +866,9 @@ mod tests {
                 r#"{
                     "model": "User",
                     "action": "update",
-                    "where": { "id": "u1" },
+                    "where": { "__id": "u1" },
                     "data": { "age": 30 },
-                    "select": { "id": true, "updated_at": true }
+                    "select": { "__id": true, "updated_at": true }
                 }"#
             ))
             .unwrap();
@@ -919,7 +918,7 @@ mod tests {
         
         let data = json_body["data"].as_object().unwrap();
         assert!(data.contains_key("name"));
-        assert!(!data.contains_key("id"), "Output should only contain requested projection");
+        assert!(!data.contains_key("__id"), "Output should only contain requested projection");
     }
 
     #[tokio::test]
@@ -941,7 +940,7 @@ mod tests {
                             { "age": { "eq": 25 } }
                         ]
                     },
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -1015,7 +1014,7 @@ mod tests {
                             ]
                         }
                     },
-                    "select": { "id": true, "name": true, "posts": { "select": { "title": true } } }
+                    "select": { "__id": true, "name": true, "posts": { "select": { "title": true } } }
                 }"#
             ))
             .unwrap();
@@ -1055,11 +1054,11 @@ mod tests {
                         "title": "A post for Bob",
                         "author": {
                             "connect": {
-                                "id": "u1"
+                                "__id": "u1"
                             }
                         }
                     },
-                    "select": { "id": true, "title": true, "author": { "select": { "name": true } } }
+                    "select": { "__id": true, "title": true, "author": { "select": { "name": true } } }
                 }"#
             ))
             .unwrap();
@@ -1102,7 +1101,7 @@ mod tests {
                             ]
                         }
                     },
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -1135,10 +1134,10 @@ mod tests {
                     "data": {
                         "name": "Charlie",
                         "posts": {
-                            "connect": [{ "id": "p1" }]
+                            "connect": [{ "__id": "p1" }]
                         }
                     },
-                    "select": { "id": true, "name": true, "posts": { "select": { "id": true } } }
+                    "select": { "__id": true, "name": true, "posts": { "select": { "__id": true } } }
                 }"#
             ))
             .unwrap();
@@ -1154,7 +1153,7 @@ mod tests {
         let conn = state.db_pool.get().await.unwrap();
         let author_name: String = conn.interact(|db| {
             db.query_row(
-                "SELECT User.name FROM Post JOIN User ON Post.authorId = User.id WHERE Post.id = 'p1'", 
+                "SELECT User.name FROM Post JOIN User ON Post.authorId = User.__id WHERE Post.__id = 'p1'", 
                 [], 
                 |row| row.get(0)
             )
@@ -1175,14 +1174,14 @@ mod tests {
                 r#"{
                     "model": "User",
                     "action": "update",
-                    "where": { "id": "u1" },
+                    "where": { "__id": "u1" },
                     "data": {
                         "bio": "Updated Bio",
                         "posts": {
                             "create": [{ "title": "Bob's Second Post" }]
                         }
                     },
-                    "select": { "id": true, "bio": true, "posts": { "select": { "title": true } } }
+                    "select": { "__id": true, "bio": true, "posts": { "select": { "title": true } } }
                 }"#
             ))
             .unwrap();
@@ -1235,7 +1234,7 @@ mod tests {
                             ]
                         }
                     },
-                    "select": { "id": true, "name": true, "posts": { "select": { "title": true, "comments": { "select": { "text": true } } } } }
+                    "select": { "__id": true, "name": true, "posts": { "select": { "title": true, "comments": { "select": { "text": true } } } } }
                 }"#
             ))
             .unwrap();
@@ -1251,7 +1250,7 @@ mod tests {
         let conn = state.db_pool.get().await.unwrap();
         let author_name: String = conn.interact(|db| {
             db.query_row(
-                "SELECT User.name FROM Comment JOIN Post ON Comment.postId = Post.id JOIN User ON Post.authorId = User.id WHERE Comment.text = 'Great post Dave!'", 
+                "SELECT User.name FROM Comment JOIN Post ON Comment.postId = Post.__id JOIN User ON Post.authorId = User.__id WHERE Comment.text = 'Great post Dave!'", 
                 [], 
                 |row| row.get(0)
             )
@@ -1276,10 +1275,10 @@ mod tests {
                         "name": "Eve",
                         "posts": {
                             "create": [{ "title": "Eve's New Post" }],
-                            "connect": [{ "id": "p1" }]
+                            "connect": [{ "__id": "p1" }]
                         }
                     },
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -1294,7 +1293,7 @@ mod tests {
         // Verify Eve owns both the new post and the connected post
         let conn = state.db_pool.get().await.unwrap();
         let count: i64 = conn.interact(|db| {
-            db.query_row("SELECT COUNT(*) FROM Post JOIN User ON Post.authorId = User.id WHERE User.name = 'Eve'", [], |row| row.get(0))
+            db.query_row("SELECT COUNT(*) FROM Post JOIN User ON Post.authorId = User.__id WHERE User.name = 'Eve'", [], |row| row.get(0))
         }).await.unwrap().unwrap();
         assert_eq!(count, 2, "Eve should own exactly 2 posts");
     }
@@ -1319,7 +1318,7 @@ mod tests {
                             "create": { "bio": "Frank's Profile" }
                         }
                     },
-                    "select": { "id": true, "profile": { "select": { "bio": true } } }
+                    "select": { "__id": true, "profile": { "select": { "bio": true } } }
                 }"#
             ))
             .unwrap();
@@ -1352,16 +1351,16 @@ mod tests {
                 r#"{
                     "model": "User",
                     "action": "update",
-                    "where": { "id": "u1" },
+                    "where": { "__id": "u1" },
                     "data": {
                         "posts": {
                             "update": [{
-                                "where": { "id": "p1" },
+                                "where": { "__id": "p1" },
                                 "data": { "title": "New Title" }
                             }]
                         }
                     },
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -1375,7 +1374,7 @@ mod tests {
 
         let conn = state.db_pool.get().await.unwrap();
         let updated_title: String = conn.interact(|db| {
-            db.query_row("SELECT title FROM Post WHERE id = 'p1'", [], |row| row.get(0))
+            db.query_row("SELECT title FROM Post WHERE __id = 'p1'", [], |row| row.get(0))
         }).await.unwrap().unwrap();
         assert_eq!(updated_title, "New Title");
     }
@@ -1388,8 +1387,8 @@ mod tests {
         {
             let conn = state.db_pool.get().await.unwrap();
             conn.interact(|db| {
-                db.execute("INSERT INTO User (id, name) VALUES ('u2', 'Delete User')", []).unwrap();
-                db.execute("INSERT INTO Post (id, title, authorId) VALUES ('p2', 'To Delete', 'u2')", []).unwrap();
+                db.execute("INSERT INTO User (__id, name) VALUES ('u2', 'Delete User')", []).unwrap();
+                db.execute("INSERT INTO Post (__id, title, authorId) VALUES ('p2', 'To Delete', 'u2')", []).unwrap();
             }).await.unwrap();
         }
 
@@ -1401,13 +1400,13 @@ mod tests {
                 r#"{
                     "model": "User",
                     "action": "update",
-                    "where": { "id": "u2" },
+                    "where": { "__id": "u2" },
                     "data": {
                         "posts": {
-                            "delete": [{ "id": "p2" }]
+                            "delete": [{ "__id": "p2" }]
                         }
                     },
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -1421,7 +1420,7 @@ mod tests {
 
         let conn = state.db_pool.get().await.unwrap();
         let count: i64 = conn.interact(|db| {
-            db.query_row("SELECT COUNT(*) FROM Post WHERE id = 'p2'", [], |row| row.get(0))
+            db.query_row("SELECT COUNT(*) FROM Post WHERE __id = 'p2'", [], |row| row.get(0))
         }).await.unwrap().unwrap();
         assert_eq!(count, 0);
     }
@@ -1439,13 +1438,13 @@ mod tests {
                 r#"{
                     "model": "User",
                     "action": "update",
-                    "where": { "id": "u1" },
+                    "where": { "__id": "u1" },
                     "data": {
                         "profile": {
                             "disconnect": true
                         }
                     },
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -1459,7 +1458,7 @@ mod tests {
 
         let conn = state.db_pool.get().await.unwrap();
         let profile_id: Option<String> = conn.interact(|db| {
-            db.query_row("SELECT profileId FROM User WHERE id = 'u1'", [], |row| row.get(0))
+            db.query_row("SELECT profileId FROM User WHERE __id = 'u1'", [], |row| row.get(0))
         }).await.unwrap().unwrap();
         assert!(profile_id.is_none(), "profileId should be NULL");
     }
@@ -1472,7 +1471,7 @@ mod tests {
         {
             let conn = state.db_pool.get().await.unwrap();
             conn.interact(|db| {
-                db.execute("INSERT INTO User (id, name) VALUES ('u4', 'Connect Fail User')", []).unwrap();
+                db.execute("INSERT INTO User (__id, name) VALUES ('u4', 'Connect Fail User')", []).unwrap();
             }).await.unwrap();
         }
 
@@ -1484,13 +1483,13 @@ mod tests {
                 r#"{
                     "model": "User",
                     "action": "update",
-                    "where": { "id": "u4" },
+                    "where": { "__id": "u4" },
                     "data": {
                         "profile": {
-                            "connect": { "id": "invalid_profile_id" }
+                            "connect": { "__id": "invalid_profile_id" }
                         }
                     },
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -1507,9 +1506,9 @@ mod tests {
         {
             let conn = state.db_pool.get().await.unwrap();
             conn.interact(|db| {
-                db.execute("INSERT INTO User (id, name) VALUES ('u5', 'Set User')", []).unwrap();
-                db.execute("INSERT INTO User (id, name) VALUES ('u_other', 'Other User')", []).unwrap();
-                db.execute("INSERT INTO Post (id, title, authorId) VALUES ('p5_new', 'New Post', 'u_other')", []).unwrap();
+                db.execute("INSERT INTO User (__id, name) VALUES ('u5', 'Set User')", []).unwrap();
+                db.execute("INSERT INTO User (__id, name) VALUES ('u_other', 'Other User')", []).unwrap();
+                db.execute("INSERT INTO Post (__id, title, authorId) VALUES ('p5_new', 'New Post', 'u_other')", []).unwrap();
             }).await.unwrap();
         }
 
@@ -1521,13 +1520,13 @@ mod tests {
                 r#"{
                     "model": "User",
                     "action": "update",
-                    "where": { "id": "u5" },
+                    "where": { "__id": "u5" },
                     "data": {
                         "posts": {
-                            "set": [{ "id": "p5_new" }]
+                            "set": [{ "__id": "p5_new" }]
                         }
                     },
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -1546,7 +1545,7 @@ mod tests {
 
         let conn = state.db_pool.get().await.unwrap();
         let author_id: String = conn.interact(|db| {
-            db.query_row("SELECT authorId FROM Post WHERE id = 'p5_new'", [], |row| row.get(0))
+            db.query_row("SELECT authorId FROM Post WHERE __id = 'p5_new'", [], |row| row.get(0))
         }).await.unwrap().unwrap();
         assert_eq!(author_id, "u5");
     }
@@ -1564,7 +1563,7 @@ mod tests {
                 r#"{
                     "model": "User",
                     "action": "update",
-                    "where": { "id": "u1" },
+                    "where": { "__id": "u1" },
                     "data": {
                         "tags": { "push": "new_tag" }
                     },
@@ -1601,7 +1600,7 @@ mod tests {
                 r#"{
                     "model": "User",
                     "action": "update",
-                    "where": { "id": "u1" },
+                    "where": { "__id": "u1" },
                     "data": {
                         "profile": {
                             "upsert": {
@@ -1610,7 +1609,7 @@ mod tests {
                             }
                         }
                     },
-                    "select": { "id": true, "profile": { "select": { "bio": true } } }
+                    "select": { "__id": true, "profile": { "select": { "bio": true } } }
                 }"#
             ))
             .unwrap();
@@ -1641,13 +1640,13 @@ mod tests {
                 r#"{
                     "model": "User",
                     "action": "update",
-                    "where": { "id": "u1" },
+                    "where": { "__id": "u1" },
                     "data": {
                         "posts": {
-                            "update": [{ "where": { "id": "p_does_not_exist" }, "data": { "title": "hacked" } }]
+                            "update": [{ "where": { "__id": "p_does_not_exist" }, "data": { "title": "hacked" } }]
                         }
                     },
-                    "select": { "id": true }
+                    "select": { "__id": true }
                 }"#
             ))
             .unwrap();
@@ -1769,7 +1768,7 @@ mod tests {
         
         let conn = state.db_pool.get().await.unwrap();
         let count: i64 = conn.interact(|db| {
-            db.query_row("SELECT COUNT(*) FROM Post JOIN User ON Post.authorId = User.id WHERE User.name = 'Eve' AND Post.title = 'Eve''s First Post'", [], |row| row.get(0))
+            db.query_row("SELECT COUNT(*) FROM Post JOIN User ON Post.authorId = User.__id WHERE User.name = 'Eve' AND Post.title = 'Eve''s First Post'", [], |row| row.get(0))
         }).await.unwrap().unwrap();
         assert_eq!(count, 1, "The nested post should be created for Eve");
     }
@@ -1790,12 +1789,12 @@ mod tests {
                 r#"{
                     "model": "Profile",
                     "action": "upsert",
-                    "where": { "id": "prof_auto" },
+                    "where": { "__id": "prof_auto" },
                     "create": {},
                     "update": {
                         "bio": "Updated Bio"
                     },
-                    "select": { "id": true, "bio": true }
+                    "select": { "__id": true, "bio": true }
                 }"#
             ))
             .unwrap();
@@ -1812,7 +1811,7 @@ mod tests {
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         let data = json_body["data"].as_object().unwrap();
         // The id will be gen_uuid7() because 'create' is empty
-        assert!(data["id"].as_str().unwrap() != "prof_auto");
+        assert!(data["__id"].as_str().unwrap() != "prof_auto");
         assert!(data["bio"].is_null() || data.get("bio").is_none());
     }
 
@@ -1934,7 +1933,7 @@ mod tests {
         // Add a second user with no posts
         let conn = state.db_pool.get().await.unwrap();
         conn.interact(|db| {
-            db.execute("INSERT INTO User (id, name, age) VALUES ('u2', 'Alice', 30);", []).unwrap();
+            db.execute("INSERT INTO User (__id, name, age) VALUES ('u2', 'Alice', 30);", []).unwrap();
         }).await.unwrap();
 
         let request = Request::builder()
@@ -1977,17 +1976,17 @@ mod tests {
         // Add a user with ONLY matching posts
         let conn = state.db_pool.get().await.unwrap();
         conn.interact(|db| {
-            db.execute("INSERT INTO User (id, name, age) VALUES ('u_every', 'Every', 30);", []).unwrap();
-            db.execute("INSERT INTO Post (id, title, authorId) VALUES ('p_e1', 'Good Post', 'u_every');", []).unwrap();
-            db.execute("INSERT INTO Post (id, title, authorId) VALUES ('p_e2', 'Another Good Post', 'u_every');", []).unwrap();
+            db.execute("INSERT INTO User (__id, name, age) VALUES ('u_every', 'Every', 30);", []).unwrap();
+            db.execute("INSERT INTO Post (__id, title, authorId) VALUES ('p_e1', 'Good Post', 'u_every');", []).unwrap();
+            db.execute("INSERT INTO Post (__id, title, authorId) VALUES ('p_e2', 'Another Good Post', 'u_every');", []).unwrap();
             
             // User with NO posts (should evaluate to TRUE for every)
-            db.execute("INSERT INTO User (id, name, age) VALUES ('u_empty', 'Empty', 30);", []).unwrap();
+            db.execute("INSERT INTO User (__id, name, age) VALUES ('u_empty', 'Empty', 30);", []).unwrap();
             
             // User with mixed posts (should evaluate to FALSE)
-            db.execute("INSERT INTO User (id, name, age) VALUES ('u_mixed', 'Mixed', 30);", []).unwrap();
-            db.execute("INSERT INTO Post (id, title, authorId) VALUES ('p_m1', 'Good Post', 'u_mixed');", []).unwrap();
-            db.execute("INSERT INTO Post (id, title, authorId) VALUES ('p_m2', 'Bad Post', 'u_mixed');", []).unwrap();
+            db.execute("INSERT INTO User (__id, name, age) VALUES ('u_mixed', 'Mixed', 30);", []).unwrap();
+            db.execute("INSERT INTO Post (__id, title, authorId) VALUES ('p_m1', 'Good Post', 'u_mixed');", []).unwrap();
+            db.execute("INSERT INTO Post (__id, title, authorId) VALUES ('p_m2', 'Bad Post', 'u_mixed');", []).unwrap();
         }).await.unwrap();
 
         let request = Request::builder()
@@ -2013,7 +2012,7 @@ mod tests {
         // We expect u_empty to return. 'Bob' (u1) has 'First Post', which is not 'Good Post', so Bob returns FALSE.
         // Wait, 'u_every' has 'p_e2' = 'Another Good Post', so it's FALSE. Let's make it TRUE.
         conn.interact(|db| {
-            db.execute("UPDATE Post SET title = 'Good Post' WHERE id = 'p_e2';", []).unwrap();
+            db.execute("UPDATE Post SET title = 'Good Post' WHERE __id = 'p_e2';", []).unwrap();
         }).await.unwrap();
 
         let response = app.oneshot(request).await.unwrap();
@@ -2119,7 +2118,7 @@ mod tests {
         // Add a user with NO posts
         let conn = state.db_pool.get().await.unwrap();
         conn.interact(|db| {
-            db.execute("INSERT INTO User (id, name, age) VALUES ('u2', 'Alice', 30);", []).unwrap();
+            db.execute("INSERT INTO User (__id, name, age) VALUES ('u2', 'Alice', 30);", []).unwrap();
         }).await.unwrap();
 
         let request = Request::builder()
@@ -2190,7 +2189,7 @@ mod tests {
                 r#"{
                     "model": "User",
                     "action": "update",
-                    "where": { "id": "u1" },
+                    "where": { "__id": "u1" },
                     "data": {
                         "posts": {
                             "update": [
@@ -2203,7 +2202,7 @@ mod tests {
                             ]
                         }
                     },
-                    "select": { "id": true, "posts": { "select": { "title": true } } }
+                    "select": { "__id": true, "posts": { "select": { "title": true } } }
                 }"#
             ))
             .unwrap();
@@ -2251,7 +2250,7 @@ mod tests {
                         }
                     },
                     "select": {
-                        "id": true,
+                        "__id": true,
                         "name": true,
                         "subordinates": {
                             "select": {
@@ -2296,10 +2295,10 @@ mod tests {
             unions: HashMap::new(),
         };
 
-        ast.models.insert("Config".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("Config".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Config".to_string(),
             resolved_fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
+                FieldNode { name: "__id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)] },
                 FieldNode { name: "isPublished".to_string(), field_type: AstFieldType::Scalar("Boolean".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "rating".to_string(), field_type: AstFieldType::Scalar("Float".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "scores".to_string(), field_type: AstFieldType::ScalarArray("Int".to_string()), is_optional: false, attributes: vec![] },
@@ -2313,7 +2312,7 @@ mod tests {
         let conn = pool.get().await.unwrap();
         conn.interact(|db| -> Result<(), rusqlite::Error> {
             db.execute("CREATE TABLE Config (
-                id TEXT PRIMARY KEY DEFAULT (gen_uuid7()),
+                __id TEXT PRIMARY KEY DEFAULT (gen_uuid7()),
                 isPublished INTEGER NOT NULL,
                 rating REAL NOT NULL,
                 scores TEXT NOT NULL,
@@ -2347,7 +2346,7 @@ mod tests {
                         "rating": 4.5,
                         "scores": [90, 100, 85]
                     },
-                    "select": { "id": true, "isPublished": true, "rating": true, "scores": true, "nickname": true }
+                    "select": { "__id": true, "isPublished": true, "rating": true, "scores": true, "nickname": true }
                 }"#
             ))
             .unwrap();

@@ -19,13 +19,13 @@ fn test_vfs_single_user_functional() {
     configure_connection(&mut conn).expect("Failed to configure connection");
 
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS test_data (id INTEGER PRIMARY KEY, data JSON)",
+        "CREATE TABLE IF NOT EXISTS test_data (__id INTEGER PRIMARY KEY, data JSON)",
         [],
     )
     .expect("Failed to create table");
 
     conn.execute(
-        "INSERT INTO test_data (id, data) VALUES (1, '[]')",
+        "INSERT INTO test_data (__id, data) VALUES (1, '[]')",
         [],
     )
     .expect("Failed to insert initial data");
@@ -33,7 +33,7 @@ fn test_vfs_single_user_functional() {
     // Perform sequential operations to validate functional correctness
     for i in 2..=100 {
         conn.execute(
-            "UPDATE test_data SET data = json_insert(data, '$[#]', ?1) WHERE id = 1",
+            "UPDATE test_data SET data = json_insert(data, '$[#]', ?1) WHERE __id = 1",
             [i],
         )
         .expect("Failed to update JSON array");
@@ -41,7 +41,7 @@ fn test_vfs_single_user_functional() {
 
     let count: usize = conn
         .query_row(
-            "SELECT json_array_length(data) FROM test_data WHERE id = 1",
+            "SELECT json_array_length(data) FROM test_data WHERE __id = 1",
             [],
             |row| row.get(0),
         )

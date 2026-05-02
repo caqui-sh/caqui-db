@@ -33,23 +33,23 @@ async fn test_e2e_deferrable() {
     // 2. Define schema with circular dependency using deferrable: true
     let schema = "
         model User {
-            id: String @id
             profileId: String
-            profile: Profile @relation(fields: [profileId], references: [id], deferrable: true)
+            profile: Profile @relation(fields: [profileId], references: [__id], deferrable: true)
             comments: Comment[]
+            @@id(uuid)
         }
         
         model Profile {
-            id: String @id
             userId: String
-            user: User @relation(fields: [userId], references: [id], deferrable: true)
+            user: User @relation(fields: [userId], references: [__id], deferrable: true)
+            @@id(uuid)
         }
         
         model Comment {
-            id: String @id
             text: String
             userId: String
-            user: User @relation(fields: [userId], references: [id], deferrable: true)
+            user: User @relation(fields: [userId], references: [__id], deferrable: true)
+            @@id(uuid)
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -62,13 +62,22 @@ async fn test_e2e_deferrable() {
     // 4. Create connection pool
     let pool = api_layer::db::create_pool(&db_uri);
     
+    // Debug schema
+    let conn = pool.get().await.unwrap();
+    conn.interact(|db| {
+        let mut stmt = db.prepare("SELECT sql FROM sqlite_schema WHERE type='table'").unwrap();
+        let rows: Vec<String> = stmt.query_map([], |row| row.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        println!("SCHEMA: {:#?}", rows);
+        Ok::<(), rusqlite::Error>(())
+    }).await.unwrap().unwrap();
+    
     // 5. Test Deferrable - Success within a Transaction (Circular Insert)
     let conn = pool.get().await.unwrap();
     conn.interact(|db| {
         db.execute_batch("
             BEGIN TRANSACTION;
-            INSERT INTO User (id, profileId) VALUES ('u1', 'p1');
-            INSERT INTO Profile (id, userId) VALUES ('p1', 'u1');
+            INSERT INTO User (__id, profileId) VALUES ('u1', 'p1');
+            INSERT INTO Profile (__id, userId) VALUES ('p1', 'u1');
             COMMIT;
         ").unwrap();
         Ok::<(), rusqlite::Error>(())
@@ -79,7 +88,7 @@ async fn test_e2e_deferrable() {
     conn.interact(|db| {
         let result = db.execute_batch("
             BEGIN TRANSACTION;
-            INSERT INTO User (id, profileId) VALUES ('u2', 'non-existent-profile');
+            INSERT INTO User (__id, profileId) VALUES ('u2', 'non-existent-profile');
             COMMIT;
         ");
         
@@ -89,7 +98,7 @@ async fn test_e2e_deferrable() {
         db.execute_batch("ROLLBACK;").unwrap();
         
         // Verify atomic rollback (no partial data)
-        let mut stmt = db.prepare("SELECT count(*) FROM User WHERE id = 'u2'").unwrap();
+        let mut stmt = db.prepare("SELECT count(*) FROM User WHERE __id = 'u2'").unwrap();
         let count: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
         assert_eq!(count, 0, "User u2 should have been rolled back completely");
         Ok::<(), rusqlite::Error>(())
@@ -101,24 +110,24 @@ async fn test_e2e_deferrable() {
         // Setup a second valid pair
         db.execute_batch("
             BEGIN TRANSACTION;
-            INSERT INTO User (id, profileId) VALUES ('u3', 'p3');
-            INSERT INTO Profile (id, userId) VALUES ('p3', 'u3');
+            INSERT INTO User (__id, profileId) VALUES ('u3', 'p3');
+            INSERT INTO Profile (__id, userId) VALUES ('p3', 'u3');
             COMMIT;
         ").unwrap();
         
         // Swap them!
         db.execute_batch("
             BEGIN TRANSACTION;
-            UPDATE User SET profileId = 'p3' WHERE id = 'u1';
-            UPDATE User SET profileId = 'p1' WHERE id = 'u3';
+            UPDATE User SET profileId = 'p3' WHERE __id = 'u1';
+            UPDATE User SET profileId = 'p1' WHERE __id = 'u3';
             
-            UPDATE Profile SET userId = 'u3' WHERE id = 'p1';
-            UPDATE Profile SET userId = 'u1' WHERE id = 'p3';
+            UPDATE Profile SET userId = 'u3' WHERE __id = 'p1';
+            UPDATE Profile SET userId = 'u1' WHERE __id = 'p3';
             COMMIT;
         ").unwrap();
         
         // Verify Swap Succeeded
-        let mut stmt = db.prepare("SELECT profileId FROM User WHERE id = 'u1'").unwrap();
+        let mut stmt = db.prepare("SELECT profileId FROM User WHERE __id = 'u1'").unwrap();
         let p_id: String = stmt.query_row([], |row| row.get(0)).unwrap();
         assert_eq!(p_id, "p3");
         Ok::<(), rusqlite::Error>(())
@@ -130,9 +139,9 @@ async fn test_e2e_deferrable() {
         // Setup User and Comment
         db.execute_batch("
             BEGIN TRANSACTION;
-            INSERT INTO User (id, profileId) VALUES ('u4', 'p4');
-            INSERT INTO Profile (id, userId) VALUES ('p4', 'u4');
-            INSERT INTO Comment (id, text, userId) VALUES ('c4', 'hello', 'u4');
+            INSERT INTO User (__id, profileId) VALUES ('u4', 'p4');
+            INSERT INTO Profile (__id, userId) VALUES ('p4', 'u4');
+            INSERT INTO Comment (__id, text, userId) VALUES ('c4', 'hello', 'u4');
             COMMIT;
         ").unwrap();
         
@@ -140,14 +149,14 @@ async fn test_e2e_deferrable() {
         // Because of deferrable: true, we can delete the User first inside a transaction!
         db.execute_batch("
             BEGIN TRANSACTION;
-            DELETE FROM User WHERE id = 'u4';
-            DELETE FROM Comment WHERE id = 'c4';
-            DELETE FROM Profile WHERE id = 'p4';
+            DELETE FROM User WHERE __id = 'u4';
+            DELETE FROM Comment WHERE __id = 'c4';
+            DELETE FROM Profile WHERE __id = 'p4';
             COMMIT;
         ").unwrap();
         
         // Verify completely gone
-        let mut stmt = db.prepare("SELECT count(*) FROM User WHERE id = 'u4'").unwrap();
+        let mut stmt = db.prepare("SELECT count(*) FROM User WHERE __id = 'u4'").unwrap();
         let count: i64 = stmt.query_row([], |row| row.get(0)).unwrap();
         assert_eq!(count, 0);
         Ok::<(), rusqlite::Error>(())

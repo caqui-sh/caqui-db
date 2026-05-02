@@ -61,8 +61,16 @@ fn execute_steps(
                 }
 
                 let borrowed_params: Vec<&dyn rusqlite::ToSql> = sql_params.iter().map(|b| &**b).collect();
-                let returned_id: String = match stmt.query_row(&borrowed_params[..], |row| row.get(0)) {
-                    Ok(id) => id,
+                let returned_id: String = match stmt.query_row(&borrowed_params[..], |row| {
+                    let val: rusqlite::types::Value = row.get(0)?;
+                    match val {
+                        rusqlite::types::Value::Integer(i) => Ok(i.to_string()),
+                        rusqlite::types::Value::Text(s) => Ok(s),
+                        rusqlite::types::Value::Real(f) => Ok(f.to_string()),
+                        _ => Err(rusqlite::Error::InvalidColumnType(0, "Returned ID is not string or int".to_string(), rusqlite::types::Type::Null)),
+                    }
+                }) {
+                    Ok(id_val) => id_val,
                     Err(rusqlite::Error::QueryReturnedNoRows) => {
                         if id.contains("_disconnect") || id.contains("_set") || id.contains("_cascade") {
                             "".to_string()
@@ -117,7 +125,7 @@ fn execute_steps(
 
                 let borrowed_params: Vec<&dyn rusqlite::ToSql> = sql_params.iter().map(|b| &**b).collect();
                 let exists_id: Option<String> = match stmt.query_row(&borrowed_params[..], |row| row.get(0)) {
-                    Ok(id) => Some(id),
+                    Ok(__id) => Some(__id),
                     Err(rusqlite::Error::QueryReturnedNoRows) => None,
                     Err(e) => return Err(e),
                 };

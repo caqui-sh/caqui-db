@@ -34,19 +34,21 @@ async fn test_e2e_relation_names() {
     // 2. Define schema with multiple relations
     let schema = "
         model User {
-            id: String @id
+
             name: String
             authoredPosts: Post[] @relation(\"AuthorToPost\")
             reviewedPosts: Post[] @relation(\"ReviewerToPost\")
+    @@id(uuid)
         }
         
         model Post {
-            id: String @id
+
             title: String
             authorId: String
-            author: User @relation(\"AuthorToPost\", fields: [authorId], references: [id])
+            author: User @relation(\"AuthorToPost\", fields: [authorId], references: [__id])
             reviewerId: String
-            reviewer: User @relation(\"ReviewerToPost\", fields: [reviewerId], references: [id])
+            reviewer: User @relation(\"ReviewerToPost\", fields: [reviewerId], references: [__id])
+    @@id(uuid)
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -63,17 +65,17 @@ async fn test_e2e_relation_names() {
     conn.interact(|db| {
         db.execute_batch("
             BEGIN TRANSACTION;
-            INSERT INTO User (id, name) VALUES ('u1', 'Alice');
-            INSERT INTO User (id, name) VALUES ('u2', 'Bob');
+            INSERT INTO User (__id, name) VALUES ('u1', 'Alice');
+            INSERT INTO User (__id, name) VALUES ('u2', 'Bob');
             
             -- Alice authors Post 1, Bob reviews it
-            INSERT INTO Post (id, title, authorId, reviewerId) VALUES ('p1', 'Rust Guide', 'u1', 'u2');
+            INSERT INTO Post (__id, title, authorId, reviewerId) VALUES ('p1', 'Rust Guide', 'u1', 'u2');
             
             -- Bob authors Post 2, Alice reviews it
-            INSERT INTO Post (id, title, authorId, reviewerId) VALUES ('p2', 'SQLite Tips', 'u2', 'u1');
+            INSERT INTO Post (__id, title, authorId, reviewerId) VALUES ('p2', 'SQLite Tips', 'u2', 'u1');
             
             -- Alice authors Post 3, no reviewer
-            INSERT INTO Post (id, title, authorId, reviewerId) VALUES ('p3', 'Zero Overhead', 'u1', NULL);
+            INSERT INTO Post (__id, title, authorId, reviewerId) VALUES ('p3', 'Zero Overhead', 'u1', NULL);
             COMMIT;
         ").unwrap();
         Ok::<(), rusqlite::Error>(())
@@ -144,11 +146,12 @@ async fn test_e2e_self_referential_relations() {
 
     let schema = "
         model Employee {
-            id: String @id
+
             name: String
             managerId: String?
-            manager: Employee? @relation(\"ManagerToEmployee\", fields: [managerId], references: [id])
+            manager: Employee? @relation(\"ManagerToEmployee\", fields: [managerId], references: [__id])
             directReports: Employee[] @relation(\"ManagerToEmployee\")
+    @@id(uuid)
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -163,10 +166,10 @@ async fn test_e2e_self_referential_relations() {
     conn.interact(|db| {
         db.execute_batch("
             BEGIN TRANSACTION;
-            INSERT INTO Employee (id, name, managerId) VALUES ('e1', 'CEO', 'e1');
-            INSERT INTO Employee (id, name, managerId) VALUES ('e2', 'VP', 'e1');
-            INSERT INTO Employee (id, name, managerId) VALUES ('e3', 'Manager', 'e2');
-            INSERT INTO Employee (id, name, managerId) VALUES ('e4', 'IC', 'e3');
+            INSERT INTO Employee (__id, name, managerId) VALUES ('e1', 'CEO', 'e1');
+            INSERT INTO Employee (__id, name, managerId) VALUES ('e2', 'VP', 'e1');
+            INSERT INTO Employee (__id, name, managerId) VALUES ('e3', 'Manager', 'e2');
+            INSERT INTO Employee (__id, name, managerId) VALUES ('e4', 'IC', 'e3');
             COMMIT;
         ").unwrap();
         Ok::<(), rusqlite::Error>(())

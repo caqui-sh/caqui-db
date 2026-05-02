@@ -186,7 +186,7 @@ pub fn hydrate_payload_to_ir(
     let primary_key = model_def.resolved_fields.iter()
         .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
         .map(|f| f.name.clone())
-        .unwrap_or_else(|| "id".to_string());
+        .unwrap_or_else(|| "__id".to_string());
 
     Ok(QueryNode {
         source: query_compiler::ir::QueryIrSource::Table(model_name.to_string()),
@@ -212,10 +212,10 @@ mod tests {
             unions: std::collections::HashMap::new(),
         };
 
-        ast.models.insert("User".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("User".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "User".to_string(),
             resolved_fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "__id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "tags".to_string(), field_type: AstFieldType::ScalarArray("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "password".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Ignore] },
@@ -226,25 +226,25 @@ mod tests {
             ]
         });
 
-        ast.models.insert("Post".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("Post".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Post".to_string(),
             resolved_fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "__id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "title".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "comments".to_string(), field_type: AstFieldType::RelationArray("Comment".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
 
-        ast.models.insert("Comment".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("Comment".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Comment".to_string(),
             resolved_fields: vec![
-                FieldNode { name: "id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "__id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "body".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "author".to_string(), field_type: AstFieldType::Relation("User".to_string()), is_optional: false, attributes: vec![] },
             ]
         });
 
-        ast.models.insert("Profile".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("Profile".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Profile".to_string(),
             resolved_fields: vec![
                 FieldNode { name: "bio".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
@@ -261,13 +261,13 @@ mod tests {
         let ast = mock_ast();
         let payload = json!({
             "select": {
-                "id": true,
+                "__id": true,
                 "posts": {
                     "select": {
-                        "id": true,
+                        "__id": true,
                         "comments": {
                             "select": {
-                                "id": true,
+                                "__id": true,
                                 "author": {
                                     "select": {
                                         "name": true
@@ -320,7 +320,7 @@ mod tests {
         let ast = mock_ast();
         let payload = json!({
             "select": {
-                "id": true,
+                "__id": true,
                 "posts": {
                     "select": {
                         "title": true
@@ -407,7 +407,7 @@ mod tests {
         let payload = json!({
             "select": {
                 "content": {
-                    "UnknownModel": { "select": { "id": true } }
+                    "UnknownModel": { "select": { "__id": true } }
                 }
             }
         });
@@ -420,7 +420,7 @@ mod tests {
     fn test_hydrate_limit_parsed() {
         let ast = mock_ast();
         let payload = json!({
-            "select": { "id": true },
+            "select": { "__id": true },
             "limit": 10
         });
         let mut alias_counter = 0;
@@ -470,7 +470,7 @@ mod tests {
     #[test]
     fn test_hydrate_invalid_model() {
         let ast = mock_ast();
-        let payload = json!({ "select": { "id": true } });
+        let payload = json!({ "select": { "__id": true } });
         let mut alias_counter = 0;
         
         let err = hydrate_payload_to_ir(&ast, "UnknownModel", &payload, &mut alias_counter, 0).unwrap_err();
@@ -501,7 +501,7 @@ mod tests {
     fn test_hydrate_pagination_and_filtering() {
         let ast = mock_ast();
         let payload = json!({
-            "select": { "id": true },
+            "select": { "__id": true },
             "limit": 10,
             "skip": 20,
             "where": {
@@ -566,7 +566,7 @@ mod tests {
     fn test_hydrate_where_clause_invalid_field() {
         let ast = mock_ast();
         let payload = json!({
-            "select": { "id": true },
+            "select": { "__id": true },
             "where": { "hacker_field": "test" }
         });
         
@@ -579,7 +579,7 @@ mod tests {
     fn test_hydrate_where_clause_ignored_field() {
         let ast = mock_ast();
         let payload = json!({
-            "select": { "id": true },
+            "select": { "__id": true },
             "where": { "password": "123" }
         });
         
@@ -592,7 +592,7 @@ mod tests {
     fn test_hydrate_null_filters() {
         let ast = mock_ast();
         let payload = json!({
-            "select": { "id": true },
+            "select": { "__id": true },
             "where": { 
                 "AND": [
                     { "name": null },
@@ -624,7 +624,7 @@ mod tests {
             FieldNode { name: "manager".to_string(), field_type: AstFieldType::Relation("User".to_string()), is_optional: true, attributes: vec![] }
         );
         
-        let mut select_block = json!({"id": true});
+        let mut select_block = json!({"__id": true});
         for _ in 0..15 {
             select_block = json!({
                 "manager": {
@@ -649,7 +649,7 @@ mod tests {
         let mut ast = mock_ast();
         
         // Let's create a new model with a custom ID field named "uuid"
-        ast.models.insert("Device".to_string(), ModelNode { extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        ast.models.insert("Device".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
             name: "Device".to_string(),
             resolved_fields: vec![
                 FieldNode { name: "uuid".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id] },
@@ -711,7 +711,7 @@ fn compile_polymorphic_read(
                     schema_parser::ast::AstFieldType::ScalarArray(_) => inner_selections.push(query_compiler::ir::SelectField::ScalarArray(field_name.clone())),
                     _ => {}
                 }
-            } else if field_name.starts_with("__") {
+            } else if field_name.starts_with("__") && field_name != "__id" && field_name != "__kind" {
                 if model.name == field_name.replace("__", "") {
                     inner_selections.push(query_compiler::ir::SelectField::SyntheticNull(format!("1 AS {}", field_name.clone())));
                 } else if model.resolved_bases.contains(&field_name.replace("__", "")) {
@@ -737,7 +737,7 @@ fn compile_polymorphic_read(
         let primary_key = model.resolved_fields.iter()
             .find(|f| f.attributes.iter().any(|a| matches!(a, schema_parser::ast::FieldAttribute::Id)))
             .map(|f| f.name.clone())
-            .unwrap_or_else(|| "id".to_string());
+            .unwrap_or_else(|| "__id".to_string());
             
         branches.push(query_compiler::ir::QueryNode {
             source: query_compiler::ir::QueryIrSource::Table(model.name.clone()),
@@ -830,7 +830,7 @@ fn compile_polymorphic_read(
                     if is_forward {
                         symmetric_projection.insert(resolved_fk.clone()); // MUST inject FK into inner payload so outer JOIN works
                     } else {
-                        let pk = base_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, schema_parser::ast::FieldAttribute::Id))).map(|f| f.name.clone()).unwrap_or_else(|| "id".to_string());
+                        let pk = base_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, schema_parser::ast::FieldAttribute::Id))).map(|f| f.name.clone()).unwrap_or_else(|| "__id".to_string());
                         symmetric_projection.insert(pk);
                     }
                     
@@ -859,8 +859,11 @@ fn compile_polymorphic_read(
                 },
                 _ => {}
             }
-        } else if field_name.starts_with("__") {
+        } else if field_name.starts_with("__") && field_name != "__id" && field_name != "__kind" {
             outer_selections.push(query_compiler::ir::SelectField::SyntheticNull(field_name.clone()));
+        } else if field_name == "__id" || field_name == "__kind" {
+            // These are implicit base fields that are pushed down to concrete models
+            outer_selections.push(query_compiler::ir::SelectField::Scalar(field_name.clone()));
         } else {
             return Err(format!("Invalid field '{}' on '{}'.", field_name, base_def.name));
         }
@@ -869,7 +872,7 @@ fn compile_polymorphic_read(
     let primary_key = base_def.resolved_fields.iter()
         .find(|f| f.attributes.iter().any(|a| matches!(a, schema_parser::ast::FieldAttribute::Id)))
         .map(|f| f.name.clone())
-        .unwrap_or_else(|| "id".to_string());
+        .unwrap_or_else(|| "__id".to_string());
 
     Ok(query_compiler::ir::QueryNode {
         source: query_compiler::ir::QueryIrSource::Polymorphic {
