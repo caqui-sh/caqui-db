@@ -138,8 +138,8 @@ async fn test_e2e_nested_polymorphic_relations() {
         "select": { 
             "name": true,
             "members": {
-                "Engineer": { "select": { "id": true, "teamId": true, "language": true } },
-                "Manager": { "select": { "id": true, "teamId": true, "directReports": true } }
+                "Engineer": { "select": { "id": true, "teamId": true, "language": true, "__kind": true } },
+                "Manager": { "select": { "id": true, "teamId": true, "directReports": true, "__kind": true } }
             }
         }
     });
@@ -162,9 +162,11 @@ async fn test_e2e_nested_polymorphic_relations() {
     if members.len() > 0 {
         let engineer = members.iter().find(|m| m.get("language").is_some()).unwrap();
         assert_eq!(engineer["id"], "e1");
+        assert_eq!(engineer["__kind"], "Engineer");
         
         let manager = members.iter().find(|m| m.get("directReports").is_some()).unwrap();
         assert_eq!(manager["id"], "m1");
+        assert_eq!(manager["__kind"], "Manager");
     }
 }
 

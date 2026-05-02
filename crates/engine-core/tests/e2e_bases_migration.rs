@@ -62,6 +62,8 @@ fn test_e2e_ddl_ignores_bases_and_injects_markers() {
     assert!(columns.contains("id"), "Inherited 'id' column missing.");
     assert!(columns.contains("name"), "Native 'name' column missing.");
     assert!(columns.contains("__Identifiable"), "Synthetic '__Identifiable' marker missing.");
+    assert!(columns.contains("__User"), "Synthetic '__User' model marker missing.");
+    assert!(columns.contains("__kind"), "Synthetic '__kind' marker missing.");
 }
 
 #[test]

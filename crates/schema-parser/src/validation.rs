@@ -179,6 +179,28 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
             current_fields.push(synthetic_field);
         }
 
+        let model_marker_name = format!("__{}", model.name);
+        if current_fields.iter().any(|f| f.name == model_marker_name) {
+            return Err(ValidationError(format!("Model '{}' cannot declare reserved field name '{}'.", model.name, model_marker_name)));
+        }
+        current_fields.push(FieldNode {
+            name: model_marker_name,
+            field_type: AstFieldType::Scalar("Boolean".to_string()),
+            is_optional: false,
+            attributes: vec![FieldAttribute::Default(DefaultFunc::Static("true".to_string()))],
+        });
+
+        let kind_marker_name = "__kind".to_string();
+        if current_fields.iter().any(|f| f.name == kind_marker_name) {
+            return Err(ValidationError(format!("Model '{}' cannot declare reserved field name '{}'.", model.name, kind_marker_name)));
+        }
+        current_fields.push(FieldNode {
+            name: kind_marker_name,
+            field_type: AstFieldType::Scalar("String".to_string()),
+            is_optional: false,
+            attributes: vec![FieldAttribute::Default(DefaultFunc::Static(model.name.clone()))],
+        });
+
         current_fields.sort_by(|a, b| a.name.cmp(&b.name));
 
         resolution_registry.insert(model.name.clone(), ResolvedState {
@@ -937,6 +959,8 @@ mod tests {
         assert!(field_names.contains(&"name".to_string()));
         assert!(field_names.contains(&"__Node".to_string()));
         assert!(field_names.contains(&"__Timestamped".to_string()));
+        assert!(field_names.contains(&"__User".to_string()));
+        assert!(field_names.contains(&"__kind".to_string()));
 
         let node_flag = user.resolved_fields.iter().find(|f| f.name == "__Node").unwrap();
         assert_eq!(node_flag.is_optional, false);

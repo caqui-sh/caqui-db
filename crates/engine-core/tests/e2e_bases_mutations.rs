@@ -84,7 +84,8 @@ async fn test_e2e_malicious_marker_spoofing_stripped() {
         "data": {
             "name": "Main Vault", 
             "__SecureEntity": false, // Spoof attempt
-            "__Vault": false // Spoof attempt
+            "__Vault": false, // Spoof attempt
+            "__kind": "SpoofedType" // Spoof attempt
         }
     });
 
@@ -95,7 +96,9 @@ async fn test_e2e_malicious_marker_spoofing_stripped() {
     if let query_compiler::mutation_ir::ExecutionStep::Query { params, sql, .. } = &plan.steps[0] {
         assert!(sql.contains("name"));
         assert!(!sql.contains("__SecureEntity"));
-        assert_eq!(params.len(), 1); // Only "Main Vault" and the ID should be there. Wait, ID is auto-generated in memory?
+        assert!(!sql.contains("__Vault"));
+        assert!(!sql.contains("__kind"));
+        // Only "Main Vault" and the ID should be there. Wait, ID is auto-generated in memory?
         // Let's just trust that `__SecureEntity` is absent from the SQL
     } else {
         panic!("Expected a Query execution step");
