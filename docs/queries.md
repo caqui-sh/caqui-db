@@ -15,7 +15,7 @@ curl -X POST http://localhost:4000/api/v1/query \
     "model": "User",
     "action": "findMany",
     "select": {
-        "id": true,
+        "__id": true,
         "name": true
     }
   }'
@@ -30,7 +30,7 @@ The `select` block allows you to specify exactly which fields you want returned.
   "model": "User",
   "action": "findMany",
   "select": {
-    "id": true,
+    "__id": true,
     "email": true,
     "profile": {
       "select": {
@@ -66,7 +66,7 @@ Use the `where` block to filter your results.
     "status": { "in": ["ACTIVE", "PENDING"] },
     "role": { "notEq": "GUEST" }
   },
-  "select": { "id": true }
+  "select": { "__id": true }
 }
 ```
 
@@ -89,7 +89,7 @@ Combine multiple conditions using `AND` and `OR`.
       }
     ]
   },
-  "select": { "id": true }
+  "select": { "__id": true }
 }
 ```
 
@@ -105,7 +105,7 @@ Combine multiple conditions using `AND` and `OR`.
   "where": {
     "deletedAt": "IsNull"
   },
-  "select": { "id": true }
+  "select": { "__id": true }
 }
 ```
 
@@ -130,7 +130,7 @@ Combine multiple conditions using `AND` and `OR`.
       }
     }
   },
-  "select": { "id": true }
+  "select": { "__id": true }
 }
 ```
 
@@ -150,7 +150,7 @@ Combine multiple conditions using `AND` and `OR`.
       }
     }
   },
-  "select": { "id": true }
+  "select": { "__id": true }
 }
 ```
 
@@ -163,7 +163,7 @@ When a field is defined as a `union` or a union array in your schema, you must s
   "model": "SearchQuery",
   "action": "findMany",
   "select": {
-    "id": true,
+    "__id": true,
     "results": {
       "Post": { 
         "select": { "title": true } 

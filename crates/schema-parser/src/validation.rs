@@ -802,27 +802,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
-    fn test_implicit_relation_missing_target_id() {
-        // Here Author lacks an @id field
-        let input = "
-            model Author {
-                name: String
-            }
-            model Book {
-                @@id(uuid)
-                author: Author
-            }
-        ";
-        // Parse the schema. Note: Pass 2 normally catches missing ID for Author itself.
-        // Wait, Pass 2 will fail first: "Model 'Author' must have exactly one field with the '@id' attribute, found 0."
-        // That is totally fine and correct. Let's just assert that it fails.
-        let ast = crate::parser::parse_schema(input).unwrap();
-        let result = validate_schema(ast);
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_implicit_relation_self_referential() {
         let input = "
             model Employee {

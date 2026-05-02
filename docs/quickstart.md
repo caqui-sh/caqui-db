@@ -13,17 +13,17 @@ This will set up the basic directory structure and configuration files you need.
 Next, define your data models using the Caqui Schema language. Open `schema.cq` and add the following example:
 ```
 model User {
-  id    ID     @id
   name  String
   email String @unique
-  posts [Post]
+  posts Post[]
+  @@id(uuid)
 }
 
 model Post {
-  id       ID     @id
   title    String
   content  String
   author   User   @relation
+  @@id(uuid)
 }
 ```
 

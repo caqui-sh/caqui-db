@@ -26,8 +26,6 @@ The request was malformed or violated schema rules.
     - **Actionable Resolution:** Check your `schema.cq` file to ensure the field is defined exactly as requested.
   - `Missing 'select' projection block`: All `findMany` and mutation actions require a `select` block.
     - **Actionable Resolution:** Add a `select` block to your query payload to specify the fields you want returned.
-  - `Security Exception: Prohibited write to ignored field 'secret'`: You attempted to write to a field marked with `@ignore`.
-    - **Actionable Resolution:** Remove the ignored field from your mutation payload.
   - `Security Exception: Model 'Ghost' undefined`: You requested a model not found in the schema.
     - **Actionable Resolution:** Verify the model name in your query matches a defined model in `schema.cq`.
   - `Arrays cannot be optional`: You defined an array field in a way that allows it to be null, which is not supported.

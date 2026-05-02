@@ -18,7 +18,7 @@ Use the `create` action to insert new records.
     "name": "Alice",
     "age": 25
   },
-  "select": { "id": true, "name": true }
+  "select": { "__id": true, "name": true }
 }
 ```
 
@@ -30,11 +30,11 @@ Use the `update` action to modify existing records. You must provide a `where` b
 {
   "model": "User",
   "action": "update",
-  "where": { "id": "user_id_123" },
+  "where": { "__id": "user_id_123" },
   "data": {
     "age": 26
   },
-  "select": { "id": true, "age": true }
+  "select": { "__id": true, "age": true }
 }
 ```
 
@@ -46,8 +46,8 @@ Use the `delete` action to remove records. You must provide a `where` block to i
 {
   "model": "User",
   "action": "delete",
-  "where": { "id": "user_id_123" },
-  "select": { "id": true }
+  "where": { "__id": "user_id_123" },
+  "select": { "__id": true }
 }
 ```
 
@@ -67,7 +67,7 @@ The `upsert` action allows you to update an existing record or create a new one 
   "update": {
     "name": "Alice Updated"
   },
-  "select": { "id": true, "name": true }
+  "select": { "__id": true, "name": true }
 }
 ```
 
@@ -92,7 +92,7 @@ You can create related records inline.
       ]
     }
   },
-  "select": { "id": true }
+  "select": { "__id": true }
 }
 ```
 
@@ -104,18 +104,18 @@ You can update related records inline. You must provide a `where` block to ident
 {
   "model": "Author",
   "action": "update",
-  "where": { "id": "author_123" },
+  "where": { "__id": "author_123" },
   "data": {
     "posts": {
       "update": [
         {
-          "where": { "id": "post_456" },
+          "where": { "__id": "post_456" },
           "data": { "title": "New Title" }
         }
       ]
     }
   },
-  "select": { "id": true }
+  "select": { "__id": true }
 }
 ```
 
@@ -127,15 +127,15 @@ You can delete related records inline using a `where` block.
 {
   "model": "Author",
   "action": "update",
-  "where": { "id": "author_123" },
+  "where": { "__id": "author_123" },
   "data": {
     "posts": {
       "delete": [
-        { "id": "post_789" }
+        { "__id": "post_789" }
       ]
     }
   },
-  "select": { "id": true }
+  "select": { "__id": true }
 }
 ```
 
@@ -147,19 +147,19 @@ You can perform upsert operations on related records inline. Like the root-level
 {
   "model": "Author",
   "action": "update",
-  "where": { "id": "author_123" },
+  "where": { "__id": "author_123" },
   "data": {
     "posts": {
       "upsert": [
         {
-          "where": { "id": "post_101" },
+          "where": { "__id": "post_101" },
           "create": { "title": "A Brand New Post" },
           "update": { "title": "An Updated Post" }
         }
       ]
     }
   },
-  "select": { "id": true }
+  "select": { "__id": true }
 }
 ```
 
@@ -175,19 +175,19 @@ Instead of creating or deleting related records, you can safely link or unlink e
 {
   "model": "Post",
   "action": "update",
-  "where": { "id": "post_123" },
+  "where": { "__id": "post_123" },
   "data": {
     "author": {
-      "connect": { "id": "author_456" }
+      "connect": { "__id": "author_456" }
     },
     "tags": {
       "set": [
-        { "id": "tag_1" },
-        { "id": "tag_2" }
+        { "__id": "tag_1" },
+        { "__id": "tag_2" }
       ]
     }
   },
-  "select": { "id": true }
+  "select": { "__id": true }
 }
 ```
 
@@ -199,16 +199,16 @@ To append items to a `ScalarArray` directly, use the `push` operator.
 {
   "model": "User",
   "action": "update",
-  "where": { "id": "user_123" },
+  "where": { "__id": "user_123" },
   "data": {
     "roles": { "push": "EDITOR" }
   },
-  "select": { "id": true }
+  "select": { "__id": true }
 }
 ```
 
 ## Security & Constraints
 
 - **Transactional Integrity**: If any part of a nested mutation fails (e.g., a foreign key violation in a child record), the entire transaction is rolled back.
-- **`@ignore` enforcement**: Fields marked with `@ignore` in the schema cannot be written to via the API.
+- **`` enforcement**: Fields marked with `` in the schema cannot be written to via the API.
 - **Unique Enforcement**: `caqui` checks for unique constraint violations before attempting database writes to provide clear error messages.

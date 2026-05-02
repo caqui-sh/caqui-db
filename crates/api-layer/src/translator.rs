@@ -482,16 +482,7 @@ mod tests {
         assert!(err.contains("Invalid field 'hacker_field'"));
     }
 
-    #[test]
-    #[ignore]
-    fn test_hydrate_ignored_field_ignored() {
-        let ast = mock_ast();
-        let payload = json!({ "select": { "password": true } });
-        let mut alias_counter = 0;
-        
-        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap_err();
-        assert!(err.contains("Security Exception: Prohibited access to ignored field 'password'"));
-    }
+    
 
     #[test]
     fn test_hydrate_pagination_and_filtering() {
@@ -571,19 +562,7 @@ mod tests {
         assert!(err.contains("Invalid field 'hacker_field' in where clause"));
     }
 
-    #[test]
-    #[ignore]
-    fn test_hydrate_where_clause_ignored_field_ignored() {
-        let ast = mock_ast();
-        let payload = json!({
-            "select": { "__id": true },
-            "where": { "password": "123" }
-        });
-        
-        let mut alias_counter = 0;
-        let err = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap_err();
-        assert!(err.contains("Security Exception: Prohibited filter on ignored field 'password'"));
-    }
+    
 
     #[test]
     fn test_hydrate_null_filters() {

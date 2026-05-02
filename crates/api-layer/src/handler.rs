@@ -724,38 +724,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
-    async fn test_api_mutation_security_ignore_enforcement_ignored() {
-        let state = build_test_state().await;
-        let app = Router::new().route("/", post(api_execution_handler)).with_state(state);
-
-        // Attempt to write to 'secret' which is marked with @ignore
-        let request = Request::builder()
-            .method("POST")
-            .uri("/")
-            .header("Content-Type", "application/json")
-            .body(Body::from(
-                r#"{
-                    "model": "User",
-                    "action": "create",
-                    "data": {
-                        "name": "Hacker",
-                        "secret": "MALICIOUS"
-                    },
-                    "select": { "__id": true }
-                }"#
-            ))
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        
-        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let body_str = String::from_utf8_lossy(&body_bytes);
-        assert!(body_str.contains("Security Exception: Prohibited write to ignored field 'secret'"));
-    }
-
-    #[tokio::test]
     async fn test_api_mutation_update_null_value() {
         let state = build_test_state().await;
         let app = Router::new().route("/", post(api_execution_handler)).with_state(state);

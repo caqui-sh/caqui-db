@@ -4,12 +4,12 @@
 
 ## Models
 
-A `model` represents a database table and an entity in your API.
+A `model` represents a database table and an entity in your API. All models possess an automatic primary key field named `__id`.
 
 ```
 model User {
-  id:   String @id @default(uuid())
   name: String
+  @@id(uuid)
 }
 ```
 
@@ -38,8 +38,8 @@ Scalar and model types can be modified to change their cardinality or nullabilit
 
 ```
 model Post {
-  id:    String   @id @default(uuid())
   tags:  String[]
+  @@id(uuid)
 }
 ```
 
@@ -51,13 +51,14 @@ Relationships link models together. `caqui` handles foreign key generation and d
 
 ```
 model Author {
-  id:    String @id @default(uuid())
   posts: Post[]
+  @@id(uuid)
 }
 
 model Post {
-  id:     String @id @default(uuid())
+  title:  String
   author: Author
+  @@id(uuid)
 }
 ```
 
@@ -65,14 +66,14 @@ model Post {
 
 ```
 model User {
-  id:      String   @id @default(uuid())
-  profile: Profile? @relation(fields: [profileId], references: [id])
+  profile: Profile? @relation(fields: [profileId], references: [__id])
   profileId: String? @unique
+  @@id(uuid)
 }
 
 model Profile {
-  id:   String @id @default(uuid())
   user: User?
+  @@id(uuid)
 }
 ```
 
@@ -82,21 +83,21 @@ N:M relationships require an explicit join table model.
 
 ```
 model User {
-  id:    String @id @default(uuid())
   roles: UserRole[]
+  @@id(uuid)
 }
 
 model Role {
-  id:    String @id @default(uuid())
   users: UserRole[]
+  @@id(uuid)
 }
 
 model UserRole {
   userId: String
   roleId: String
-  user:   User @relation(fields: [userId], references: [id])
-  role:   Role @relation(fields: [roleId], references: [id])
-  @@id([userId, roleId])
+  user:   User @relation(fields: [userId], references: [__id])
+  role:   Role @relation(fields: [roleId], references: [__id])
+  @@id(uuid)
 }
 ```
 
@@ -108,8 +109,8 @@ Unions allow a single property to return different models dynamically.
 union SearchResult = Post | Author
 
 model SearchQuery {
-  id:      String       @id @default(uuid())
   results: SearchResult
+  @@id(uuid)
 }
 ```
 
@@ -119,20 +120,10 @@ Attributes customize the behavior of individual fields.
 
 | Attribute | Description |
 | :--- | :--- |
-| `@id` | Marks the field as the Primary Key. **Must not be optional (`?`).** |
 | `@unique` | Ensures all values in the column are unique. |
-| `@default(...)` | Sets a default value (e.g., `uuid()`, `autoincrement()`, `now()`, or static values like `"string"` or `42`). |
-| `@updatedAt` | Automatically updates the timestamp on modification. |
+| `@updatedAt` | Automatically updates the timestamp on modification. Defaults to `CURRENT_TIMESTAMP` on creation. |
 | `@map("name")` | Maps the field to a different underlying database column name. |
-| `@ignore` | Prevents the field from being read or written via the API. |
 | `@relation(...)` | Defines the relationship. Accepts `fields` (local keys), `references` (foreign keys), `onDelete` (e.g., `CASCADE`, `SET NULL`, `RESTRICT`, `NO ACTION`), and `deferrable` (for deferring constraint checks). |
-
-### Functions in `@default`
-
-- `uuid()`: Generates a sequential UUIDv7.
-- `autoincrement()`: Automatically incrementing IDs.
-- `now()`: The current UTC timestamp.
-- `"static"`: A static string, number, or boolean default.
 
 ## Block Attributes
 
@@ -142,4 +133,4 @@ Attributes that apply to the entire model.
 | :--- | :--- |
 | `@@unique([f1, f2])` | Defines a composite unique constraint. |
 | `@@index([f1, f2])` | Defines a composite database index. |
-| `@@id([f1, f2])` | Defines a composite primary key. |
+| `@@id(strategy)` | Defines the primary key strategy (`uuid`, `cuid`, or `autoincrement`). |

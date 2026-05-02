@@ -55,7 +55,7 @@ SQLite allows developers to override its low-level OS interface. Before any conn
 
 **Concurrency Note:** Full multi-writer concurrency support within this custom VFS is currently a **planned enhancement**. While we enforce `journal_mode=WAL` and `busy_timeout=5000` to maximize safety and throughput, the current VFS implementation is optimized for single-writer consistency. Deep concurrent write support is a priority for the next major phase of development.
 
-During connection pool bootstrapping (`deadpool-sqlite`), `caqui` also injects native Rust closures directly into the SQLite runtime. For example, `@default(uuid())` is handled by compiling a Rust `uuid::Uuid::now_v7()` generator closure into the database connection, exposing it natively inside SQL expressions.
+During connection pool bootstrapping (`deadpool-sqlite`), `caqui` also injects native Rust closures directly into the SQLite runtime. For example, automatic primary keys (configured via `@@id(uuid)`) are handled by compiling a Rust `uuid::Uuid::now_v7()` generator closure into the database connection, exposing it natively inside SQL expressions as `gen_uuid7()`.
 
 ### Phase 2: The Schema Parser and DSL Engine
 `crates/schema-parser`
@@ -81,7 +81,6 @@ This subsystem dynamically bridges the gap between dynamic JSON requests and the
 `crates/api-layer`
 Built heavily on `Axum` and `Tokio`. 
 Incoming dynamic HTTP JSON payloads are evaluated Just-In-Time (JIT) against the AST. If a user requests a field that doesn't exist, the router returns a fast $O(1)$ Hash Map rejection. 
-It acts as a physical barrier implementing the **Security Interceptor**—if a user requests a column tagged with `@ignore` (like password hashes), the API layer throws a Security Exception before the SQL query is even compiled, ensuring absolute boundary protection.
 
 When validated, the payload is compiled by Phase 4, thrown into the thread-safe `deadpool-sqlite` background worker pool via `.interact()` (to prevent starving `Tokio` async workers), and the returned JSON bytes are pushed out to the HTTP client natively.
 
@@ -95,19 +94,15 @@ To maintain feature parity with modern DSLs (like Prisma or GraphQL), the follow
 - **Syntax:** `@@unique([firstName, lastName])`
 - **Use Case:** Highly common in join tables (e.g., `@@unique([userId, postId])` for a `Like` tracking table). Our schema parser currently handles field-level `@unique`, but block-level composite unique enforcement is needed for complex relationships.
 
-### 2. Database Mapping (`@map` / `@@map`)
-- **Syntax:** `@@map("tbl_users")` or `@map("first_name")`
-- **Use Case:** Allows developers to expose clean, idiomatic camelCase names in their API and JSON responses while physically interacting with a legacy database that enforces snake_case or prefix-based schemas.
-
-### 3. Composite Foreign Keys
+### 2. Composite Foreign Keys
 - **Syntax:** `@relation(fields: [f1, f2], references: [r1, r2])`
 - **Use Case:** Required for interacting with complex legacy databases that use composite primary keys. The AST `fields` and `references` vectors already natively support multiple values, but the SQL generation and runtime Query Compiler `JOIN` logic needs expansion to support parsing arrays of keys.
 
-### 4. Batch Operations
+### 3. Batch Operations
 - **Syntax:** `action: "createMany"`, `action: "updateMany"`, `action: "deleteMany"`
 - **Use Case:** High-performance bulk data modifications. Requires query chunking to circumvent SQLite's parameter limits and logic to return aggregate counts (`{ count: N }`) instead of materializing thousands of objects into application memory.
 
-### 5. Advanced AST Field Types
+### 4. Advanced AST Field Types
 - **Enums:** Native support for schema enumeration types (e.g., `enum Role { ADMIN, USER }`).
 - **JSON / JSONB:** A dedicated JSON scalar for structured payloads, allowing for native database JSON operations.
 - **Bytes / Binary Data:** A scalar type for `BLOB` / binary storage (e.g., images, file buffers).
