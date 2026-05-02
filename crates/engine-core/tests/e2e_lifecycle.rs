@@ -468,8 +468,18 @@ fn test_e2e_custom_functions_and_triggers() {
         ).unwrap();
         // Register custom functions manually here so the INSERT works natively
         api_layer::db::register_custom_functions(&conn).unwrap();
-        conn.execute("INSERT INTO Item (name) VALUES ('Test Item')", []).unwrap();
-        conn.execute("UPDATE Item SET name = 'Updated Item'", []).unwrap();
+        
+        conn.execute("INSERT INTO Item (__id, name) VALUES ('item_1', 'Test Item')", []).unwrap();
+        
+        let initial_updated_at: String = conn.query_row("SELECT __updatedAt FROM Item WHERE __id = 'item_1'", [], |r| r.get(0)).unwrap();
+        
+        std::thread::sleep(Duration::from_secs(1));
+        
+        conn.execute("UPDATE Item SET name = 'Updated Item' WHERE __id = 'item_1'", []).unwrap();
+        
+        let new_updated_at: String = conn.query_row("SELECT __updatedAt FROM Item WHERE __id = 'item_1'", [], |r| r.get(0)).unwrap();
+        
+        assert!(new_updated_at > initial_updated_at, "Temporal progression failed: {} is not greater than {}", new_updated_at, initial_updated_at);
     }
 
     let mut api_server = Command::new(caqui_bin).env("PORT", "4003").args(&["api", "start"]).current_dir(workspace).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
@@ -493,7 +503,6 @@ fn test_e2e_custom_functions_and_triggers() {
     let __id = items[0]["__id"].as_str().unwrap();
     let updated_at = items[0]["__updatedAt"].as_str().unwrap();
 
-    assert_eq!(__id.len(), 36);
-    assert!(__id.contains('-'));
+    assert_eq!(__id, "item_1");
     assert!(!updated_at.is_empty());
 }

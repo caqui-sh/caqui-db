@@ -116,3 +116,75 @@ fn test_e2e_retroactive_trait_implementation() {
     let auditable_flag: i64 = row.get(0).unwrap();
     assert_eq!(auditable_flag, 1, "Retroactive trait implementation failed to set default 1.");
 }
+
+#[test]
+fn test_e2e_track_migration() {
+    let dir = tempdir().unwrap();
+    let workspace = dir.path();
+    engine_core::vfs::bootstrap_custom_vfs();
+    
+    let caqui_bin = env!("CARGO_BIN_EXE_caqui");
+
+    let mut git_init = Command::new("git");
+    git_init.arg("init").current_dir(workspace);
+    run_cmd(git_init);
+
+    // Initial Schema without @@track
+    let schema_v1 = r#"
+        model Config {
+            settings: String
+            @@id(uuid)
+        }
+    "#;
+    fs::write(workspace.join("schema.cq"), schema_v1).unwrap();
+
+    let mut cmd1 = Command::new(caqui_bin);
+    cmd1.args(&["schema", "push"]).current_dir(workspace);
+    run_cmd(cmd1);
+
+    // Now update schema to include @@track
+    let schema_v2 = r#"
+        model Config {
+            settings: String
+            @@track
+            @@id(uuid)
+        }
+    "#;
+    fs::write(workspace.join("schema.cq"), schema_v2).unwrap();
+
+    let mut cmd2 = Command::new(caqui_bin);
+    cmd2.args(&["schema", "push"]).current_dir(workspace);
+    run_cmd(cmd2);
+
+    let db_path = workspace.join("app.db");
+    let db_uri = format!("file:{}?vfs=git", db_path.display());
+    let conn = rusqlite::Connection::open_with_flags(
+        &db_uri,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+    ).unwrap();
+
+    // Verify the __updatedAt column exists with a default constraint
+    let mut stmt = conn.prepare("PRAGMA table_info(Config)").unwrap();
+    let iter = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(1).unwrap(), // name
+            row.get::<_, Option<String>>(4).unwrap() // dflt_value
+        ))
+    }).unwrap();
+
+    let mut found = false;
+    for result in iter {
+        let (name, default) = result.unwrap();
+        if name == "__updatedAt" {
+            found = true;
+            assert!(default.is_some(), "Expected default value for __updatedAt");
+            assert_eq!(default.unwrap().to_uppercase(), "CURRENT_TIMESTAMP", "Default value should be CURRENT_TIMESTAMP");
+        }
+    }
+    assert!(found, "Column __updatedAt was not added during migration.");
+
+    // Verify the trigger was created
+    let mut stmt = conn.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name='Config' AND name LIKE 'trg_update_Config___updatedAt'").unwrap();
+    let sql: String = stmt.query_row([], |row| row.get(0)).unwrap();
+    assert!(sql.contains("UPDATE Config SET __updatedAt = CURRENT_TIMESTAMP WHERE __id = OLD.__id;"), "Trigger sql does not contain expected update statement.");
+}

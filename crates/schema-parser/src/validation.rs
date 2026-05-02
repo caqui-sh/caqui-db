@@ -815,6 +815,21 @@ mod tests {
     }
 
     #[test]
+    fn test_explicit_updated_at_rejected() {
+        let input = "
+            model User {
+                __updatedAt: DateTime
+                @@track
+                @@id(uuid)
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let result = validate_schema(ast);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().0.contains("Model 'User' cannot define an explicit field '__updatedAt'. This name is reserved for the automatic tracking timestamp."));
+    }
+
+    #[test]
     fn test_implicit_relation_self_referential() {
         let input = "
             model Employee {

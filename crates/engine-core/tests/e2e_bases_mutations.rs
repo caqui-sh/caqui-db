@@ -61,7 +61,7 @@ async fn test_e2e_malicious_marker_spoofing_stripped() {
 
     let schema = r#"
         base SecureEntity {  }
-        model Vault extends SecureEntity { name: String @@id(uuid) }
+        model Vault extends SecureEntity { name: String @@track @@id(uuid) }
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
 
@@ -85,7 +85,8 @@ async fn test_e2e_malicious_marker_spoofing_stripped() {
             "name": "Main Vault", 
             "__SecureEntity": false, // Spoof attempt
             "__Vault": false, // Spoof attempt
-            "__kind": "SpoofedType" // Spoof attempt
+            "__kind": "SpoofedType", // Spoof attempt
+            "__updatedAt": "1999-01-01T00:00:00Z" // Spoof attempt
         }
     });
 
@@ -98,6 +99,7 @@ async fn test_e2e_malicious_marker_spoofing_stripped() {
         assert!(!sql.contains("__SecureEntity"));
         assert!(!sql.contains("__Vault"));
         assert!(!sql.contains("__kind"));
+        assert!(!sql.contains("__updatedAt"));
         // Only "Main Vault" and the ID should be there. Wait, ID is auto-generated in memory?
         // Let's just trust that `__SecureEntity` is absent from the SQL
     } else {
