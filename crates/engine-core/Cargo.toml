@@ -24,3 +24,4 @@ uuid = { version = "1.8", features = ["v7", "v4"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tower = { workspace = true }

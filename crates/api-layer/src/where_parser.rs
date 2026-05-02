@@ -8,7 +8,7 @@ pub fn val_to_string(val: &Value) -> String {
     } else if let Some(n) = val.as_number() {
         n.to_string()
     } else if let Some(b) = val.as_bool() {
-        b.to_string()
+        if b { "1".to_string() } else { "0".to_string() }
     } else {
         "".to_string()
     }
@@ -25,7 +25,7 @@ pub fn parse_where_condition(val: &Value) -> Result<WhereCondition, String> {
         return Ok(WhereCondition::Eq(n.to_string()));
     }
     if let Some(b) = val.as_bool() {
-        return Ok(WhereCondition::Eq(if b { "true".to_string() } else { "false".to_string() }));
+        return Ok(WhereCondition::Eq(if b { "1".to_string() } else { "0".to_string() }));
     }
     if let Some(obj) = val.as_object() {
         if let Some(eq) = obj.get("eq") {

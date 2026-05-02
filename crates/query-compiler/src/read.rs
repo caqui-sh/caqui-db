@@ -100,6 +100,18 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                 }
                 let where_str = where_conds.join(" AND ");
 
+                let mut order_by_sql = String::new();
+                if !query.order_by.is_empty() {
+                    let orders: Vec<_> = query.order_by.iter().map(|(field, dir)| {
+                        let dir_str = match dir {
+                            crate::ir::OrderDirection::Asc => "ASC",
+                            crate::ir::OrderDirection::Desc => "DESC",
+                        };
+                        format!("{}.{} {}", query.alias, field, dir_str)
+                    }).collect();
+                    order_by_sql = format!(" ORDER BY {}", orders.join(", "));
+                }
+
                 let mut limit_offset = String::new();
                 if *is_list {
                     if let Some(l) = query.limit {
@@ -135,8 +147,8 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                             format!("(\n{}\n)", inner_branch_sqls.join("\nUNION ALL\n"))
                         },
                     };
-                    format!("(SELECT json_group_array({}) FROM {} AS {} WHERE {}{})",
-                        child_json_obj, source_table, query.alias, where_str, limit_offset)
+                    format!("(SELECT json_group_array({}) FROM {} AS {} WHERE {}{}{})",
+                        child_json_obj, source_table, query.alias, where_str, order_by_sql, limit_offset)
                 } else {
                     let source_table = match &query.source {
                         QueryIrSource::Table(t) => t.clone(),
@@ -257,6 +269,18 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
             offset_clause = format!(" OFFSET {}", o);
         }
 
+        let mut order_by_clause = String::new();
+        if !node.order_by.is_empty() {
+            let orders: Vec<_> = node.order_by.iter().map(|(field, dir)| {
+                let dir_str = match dir {
+                    crate::ir::OrderDirection::Asc => "ASC",
+                    crate::ir::OrderDirection::Desc => "DESC",
+                };
+                format!("{}.{} {}", node.alias, field, dir_str)
+            }).collect();
+            order_by_clause = format!(" ORDER BY {}", orders.join(", "));
+        }
+
         // Root query: Wrap execution in a final SELECT returning a JSON array
             let source_table = match &node.source {
                 QueryIrSource::Table(t) => t.clone(),
@@ -277,7 +301,7 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                     format!("(\n{}\n)", inner_branch_sqls.join("\nUNION ALL\n"))
                 },
             };
-            format!("SELECT json_group_array({}) AS payload FROM {} AS {}{}{}{};", json_obj, source_table, node.alias, root_where, limit_clause, offset_clause)
+            format!("SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT {} AS root_payload FROM {} AS {}{}{}{}{});", json_obj, source_table, node.alias, root_where, order_by_clause, limit_clause, offset_clause)
     } else {
         // Child query: Return inner object formulation for subquery injection
         json_obj
@@ -295,6 +319,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::Scalar("name".to_string()),
@@ -304,7 +329,7 @@ mod tests {
             offset: None,
         };
         let sql = compile_select(&query, None);
-        assert_eq!(sql, "SELECT json_group_array(json_object('__id', t0.__id, 'name', t0.name)) AS payload FROM User AS t0;");
+        assert_eq!(sql, "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'name', t0.name) AS root_payload FROM User AS t0);");
     }
 
     #[test]
@@ -313,6 +338,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Post".to_string()),
             alias: "t1".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::Scalar("title".to_string()),
@@ -326,6 +352,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::Relation {
@@ -343,7 +370,7 @@ mod tests {
         let sql = compile_select(&query, None);
         assert_eq!(
             sql, 
-            "SELECT json_group_array(json_object('__id', t0.__id, 'posts', (SELECT json_group_array(json_object('__id', t1.__id, 'title', t1.title)) FROM Post AS t1 WHERE t1.author_id = t0.__id))) AS payload FROM User AS t0;"
+            "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'posts', (SELECT json_group_array(json_object('__id', t1.__id, 'title', t1.title)) FROM Post AS t1 WHERE t1.author_id = t0.__id)) AS root_payload FROM User AS t0);"
         );
     }
     
@@ -353,6 +380,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::Scalar("title".to_string()),
@@ -369,6 +397,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::Polymorphic {
@@ -384,7 +413,7 @@ mod tests {
         let sql = compile_select(&query, None);
         assert_eq!(
             sql,
-            "SELECT json_group_array(json_object('__id', t0.__id, 'search', CASE t0.search_type WHEN 'Article' THEN (SELECT json_object('__id', t1.__id, 'title', t1.title) FROM Article AS t1 WHERE t1.__id = t0.search_id) ELSE NULL END)) AS payload FROM User AS t0;"
+            "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'search', CASE t0.search_type WHEN 'Article' THEN (SELECT json_object('__id', t1.__id, 'title', t1.title) FROM Article AS t1 WHERE t1.__id = t0.search_id) ELSE NULL END) AS root_payload FROM User AS t0);"
         );
     }
 
@@ -394,6 +423,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Comment".to_string()),
             alias: "t2".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::Scalar("body".to_string()),
@@ -407,6 +437,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Post".to_string()),
             alias: "t1".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::Relation {
@@ -426,6 +457,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::Relation {
@@ -444,7 +476,7 @@ mod tests {
         let sql = compile_select(&user_query, None);
         assert_eq!(
             sql,
-            "SELECT json_group_array(json_object('__id', t0.__id, 'posts', (SELECT json_group_array(json_object('__id', t1.__id, 'comments', (SELECT json_group_array(json_object('__id', t2.__id, 'body', t2.body)) FROM Comment AS t2 WHERE t2.post_id = t1.__id))) FROM Post AS t1 WHERE t1.author_id = t0.__id))) AS payload FROM User AS t0;"
+            "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'posts', (SELECT json_group_array(json_object('__id', t1.__id, 'comments', (SELECT json_group_array(json_object('__id', t2.__id, 'body', t2.body)) FROM Comment AS t2 WHERE t2.post_id = t1.__id))) FROM Post AS t1 WHERE t1.author_id = t0.__id)) AS root_payload FROM User AS t0);"
         );
     }
 
@@ -454,6 +486,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::ScalarArray("tags".to_string()),
@@ -463,7 +496,7 @@ mod tests {
             offset: None,
         };
         let sql = compile_select(&query, None);
-        assert_eq!(sql, "SELECT json_group_array(json_object('__id', t0.__id, 'tags', json(t0.tags))) AS payload FROM User AS t0;");
+        assert_eq!(sql, "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'tags', json(t0.tags)) AS root_payload FROM User AS t0);");
     }
 
     #[test]
@@ -472,6 +505,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Profile".to_string()),
             alias: "t1".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("bio".to_string()),
             ],
@@ -484,6 +518,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::Relation {
@@ -501,7 +536,7 @@ mod tests {
         let sql = compile_select(&query, None);
         assert_eq!(
             sql, 
-            "SELECT json_group_array(json_object('__id', t0.__id, 'profile', (SELECT json_object('bio', t1.bio) FROM Profile AS t1 WHERE t1.user_id = t0.__id LIMIT 1))) AS payload FROM User AS t0;"
+            "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'profile', (SELECT json_object('bio', t1.bio) FROM Profile AS t1 WHERE t1.user_id = t0.__id LIMIT 1)) AS root_payload FROM User AS t0);"
         );
     }
 
@@ -511,6 +546,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
+            order_by: vec![],
             selections: vec![SelectField::Scalar("title".to_string())],
             filters: None, limit: None, offset: None,
         };
@@ -518,6 +554,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Video".to_string()),
             alias: "t2".to_string(),
+            order_by: vec![],
             selections: vec![SelectField::Scalar("duration".to_string())],
             filters: None, limit: None, offset: None,
         };
@@ -531,6 +568,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::Polymorphic {
@@ -547,7 +585,7 @@ mod tests {
         
         assert_eq!(
             sql,
-            "SELECT json_group_array(json_object('__id', t0.__id, 'content', CASE t0.content_type WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.__id = t0.content_id) WHEN 'Video' THEN (SELECT json_object('duration', t2.duration) FROM Video AS t2 WHERE t2.__id = t0.content_id) ELSE NULL END)) AS payload FROM User AS t0;"
+            "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'content', CASE t0.content_type WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.__id = t0.content_id) WHEN 'Video' THEN (SELECT json_object('duration', t2.duration) FROM Video AS t2 WHERE t2.__id = t0.content_id) ELSE NULL END) AS root_payload FROM User AS t0);"
         );
     }
 
@@ -557,6 +595,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
+            order_by: vec![],
             selections: vec![SelectField::Scalar("__id".to_string())],
             filters: Some(WhereClause::Field("name".to_string(), WhereCondition::Eq("Alice".to_string()))),
             limit: Some(10),
@@ -565,7 +604,7 @@ mod tests {
         let sql = compile_select(&query, None);
         assert_eq!(
             sql,
-            "SELECT json_group_array(json_object('__id', t0.__id)) AS payload FROM User AS t0 WHERE t0.name = 'Alice' LIMIT 10 OFFSET 5;"
+            "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id) AS root_payload FROM User AS t0 WHERE t0.name = 'Alice' LIMIT 10 OFFSET 5);"
         );
     }
 
@@ -604,6 +643,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Post".to_string()),
             alias: "t1".to_string(),
+            order_by: vec![],
             selections: vec![SelectField::Scalar("title".to_string())],
             filters: Some(WhereClause::Field("published".to_string(), WhereCondition::Eq("true".to_string()))),
             limit: Some(5),
@@ -614,6 +654,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::Relation {
@@ -632,7 +673,7 @@ mod tests {
         let sql = compile_select(&query, None);
         assert_eq!(
             sql,
-            "SELECT json_group_array(json_object('__id', t0.__id, 'posts', (SELECT json_group_array(json_object('title', t1.title)) FROM Post AS t1 WHERE t1.author_id = t0.__id AND t1.published = 'true' LIMIT 5 OFFSET 2))) AS payload FROM User AS t0;"
+            "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'posts', (SELECT json_group_array(json_object('title', t1.title)) FROM Post AS t1 WHERE t1.author_id = t0.__id AND t1.published = 'true' LIMIT 5 OFFSET 2)) AS root_payload FROM User AS t0);"
         );
     }
 
@@ -642,6 +683,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
+            order_by: vec![],
             selections: vec![SelectField::Scalar("title".to_string())],
             filters: Some(WhereClause::Field("status".to_string(), WhereCondition::Eq("published".to_string()))),
             limit: None, offset: None,
@@ -654,6 +696,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::Polymorphic {
@@ -670,7 +713,7 @@ mod tests {
         let sql = compile_select(&query, None);
         assert_eq!(
             sql,
-            "SELECT json_group_array(json_object('__id', t0.__id, 'search', CASE t0.search_type WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.__id = t0.search_id AND t1.status = 'published') ELSE NULL END)) AS payload FROM User AS t0;"
+            "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'search', CASE t0.search_type WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.__id = t0.search_id AND t1.status = 'published') ELSE NULL END) AS root_payload FROM User AS t0);"
         );
     }
 
@@ -680,6 +723,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
+            order_by: vec![],
             selections: vec![SelectField::Scalar("title".to_string())],
             filters: None, limit: None, offset: None,
         };
@@ -688,6 +732,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Video".to_string()),
             alias: "t2".to_string(),
+            order_by: vec![],
             selections: vec![SelectField::Scalar("duration".to_string())],
             filters: None, limit: None, offset: None,
         };
@@ -700,6 +745,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Comment".to_string()),
             alias: "t0".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::Polymorphic {
@@ -725,6 +771,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
+            order_by: vec![],
             selections: vec![SelectField::Scalar("title".to_string())],
             filters: None, limit: None, offset: None,
         };
@@ -736,6 +783,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::Polymorphic {
@@ -762,6 +810,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
+            order_by: vec![],
             selections: vec![SelectField::Scalar("title".to_string())],
             filters: Some(WhereClause::Field("status".to_string(), WhereCondition::Eq("published".to_string()))),
             limit: None,
@@ -775,6 +824,7 @@ mod tests {
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
+            order_by: vec![],
             selections: vec![
                 SelectField::Scalar("__id".to_string()),
                 SelectField::Polymorphic {
@@ -790,7 +840,7 @@ mod tests {
         let sql = compile_select(&query, None);
         assert_eq!(
             sql,
-            "SELECT json_group_array(json_object('__id', t0.__id, 'contents', (SELECT json_group_array(json(CASE j_t0_contents.value->>'type' WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.__id = j_t0_contents.value->>'__id' AND t1.status = 'published') ELSE NULL END)) FROM (SELECT value, key FROM json_each(t0.contents) ORDER BY key ASC) AS j_t0_contents))) AS payload FROM User AS t0;"
+            "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'contents', (SELECT json_group_array(json(CASE j_t0_contents.value->>'type' WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.__id = j_t0_contents.value->>'__id' AND t1.status = 'published') ELSE NULL END)) FROM (SELECT value, key FROM json_each(t0.contents) ORDER BY key ASC) AS j_t0_contents)) AS root_payload FROM User AS t0);"
         );
     }
 }

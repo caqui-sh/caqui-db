@@ -183,12 +183,25 @@ pub fn hydrate_payload_to_ir(
         .map(|f| f.name.clone())
         .unwrap_or_else(|| "__id".to_string());
 
+    let mut order_by = Vec::new();
+    if let Some(order_obj) = payload.get("orderBy").and_then(|v| v.as_object()) {
+        for (field, dir) in order_obj {
+            let direction = if dir.as_str().map(|s| s.to_lowercase()).as_deref() == Some("desc") {
+                query_compiler::ir::OrderDirection::Desc
+            } else {
+                query_compiler::ir::OrderDirection::Asc
+            };
+            order_by.push((field.clone(), direction));
+        }
+    }
+
     Ok(QueryNode {
         source: query_compiler::ir::QueryIrSource::Table(model_name.to_string()),
         primary_key,
         alias: current_alias,
         selections,
         filters,
+        order_by,
         limit: payload.get("limit").and_then(|l| l.as_u64()).map(|l| l as usize),
         offset: payload.get("skip").and_then(|l| l.as_u64()).map(|l| l as usize),
     })
@@ -721,6 +734,7 @@ fn compile_polymorphic_read(
             alias: current_alias,
             selections: inner_selections,
             filters: inner_filters,
+            order_by: vec![],
             limit: None,
             offset: None,
         });
@@ -859,6 +873,7 @@ fn compile_polymorphic_read(
         alias: current_alias,
         selections: outer_selections,
         filters: None,
+        order_by: vec![],
         limit: payload.get("limit").and_then(|l| l.as_u64()).map(|l| l as usize),
         offset: payload.get("skip").and_then(|l| l.as_u64()).map(|l| l as usize),
     })

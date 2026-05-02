@@ -10,12 +10,19 @@ pub enum QueryIrSource {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum OrderDirection {
+    Asc,
+    Desc,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct QueryNode {
     pub source: QueryIrSource,
     pub primary_key: String,
     pub alias: String, // Crucial for preventing namespace collisions in self-joins (e.g., t0, t1)
     pub selections: Vec<SelectField>,
     pub filters: Option<WhereClause>,
+    pub order_by: Vec<(String, OrderDirection)>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }
