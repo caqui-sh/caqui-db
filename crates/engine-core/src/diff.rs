@@ -120,7 +120,6 @@ pub fn run_diff(old_ref: &str) {
                 None => continue,
             };
             
-            // Respect @map for table name if implemented, otherwise model name
             let table_name = model_name; 
             
             // Find PK (always __id now)

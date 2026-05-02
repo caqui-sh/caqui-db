@@ -122,7 +122,6 @@ Attributes customize the behavior of individual fields.
 | :--- | :--- |
 | `@unique` | Ensures all values in the column are unique. |
 | `@track` | Automatically injects a sibling hidden `__<FieldName>_updatedAt` timestamp field that only updates when this specific field is modified. |
-| `@map("name")` | Maps the field to a different underlying database column name. |
 | `@relation(...)` | Defines the relationship. Accepts `fields` (local keys), `references` (foreign keys), `onDelete` (e.g., `CASCADE`, `SET NULL`, `RESTRICT`, `NO ACTION`), and `deferrable` (for deferring constraint checks). |
 
 ## Block Attributes

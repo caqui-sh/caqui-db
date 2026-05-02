@@ -63,7 +63,6 @@ pub enum FieldAttribute {
     Track,
     InternalTracked,
     InternalFieldTracked(String),
-    Map(String),
     InternalDefault(DefaultFunc),
     Relation { name: Option<String>, on_delete: Option<String> },
     InternalRelation { fields: Vec<String>, references: Vec<String> },

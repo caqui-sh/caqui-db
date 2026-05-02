@@ -108,3 +108,7 @@ To maintain feature parity with modern DSLs (like Prisma or GraphQL), the follow
 - **Bytes / Binary Data:** A scalar type for `BLOB` / binary storage (e.g., images, file buffers).
 - **High-Precision Numerics:** Support for `Decimal` and `BigInt` for exact financial calculations or extremely large counters.
 - **Embedded Documents:** Native sub-object definitions common in NoSQL schemas, allowing nested structures without separate tables.
+
+### 5. Custom Column Mapping (@map)
+- **Syntax:** `@map("custom_column_name")`
+- **Use Case:** Mapping a canonical model field to a specific, potentially non-standard underlying database column name. Highly useful for integrating with legacy databases.

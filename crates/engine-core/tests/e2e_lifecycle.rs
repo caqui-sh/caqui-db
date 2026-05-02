@@ -578,7 +578,7 @@ fn test_e2e_field_level_track_edge_cases() {
         model ComplexModel {
             @@id(uuid)
             status: String @track
-            bio: String @track @map(\"user_bio\")
+            bio: String @track
             
             authorId: String?
             author: User? @relation(fields: [authorId], references: [__id]) @track
@@ -607,9 +607,9 @@ fn test_e2e_field_level_track_edge_cases() {
     let trg_author = triggers.iter().find(|(n, _)| n == "trg_update_ComplexModel___author_updatedAt").unwrap();
     assert!(trg_author.1.contains("AFTER UPDATE OF authorId ON ComplexModel"));
     
-    // Verify Bio Map Track uses user_bio
+    // Verify Bio Track uses bio
     let trg_bio = triggers.iter().find(|(n, _)| n == "trg_update_ComplexModel___bio_updatedAt").unwrap();
-    assert!(trg_bio.1.contains("AFTER UPDATE OF user_bio ON ComplexModel"));
+    assert!(trg_bio.1.contains("AFTER UPDATE OF bio ON ComplexModel"));
 
     // Verify Status Track uses status
     let trg_status = triggers.iter().find(|(n, _)| n == "trg_update_ComplexModel___status_updatedAt").unwrap();

@@ -473,12 +473,8 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
             if let AstFieldType::Relation(target_name) = &field.field_type {
                 let mut relation_attr_idx = None;
                 let mut needs_injection = true; // Always inject unless physical field exists
-                let mut col_name = format!("{}Id", field.name);
+                let col_name = format!("{}Id", field.name);
                 
-                // If the user provided @map, we use it for the column name
-                if let Some(FieldAttribute::Map(mapped_name)) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Map(_))) {
-                    col_name = mapped_name.clone();
-                }
 
                 for (idx, attr) in field.attributes.iter().enumerate() {
                     if let FieldAttribute::Relation { .. } = attr {
@@ -770,7 +766,7 @@ mod tests {
             model Post {
                 @@id(uuid)
                 author: User @relation(\"AuthorToPost\")
-                reviewer: User @relation(\"ReviewerToPost\") @map(\"reviewer_id\")
+                reviewer: User @relation(\"ReviewerToPost\")
             }
         ";
         let mut ast = crate::parser::parse_schema(input).unwrap();
@@ -781,14 +777,14 @@ mod tests {
         let author_id_field = post.resolved_fields.iter().find(|f| f.name == "authorId").unwrap();
         assert_eq!(author_id_field.field_type, AstFieldType::Scalar("String".to_string()));
         
-        let reviewer_id_field = post.resolved_fields.iter().find(|f| f.name == "reviewer_id").unwrap();
+        let reviewer_id_field = post.resolved_fields.iter().find(|f| f.name == "reviewerId").unwrap();
         assert_eq!(reviewer_id_field.field_type, AstFieldType::Scalar("String".to_string()));
         
         let author_rel = post.resolved_fields.iter().find(|f| f.name == "author").unwrap();
         assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: Some("AuthorToPost".to_string()), on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
 
         let reviewer_rel = post.resolved_fields.iter().find(|f| f.name == "reviewer").unwrap();
-        assert_eq!(reviewer_rel.attributes, vec![FieldAttribute::Relation { name: Some("ReviewerToPost".to_string()), on_delete: None }, FieldAttribute::Map("reviewer_id".to_string()), FieldAttribute::InternalRelation { fields: vec!["reviewer_id".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(reviewer_rel.attributes, vec![FieldAttribute::Relation { name: Some("ReviewerToPost".to_string()), on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["reviewerId".to_string()], references: vec!["__id".to_string()] }]);
     }
 
     #[test]

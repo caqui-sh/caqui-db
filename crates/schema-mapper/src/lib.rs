@@ -66,9 +66,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                         is_updated_at = true;
                         // Resolve physical columns for the target field
                         if let Some(target_field) = model.resolved_fields.iter().find(|f| &f.name == target) {
-                            if let Some(FieldAttribute::Map(mapped_name)) = target_field.attributes.iter().find(|a| matches!(a, FieldAttribute::Map(_))) {
-                                target_tracked_fields.push(mapped_name.clone());
-                            } else if let Some(FieldAttribute::InternalRelation { fields, .. }) = target_field.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+                            if let Some(FieldAttribute::InternalRelation { fields, .. }) = target_field.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
                                 if !fields.is_empty() {
                                     target_tracked_fields.extend(fields.clone());
                                 } else {

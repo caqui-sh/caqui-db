@@ -62,13 +62,6 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> FieldNode {
                 "__id" => attributes.push(FieldAttribute::Id),
                 "unique" => attributes.push(FieldAttribute::Unique),
                 "track" => attributes.push(FieldAttribute::Track),
-                "map" => {
-                    if let Some(args_rule) = attr_inner.next() {
-                        let arg_val = args_rule.into_inner().next().unwrap().into_inner().next().unwrap().as_str();
-                        let clean_val = arg_val.trim_matches('"').to_string();
-                        attributes.push(FieldAttribute::Map(clean_val));
-                    }
-                },
                 "relation" => {
                     let mut name = None;
                     let mut on_delete = None;
@@ -319,7 +312,7 @@ mod tests {
     fn test_parse_advanced_attributes() {
         let input = "
             model User {
-                email: String @unique @map(\"user_id\")
+                email: String @unique
                 bio: String @default(\"no bio\")
                 posts: Post[] @relation(fields: [__id], references: [authorId], onDelete: Cascade)
     @@id(uuid)
@@ -334,12 +327,12 @@ mod tests {
         let ast = parse_schema(input).unwrap();
         let user = ast.models.get("User").unwrap();
         
-        // @map
+        // Block attributes
         let block_id = user.block_attributes.iter().find(|a| matches!(a, ModelAttribute::Id(_))).unwrap();
         
-        // @unique and @map
+        // @unique
         let email_field = user.fields.iter().find(|f| f.name == "email").unwrap();
-        assert_eq!(email_field.attributes, vec![FieldAttribute::Unique, FieldAttribute::Map("user_id".to_string())]);
+        assert_eq!(email_field.attributes, vec![FieldAttribute::Unique]);
         
         
         
