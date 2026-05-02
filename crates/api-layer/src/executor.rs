@@ -64,7 +64,7 @@ fn execute_steps(
                 let returned_id: String = match stmt.query_row(&borrowed_params[..], |row| row.get(0)) {
                     Ok(id) => id,
                     Err(rusqlite::Error::QueryReturnedNoRows) => {
-                        if id.contains("_disconnect") || id.contains("_set") {
+                        if id.contains("_disconnect") || id.contains("_set") || id.contains("_cascade") {
                             "".to_string()
                         } else {
                             return Err(rusqlite::Error::ToSqlConversionFailure(

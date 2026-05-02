@@ -115,7 +115,7 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                 let subquery = if *is_list {
                     let source_table = match &query.source {
                         QueryIrSource::Table(t) => t.clone(),
-                        QueryIrSource::PolymorphicUnion { alias: _, branches } => {
+                        QueryIrSource::Polymorphic { alias: _, branches } => {
                             let mut inner_branch_sqls = Vec::new();
                             for branch in branches {
                                 let mut branch_selects = Vec::new();
@@ -140,7 +140,7 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                 } else {
                     let source_table = match &query.source {
                         QueryIrSource::Table(t) => t.clone(),
-                        QueryIrSource::PolymorphicUnion { alias: _, branches } => {
+                        QueryIrSource::Polymorphic { alias: _, branches } => {
                             let mut inner_branch_sqls = Vec::new();
                             for branch in branches {
                                 let mut branch_selects = Vec::new();
@@ -166,7 +166,7 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                 
                 json_pairs.push(format!("'{}', {}", field_name, subquery));
             },
-            SelectField::PolymorphicUnion { field_name, is_list, target_fragments } => {
+            SelectField::Polymorphic { field_name, is_list, target_fragments } => {
                 let mut fragment_keys: Vec<_> = target_fragments.keys().collect();
                 fragment_keys.sort();
 
@@ -260,7 +260,7 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
         // Root query: Wrap execution in a final SELECT returning a JSON array
             let source_table = match &node.source {
                 QueryIrSource::Table(t) => t.clone(),
-                QueryIrSource::PolymorphicUnion { alias: _, branches } => {
+                QueryIrSource::Polymorphic { alias: _, branches } => {
                     let mut inner_branch_sqls = Vec::new();
                     for branch in branches {
                         let mut branch_selects = Vec::new();
@@ -371,7 +371,7 @@ mod tests {
             alias: "t0".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
-                SelectField::PolymorphicUnion {
+                SelectField::Polymorphic {
                     field_name: "search".to_string(),
                     is_list: false,
                     target_fragments: fragments,
@@ -533,7 +533,7 @@ mod tests {
             alias: "t0".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
-                SelectField::PolymorphicUnion {
+                SelectField::Polymorphic {
                     field_name: "content".to_string(),
                     is_list: false,
                     target_fragments: fragments,
@@ -656,7 +656,7 @@ mod tests {
             alias: "t0".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
-                SelectField::PolymorphicUnion {
+                SelectField::Polymorphic {
                     field_name: "search".to_string(),
                     is_list: false,
                     target_fragments: fragments,
@@ -672,6 +672,88 @@ mod tests {
             sql,
             "SELECT json_group_array(json_object('id', t0.id, 'search', CASE t0.search_type WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.id = t0.search_id AND t1.status = 'published') ELSE NULL END)) AS payload FROM User AS t0;"
         );
+    }
+
+    #[test]
+    fn test_compile_polymorphic_base_singular() {
+        let article_fragment = QueryNode {
+            primary_key: "id".to_string(),
+            source: QueryIrSource::Table("Article".to_string()),
+            alias: "t1".to_string(),
+            selections: vec![SelectField::Scalar("title".to_string())],
+            filters: None, limit: None, offset: None,
+        };
+
+        let video_fragment = QueryNode {
+            primary_key: "id".to_string(),
+            source: QueryIrSource::Table("Video".to_string()),
+            alias: "t2".to_string(),
+            selections: vec![SelectField::Scalar("duration".to_string())],
+            filters: None, limit: None, offset: None,
+        };
+
+        let mut fragments = HashMap::new();
+        fragments.insert("Article".to_string(), article_fragment);
+        fragments.insert("Video".to_string(), video_fragment);
+
+        let query = QueryNode {
+            primary_key: "id".to_string(),
+            source: QueryIrSource::Table("Comment".to_string()),
+            alias: "t0".to_string(),
+            selections: vec![
+                SelectField::Scalar("id".to_string()),
+                SelectField::Polymorphic {
+                    field_name: "parent".to_string(),
+                    is_list: false,
+                    target_fragments: fragments,
+                }
+            ],
+            filters: None, limit: None, offset: None,
+        };
+
+        let sql = compile_select(&query, None);
+        
+        // Assert the discriminator columns 'parent_type' and 'parent_id' are utilized correctly
+        assert!(sql.contains("CASE t0.parent_type"));
+        assert!(sql.contains("WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.id = t0.parent_id)"));
+        assert!(sql.contains("WHEN 'Video' THEN (SELECT json_object('duration', t2.duration) FROM Video AS t2 WHERE t2.id = t0.parent_id)"));
+    }
+
+    #[test]
+    fn test_compile_polymorphic_base_array() {
+        let article_fragment = QueryNode {
+            primary_key: "id".to_string(),
+            source: QueryIrSource::Table("Article".to_string()),
+            alias: "t1".to_string(),
+            selections: vec![SelectField::Scalar("title".to_string())],
+            filters: None, limit: None, offset: None,
+        };
+
+        let mut fragments = HashMap::new();
+        fragments.insert("Article".to_string(), article_fragment);
+
+        let query = QueryNode {
+            primary_key: "id".to_string(),
+            source: QueryIrSource::Table("User".to_string()),
+            alias: "t0".to_string(),
+            selections: vec![
+                SelectField::Scalar("id".to_string()),
+                SelectField::Polymorphic {
+                    field_name: "favorites".to_string(),
+                    is_list: true,
+                    target_fragments: fragments,
+                }
+            ],
+            filters: None, limit: None, offset: None,
+        };
+
+        let sql = compile_select(&query, None);
+        println!("POLYMORPHIC BASE ARRAY SQL:\n{}", sql);
+        
+        // Asserts unpacking of the JSON array column 'favorites'
+        assert!(sql.contains("json_each(t0.favorites) ORDER BY key ASC) AS j_t0_favorites"));
+        assert!(sql.contains("CASE j_t0_favorites.value->>'type'"));
+        assert!(sql.contains("WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.id = j_t0_favorites.value->>'id')"));
     }
 
     #[test]
@@ -695,7 +777,7 @@ mod tests {
             alias: "t0".to_string(),
             selections: vec![
                 SelectField::Scalar("id".to_string()),
-                SelectField::PolymorphicUnion {
+                SelectField::Polymorphic {
                     field_name: "contents".to_string(),
                     is_list: true,
                     target_fragments: fragments,

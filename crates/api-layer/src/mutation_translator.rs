@@ -74,6 +74,40 @@ pub fn hydrate_mutation_to_plan(
                 sql,
                 params,
             });
+
+            // --- Application-Level Cascading Deletes for Polymorphic Bases ---
+            for (other_model_name, other_model_def) in &ast.models {
+                for field in &other_model_def.resolved_fields {
+                    if let AstFieldType::PolymorphicBase(base_name) = &field.field_type {
+                        if model_def.resolved_bases.contains(base_name) {
+                            let cascade_step_id = format!("step_{}_cascade_{}_{}", model_name.to_lowercase(), other_model_name.to_lowercase(), *alias_counter);
+                            *alias_counter += 1;
+                            
+                            let type_col = format!("{}_type", field.name);
+                            let id_col = format!("{}_id", field.name);
+                            
+                            // Delete the referencing row from the other model
+                            let cascade_sql = format!(
+                                "DELETE FROM {} WHERE {} = '{}' AND {} = ?1;",
+                                other_model_name,
+                                type_col,
+                                model_name,
+                                id_col
+                            );
+                            
+                            steps.push(ExecutionStep::Query {
+                                id: cascade_step_id,
+                                sql: cascade_sql,
+                                params: vec![Parameter::Reference {
+                                    step_id: step_id.clone(),
+                                    column: pk_col.to_string(),
+                                }],
+                            });
+                        }
+                    }
+                }
+            }
+            // --- End Cascading Deletes ---
             
             Ok(ExecutionPlan {
                 root_step_id: step_id,
@@ -339,8 +373,49 @@ fn translate_create_node(
                     }
                 }
             },
-            AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicUnionArray(_) => {
-                return Err(format!("Unsupported: Mutations on polymorphic union field '{}' are not yet implemented.", key));
+            AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {
+                return Err(format!("Unsupported: Array mutations on polymorphic field '{}' are not yet implemented.", key));
+            },
+            AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicBase(_) => {
+                let nested_mutations = val.as_object().ok_or(format!("Expected object for polymorphic field '{}'", key))?;
+                
+                // Expecting exactly one target type key (e.g. { "ModelA": { "connect": { "id": "1" } } })
+                if nested_mutations.len() != 1 {
+                    return Err(format!("Polymorphic field '{}' requires exactly one target type in the mutation payload.", key));
+                }
+                
+                let (target_model, actions) = nested_mutations.iter().next().unwrap();
+                let actions_obj = actions.as_object().ok_or(format!("Expected object for target type '{}' in field '{}'", target_model, key))?;
+
+                // Validate target model exists
+                if !ast.models.contains_key(target_model) {
+                    return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
+                }
+                
+                let type_col = format!("{}_type", key);
+                let id_col = format!("{}_id", key);
+
+                if let Some(connect_payload) = actions_obj.get("connect") {
+                    if let Some(connect_id) = connect_payload.as_object().and_then(|o| o.get("id")) {
+                        // 1. Set type column
+                        columns.push(type_col.clone());
+                        placeholders.push(format!("?{}", param_idx));
+                        params.push(Parameter::Literal(serde_json::Value::String(target_model.clone())));
+                        param_idx += 1;
+                        
+                        // 2. Set id column
+                        columns.push(id_col.clone());
+                        placeholders.push(format!("?{}", param_idx));
+                        params.push(Parameter::Literal(connect_id.clone()));
+                        param_idx += 1;
+                    }
+                } else if let Some(create_payload) = actions_obj.get("create") {
+                    if let Some(child_data) = create_payload.as_object() {
+                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(child_data.clone()), relation_field_name: key.clone() });
+                    }
+                } else {
+                    return Err(format!("Unsupported action for polymorphic field '{}'. Only 'connect' and 'create' are supported.", key));
+                }
             }
         }
     }
@@ -559,8 +634,55 @@ fn translate_update_node(
                     }
                 }
             },
-            AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicUnionArray(_) => {
-                return Err(format!("Unsupported: Mutations on polymorphic union field '{}' are not yet implemented.", key));
+            AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {
+                return Err(format!("Unsupported: Array mutations on polymorphic field '{}' are not yet implemented.", key));
+            },
+            AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicBase(_) => {
+                let nested_mutations = val.as_object().ok_or(format!("Expected object for polymorphic field '{}'", key))?;
+                
+                let type_col = format!("{}_type", key);
+                let id_col = format!("{}_id", key);
+
+                if let Some(disconnect_val) = nested_mutations.get("disconnect") {
+                    if disconnect_val.as_bool().unwrap_or(false) {
+                        set_clauses.push(format!("{} = NULL", type_col));
+                        set_clauses.push(format!("{} = NULL", id_col));
+                        continue;
+                    }
+                }
+
+                // Expecting exactly one target type key (e.g. { "ModelA": { "connect": { "id": "1" } } })
+                if nested_mutations.len() != 1 {
+                    return Err(format!("Polymorphic field '{}' requires exactly one target type in the mutation payload.", key));
+                }
+                
+                let (target_model, actions) = nested_mutations.iter().next().unwrap();
+                let actions_obj = actions.as_object().ok_or(format!("Expected object for target type '{}' in field '{}'", target_model, key))?;
+
+                // Validate target model exists
+                if !ast.models.contains_key(target_model) {
+                    return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
+                }
+
+                if let Some(connect_payload) = actions_obj.get("connect") {
+                    if let Some(connect_id) = connect_payload.as_object().and_then(|o| o.get("id")) {
+                        // 1. Set type column
+                        set_clauses.push(format!("{} = ?{}", type_col, param_idx));
+                        params.push(Parameter::Literal(serde_json::Value::String(target_model.clone())));
+                        param_idx += 1;
+                        
+                        // 2. Set id column
+                        set_clauses.push(format!("{} = ?{}", id_col, param_idx));
+                        params.push(Parameter::Literal(connect_id.clone()));
+                        param_idx += 1;
+                    }
+                } else if let Some(create_payload) = actions_obj.get("create") {
+                    if let Some(child_data) = create_payload.as_object() {
+                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(child_data.clone()), relation_field_name: key.clone() });
+                    }
+                } else {
+                    return Err(format!("Unsupported action for polymorphic field '{}'. Only 'connect' and 'create' are supported.", key));
+                }
             }
         }
     }
@@ -714,6 +836,46 @@ fn process_deferred_children(
     for child in deferred_children {
         let child_model_def = ast.models.get(&child.target_model).unwrap();
         let child_pk_col = child_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("id");
+        
+        let parent_field_def = parent_model_def.resolved_fields.iter().find(|f| f.name == child.relation_field_name).unwrap();
+        let is_polymorphic = matches!(parent_field_def.field_type, AstFieldType::PolymorphicBase(_) | AstFieldType::PolymorphicBaseArray(_) | AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicUnionArray(_));
+
+        if is_polymorphic {
+            match child.action {
+                DeferredAction::Create(child_data) => {
+                    let child_create_step_id = translate_create_node(ast, &child.target_model, &child_data, steps, alias_counter, None)?;
+                    
+                    // We must then update the parent model to point to the newly created child!
+                    let update_step_id = format!("step_{}_poly_update_{}", parent_model_name.to_lowercase(), *alias_counter);
+                    *alias_counter += 1;
+                    
+                    let type_col = format!("{}_type", child.relation_field_name);
+                    let id_col = format!("{}_id", child.relation_field_name);
+                    
+                    let sql = format!(
+                        "UPDATE {} SET {} = ?, {} = ? WHERE {} = ? RETURNING {};",
+                        parent_model_name,
+                        type_col,
+                        id_col,
+                        parent_pk_col,
+                        parent_pk_col
+                    );
+                    
+                    steps.push(ExecutionStep::Query {
+                        id: update_step_id,
+                        sql,
+                        params: vec![
+                            Parameter::Literal(serde_json::Value::String(child.target_model.clone())),
+                            Parameter::Reference { step_id: child_create_step_id, column: child_pk_col.to_string() },
+                            Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() }
+                        ],
+                    });
+                },
+                _ => return Err(format!("Unsupported deferred action for polymorphic relation '{}'", child.relation_field_name)),
+            }
+            continue;
+        }
+
         let mut fk_column_name = None;
         for our_field in &ast.models.get(&child.target_model).unwrap().resolved_fields {
             if let AstFieldType::Relation(target) = &our_field.field_type {

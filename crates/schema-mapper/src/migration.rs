@@ -22,7 +22,7 @@ pub fn generate_sql(op: &MigrationOp) -> String {
             sql.push_str(";\n");
             for index in &table.indexes {
                 let unique_str = if index.unique { "UNIQUE " } else { "" };
-                sql.push_str(&format!("CREATE {}INDEX {} ON {} ({});\n", unique_str, index.name, table.name, index.columns.join(", ")));
+                sql.push_str(&format!("CREATE {}INDEX IF NOT EXISTS {} ON {} ({});\n", unique_str, index.name, table.name, index.columns.join(", ")));
             }
             for trigger in &table.triggers {
                 sql.push_str(&trigger.sql);
@@ -58,7 +58,7 @@ pub fn generate_sql(op: &MigrationOp) -> String {
 
             for index in &table.indexes {
                 let unique_str = if index.unique { "UNIQUE " } else { "" };
-                sql.push_str(&format!("CREATE {}INDEX {} ON {} ({});\n", unique_str, index.name, table.name, index.columns.join(", ")));
+                sql.push_str(&format!("CREATE {}INDEX IF NOT EXISTS {} ON {} ({});\n", unique_str, index.name, table.name, index.columns.join(", ")));
             }
             for trigger in &table.triggers {
                 sql.push_str(&trigger.sql);
@@ -177,7 +177,30 @@ mod tests {
         let sql = generate_sql(&op);
         
         assert!(sql.contains("CREATE TABLE Device"));
-        assert!(sql.contains("CREATE UNIQUE INDEX idx_Device_id ON Device (id);"));
+        assert!(sql.contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_Device_id ON Device (id);"));
         assert!(sql.contains("CREATE TRIGGER trg_test"));
-    }
-}
+        }
+
+        #[test]
+        fn test_generate_sql_rebuild_table_with_indexes() {
+        let table = PhysicalTable {
+            name: "User".to_string(),
+            columns: vec![
+                PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
+            ],
+            indexes: vec![
+                PhysicalIndex { name: "idx_User_id".to_string(), columns: vec!["id".to_string()], unique: true }
+            ],
+            triggers: vec![],
+            foreign_keys: vec![],
+        };
+        let live_cols = vec!["id".to_string()];
+        let op = MigrationOp::RebuildTable { table, live_cols };
+        let sql = generate_sql(&op);
+
+        // Verify the atomic rebuild sequence correctly sequences the index with IF NOT EXISTS
+        assert!(sql.contains("ALTER TABLE _engine_new_User RENAME TO User;"));
+        assert!(sql.contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_User_id ON User (id);"));
+        assert!(sql.contains("COMMIT;"));
+        }
+        }

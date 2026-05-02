@@ -3,7 +3,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq)]
 pub enum QueryIrSource {
     Table(String),
-    PolymorphicUnion {
+    Polymorphic {
         alias: String,
         branches: Vec<QueryNode>,
     },
@@ -37,7 +37,7 @@ pub enum SelectField {
         query: Box<QueryNode>,
     },
     /// A Polymorphic Union request requiring conditional resolution
-    PolymorphicUnion {
+    Polymorphic {
         field_name: String,
         is_list: bool,
         target_fragments: HashMap<String, QueryNode>, // e.g., "Article" -> QueryNode

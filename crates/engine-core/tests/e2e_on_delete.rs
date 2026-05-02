@@ -193,3 +193,85 @@ async fn test_e2e_self_referential_cascade() {
         Ok::<(), rusqlite::Error>(())
     }).await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn test_e2e_polymorphic_cascade_delete() {
+    let dir = tempdir().unwrap();
+    let workspace = dir.path();
+    engine_core::vfs::bootstrap_custom_vfs();
+    
+    let caqui_bin = env!("CARGO_BIN_EXE_caqui");
+    let db_uri = format!("file:{}?vfs=git", workspace.join("app.db").display());
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.arg("init").current_dir(workspace);
+    run_cmd(cmd);
+
+    let schema = "
+        base Content { id: String @id }
+        model Article extends Content { title: String }
+        model Video extends Content { duration: Int }
+        
+        model Comment {
+            id: String @id
+            text: String
+            parent: Content
+        }
+    ";
+    fs::write(workspace.join("schema.cq"), schema).unwrap();
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let payload = serde_json::json!({
+        "data": {
+            "id": "c1",
+            "text": "Great article!",
+            "parent": {
+                "Article": { "create": { "id": "a1", "title": "Polymorphic Writes" } }
+            }
+        }
+    });
+
+    let ast = schema_parser::parser::parse_schema(schema).unwrap();
+    let ast = schema_parser::validation::validate_schema(ast).unwrap();
+    let pool = api_layer::db::create_pool(&db_uri);
+    
+    let mut alias_idx = 0;
+    let plan = api_layer::mutation_translator::hydrate_mutation_to_plan(&ast, "Comment", "create", &payload, &mut alias_idx).unwrap();
+    api_layer::executor::execute_mutation_plan(&pool, plan).await.unwrap();
+
+    let conn = pool.get().await.unwrap();
+
+    let count_before: i64 = conn.interact(|db| {
+        db.query_row("SELECT count(*) FROM Comment", [], |r| r.get(0))
+    }).await.unwrap().unwrap();
+    
+    assert_eq!(count_before, 1, "Comment should exist");
+
+    let article_id: String = conn.interact(|db| {
+        db.query_row("SELECT id FROM Article LIMIT 1", [], |r| r.get(0))
+    }).await.unwrap().unwrap();
+    
+    println!("ARTICLE ID: {}", article_id);
+
+    // Delete the Article
+    let delete_payload = serde_json::json!({
+        "where": {
+            "id": article_id
+        }
+    });
+    
+    let mut alias_idx = 0;
+    let del_plan = api_layer::mutation_translator::hydrate_mutation_to_plan(&ast, "Article", "delete", &delete_payload, &mut alias_idx).unwrap();
+    println!("DELETE PLAN: {:#?}", del_plan);
+    api_layer::executor::execute_mutation_plan(&pool, del_plan).await.unwrap();
+
+    // Verify Application-Level Cascade cleaned up the Comment
+    let count_after: i64 = conn.interact(|db| {
+        db.query_row("SELECT count(*) FROM Comment", [], |r| r.get(0))
+    }).await.unwrap().unwrap();
+    
+    assert_eq!(count_after, 0, "Comment should be deleted by application-level cascade");
+}

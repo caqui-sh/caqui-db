@@ -71,7 +71,7 @@ fn build_query() -> QueryNode {
         alias: "t0".to_string(),
         selections: vec![
             SelectField::Scalar("id".to_string()),
-            SelectField::PolymorphicUnion {
+            SelectField::Polymorphic {
                 field_name: "contents".to_string(),
                 is_list: true,
                 target_fragments: fragments,
@@ -173,7 +173,7 @@ fn build_recursive_query() -> QueryNode {
         alias: "t1".to_string(), // inner alias
         selections: vec![
             SelectField::Scalar("id".to_string()),
-            SelectField::PolymorphicUnion {
+            SelectField::Polymorphic {
                 field_name: "contents".to_string(),
                 is_list: true,
                 target_fragments: inner_fragments,
@@ -193,7 +193,7 @@ fn build_recursive_query() -> QueryNode {
         alias: "t0".to_string(),
         selections: vec![
             SelectField::Scalar("id".to_string()),
-            SelectField::PolymorphicUnion {
+            SelectField::Polymorphic {
                 field_name: "contents".to_string(),
                 is_list: true,
                 target_fragments: outer_fragments,

@@ -112,9 +112,49 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
         }
 
         match &field_def.field_type {
-            AstFieldType::Scalar(_) | AstFieldType::ScalarArray(_) | AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicUnionArray(_) => {
+            AstFieldType::Scalar(_) | AstFieldType::ScalarArray(_) | AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {
                 let cond = parse_where_condition(v)?;
                 clauses.push(WhereClause::Field(k.clone(), cond));
+            }
+            AstFieldType::PolymorphicUnion(target_name) | AstFieldType::PolymorphicBase(target_name) => {
+                if let Some(obj) = v.as_object() {
+                    if obj.len() != 1 {
+                        return Err(format!("Polymorphic where filter on '{}' requires exactly one target model key.", k));
+                    }
+                    let (specific_target, inner_where) = obj.iter().next().unwrap();
+                    
+                    let target_model_def = ast.models.get(specific_target)
+                        .ok_or_else(|| format!("Undefined target model '{}' in polymorphic filter", specific_target))?;
+                        
+                    let mut is_valid_target = false;
+                    if let Some(union_targets) = ast.unions.get(target_name) {
+                        is_valid_target = union_targets.contains(specific_target);
+                    } else if let Some(target_base) = target_model_def.resolved_bases.iter().find(|b| *b == target_name) {
+                        is_valid_target = true;
+                    }
+                    
+                    if !is_valid_target {
+                        return Err(format!("Model '{}' is not a valid target for polymorphic field '{}'", specific_target, k));
+                    }
+                    
+                    let sub_clause = parse_where_clause(ast, inner_where.as_object().unwrap_or(obj), target_model_def)?;
+                    
+                    // Enforce the specific target type
+                    // The query compiler automatically wraps WhereCondition values in single quotes and escapes them
+                    clauses.push(WhereClause::Field(format!("{}_type", k), query_compiler::ir::WhereCondition::Eq(specific_target.clone())));
+                    
+                    // Generate the EXISTS query joining on the id
+                    clauses.push(WhereClause::Relation {
+                        field_name: k.clone(),
+                        target_model: specific_target.clone(),
+                        fk_column: format!("{}_id", k),
+                        is_forward: true,
+                        filter: query_compiler::ir::RelationFilter::Is(Box::new(sub_clause)),
+                    });
+                } else {
+                    let cond = parse_where_condition(v)?;
+                    clauses.push(WhereClause::Field(k.clone(), cond));
+                }
             }
             AstFieldType::Relation(target_model_name) | AstFieldType::RelationArray(target_model_name) => {
                 let is_relational_op = if let Some(obj) = v.as_object() {

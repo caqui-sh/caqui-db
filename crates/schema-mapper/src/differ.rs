@@ -64,6 +64,14 @@ pub fn compute_diff(desired: &[PhysicalTable], live: &HashMap<String, LiveTable>
                         table: des_table.clone(), 
                         live_cols: shared_cols 
                     });
+                } else {
+                    for index in &des_table.indexes {
+                        ops.push(MigrationOp::CreateIndex {
+                            table: des_table.name.clone(),
+                            columns: index.columns.clone(),
+                            unique: index.unique,
+                        });
+                    }
                 }
             }
         }
@@ -83,6 +91,7 @@ pub fn compute_diff(desired: &[PhysicalTable], live: &HashMap<String, LiveTable>
 mod tests {
     use super::*;
     use crate::introspection::LiveColumn;
+    use crate::PhysicalIndex;
 
     #[test]
     fn test_compute_diff_create_table() {
@@ -194,5 +203,62 @@ mod tests {
         let ops = compute_diff(&desired, &live);
         
         assert!(ops.is_empty(), "Differ should be idempotent and return empty ops for identical schemas");
+    }
+
+    #[test]
+    fn test_compute_diff_create_index() {
+        let desired = vec![
+            PhysicalTable {
+                name: "User".to_string(),
+                columns: vec![
+                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
+                ],
+                indexes: vec![
+                    PhysicalIndex { name: "idx_User_email".to_string(), columns: vec!["email".to_string()], unique: true }
+                ],
+                triggers: vec![],
+                foreign_keys: vec![],
+            }
+        ];
+        
+        let mut live = HashMap::new();
+        let mut live_cols = HashMap::new();
+        live_cols.insert("id".to_string(), LiveColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: true });
+        live.insert("User".to_string(), LiveTable { name: "User".to_string(), columns: live_cols });
+        
+        let ops = compute_diff(&desired, &live);
+        
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0], MigrationOp::CreateIndex { table, columns, unique } if table == "User" && columns[0] == "email" && *unique));
+    }
+
+    #[test]
+    fn test_compute_diff_emits_indexes_on_unchanged_table() {
+        let desired = vec![
+            PhysicalTable {
+                name: "User".to_string(),
+                columns: vec![
+                    PhysicalColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
+                ],
+                indexes: vec![
+                    PhysicalIndex { name: "idx_User_id_polymorphic".to_string(), columns: vec!["id".to_string()], unique: false }
+                ],
+                triggers: vec![],
+                foreign_keys: vec![],
+            }
+        ];
+        
+        let mut live = HashMap::new();
+        let mut live_cols = HashMap::new();
+        live_cols.insert("id".to_string(), LiveColumn { name: "id".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: true });
+        
+        // The table columns perfectly match, so it won't be rebuilt
+        live.insert("User".to_string(), LiveTable { name: "User".to_string(), columns: live_cols });
+        
+        let ops = compute_diff(&desired, &live);
+        
+        // Assert that the index creation op is still emitted even though the table is identical
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0], MigrationOp::CreateIndex { table, columns, unique } if table == "User" && columns[0] == "id" && !*unique));
     }
 }

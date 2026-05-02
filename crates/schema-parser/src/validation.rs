@@ -201,6 +201,14 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
             model.resolved_fields = state.resolved_fields;
         }
     }
+
+    // Step 2.6: Implementor Registry
+    let mut implementor_registry: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for model in ast.models.values() {
+        for base in &model.resolved_bases {
+            implementor_registry.entry(base.clone()).or_default().push(model.name.clone());
+        }
+    }
     // --- END PHASE 2 ---
 
     // Pass 2: Graph Integrity & Primary Key Check
@@ -243,14 +251,29 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                 )));
             }
             
-            // Fix up Relation to PolymorphicUnion if it points to a union
+            // Fix up Relation to PolymorphicUnion or PolymorphicBase
             match &field.field_type {
                 AstFieldType::Relation(target_name) => {
-                    println!("CHECKING RELATION {} against UNION_SYMBOLS: {:?}", target_name, union_symbols);
                     if union_symbols.contains(target_name) {
-                        println!("UPDATING TO POLYMORPHIC UNION!");
                         field.field_type = AstFieldType::PolymorphicUnion(target_name.clone());
-                        println!("FIELD AFTER UPDATE: {:?}", field.field_type);
+                    } else if ast.bases.contains_key(target_name) {
+                        if implementor_registry.get(target_name).map_or(0, |v| v.len()) == 0 {
+                            return Err(ValidationError(format!(
+                                "Field '{}' in model '{}' targets base '{}' which has no implementers.",
+                                field.name, model.name, target_name
+                            )));
+                        }
+                        for attr in &field.attributes {
+                            if let FieldAttribute::Relation { references, .. } = attr {
+                                if !references.is_empty() {
+                                    return Err(ValidationError(format!(
+                                        "Field '{}' in model '{}' is a polymorphic base and cannot define explicit relation references.",
+                                        field.name, model.name
+                                    )));
+                                }
+                            }
+                        }
+                        field.field_type = AstFieldType::PolymorphicBase(target_name.clone());
                     } else if !model_symbols.contains(target_name) {
                         return Err(ValidationError(format!(
                             "Field '{}' in model '{}' references unknown type '{}'.",
@@ -261,6 +284,24 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                 AstFieldType::RelationArray(target_name) => {
                     if union_symbols.contains(target_name) {
                         field.field_type = AstFieldType::PolymorphicUnionArray(target_name.clone());
+                    } else if ast.bases.contains_key(target_name) {
+                        if implementor_registry.get(target_name).map_or(0, |v| v.len()) == 0 {
+                            return Err(ValidationError(format!(
+                                "Field '{}' in model '{}' targets base '{}' which has no implementers.",
+                                field.name, model.name, target_name
+                            )));
+                        }
+                        for attr in &field.attributes {
+                            if let FieldAttribute::Relation { references, .. } = attr {
+                                if !references.is_empty() {
+                                    return Err(ValidationError(format!(
+                                        "Field '{}' in model '{}' is a polymorphic base and cannot define explicit relation references.",
+                                        field.name, model.name
+                                    )));
+                                }
+                            }
+                        }
+                        field.field_type = AstFieldType::PolymorphicBaseArray(target_name.clone());
                     } else if !model_symbols.contains(target_name) {
                         return Err(ValidationError(format!(
                             "Field '{}' in model '{}' references unknown type '{}'.",
@@ -286,7 +327,7 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
         
         for field in &model.resolved_fields {
             match &field.field_type {
-                AstFieldType::Relation(target_name) | AstFieldType::RelationArray(target_name) => {
+                AstFieldType::Relation(target_name) | AstFieldType::RelationArray(target_name) | AstFieldType::PolymorphicBase(target_name) | AstFieldType::PolymorphicBaseArray(target_name) => {
                     if model_symbols.contains(target_name) {
                         target_counts.entry(target_name).or_insert_with(Vec::new).push(field);
                     }
@@ -972,5 +1013,118 @@ mod tests {
         let ast2 = crate::parser::parse_schema(input2).unwrap();
         let err2 = validate_schema(ast2).unwrap_err();
         assert_eq!(err2.0, "Union 'SearchResult' references abstract base 'BaseEntity', which is not allowed.");
+    }
+
+    #[test]
+    fn test_polymorphic_base_upgrade() {
+        let input = "
+            base Content { title: String }
+            model Article extends Content { id: String @id }
+            model User {
+                id: String @id
+                favorite: Content
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let validated_ast = validate_schema(ast).unwrap();
+        let user_model = validated_ast.models.get("User").unwrap();
+        let favorite_field = user_model.resolved_fields.iter().find(|f| f.name == "favorite").unwrap();
+        assert_eq!(favorite_field.field_type, AstFieldType::PolymorphicBase("Content".to_string()));
+    }
+
+    #[test]
+    fn test_polymorphic_base_no_implementers() {
+        let input = "
+            base Content { title: String }
+            model User {
+                id: String @id
+                favorite: Content
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let err = validate_schema(ast).unwrap_err();
+        assert_eq!(err.0, "Field 'favorite' in model 'User' targets base 'Content' which has no implementers.");
+    }
+
+    #[test]
+    fn test_polymorphic_base_explicit_relation() {
+        let input = "
+            base Content { title: String }
+            model Article extends Content { id: String @id }
+            model User {
+                id: String @id
+                favorite: Content @relation(references: [id])
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let err = validate_schema(ast).unwrap_err();
+        assert_eq!(err.0, "Field 'favorite' in model 'User' is a polymorphic base and cannot define explicit relation references.");
+    }
+
+    #[test]
+    fn test_polymorphic_base_array_upgrade() {
+        let input = "
+            base Content { title: String }
+            model Article extends Content { id: String @id }
+            model User {
+                id: String @id
+                favorites: Content[]
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let validated_ast = validate_schema(ast).unwrap();
+        let user_model = validated_ast.models.get("User").unwrap();
+        let favorites_field = user_model.resolved_fields.iter().find(|f| f.name == "favorites").unwrap();
+        assert_eq!(favorites_field.field_type, AstFieldType::PolymorphicBaseArray("Content".to_string()));
+    }
+
+    #[test]
+    fn test_polymorphic_base_transitive_implementors() {
+        let input = "
+            base Node { id: String @id }
+            base Content extends Node { title: String }
+            model Article extends Content { body: String }
+            
+            model Graph {
+                id: String @id
+                nodes: Node[]
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        assert!(validate_schema(ast).is_ok());
+    }
+
+    #[test]
+    fn test_polymorphic_base_allows_named_relation() {
+        let input = "
+            base Content { title: String }
+            model Article extends Content { id: String @id }
+            model User {
+                id: String @id
+                primary: Content @relation(\"PrimaryContent\")
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let validated_ast = validate_schema(ast).unwrap();
+        let user_model = validated_ast.models.get("User").unwrap();
+        let primary_field = user_model.resolved_fields.iter().find(|f| f.name == "primary").unwrap();
+        
+        assert!(primary_field.attributes.iter().any(|a| matches!(a, FieldAttribute::Relation { name: Some(n), .. } if n == "PrimaryContent")));
+    }
+
+    #[test]
+    fn test_polymorphic_base_ambiguous_relations_fails() {
+        let input = "
+            base Content { title: String }
+            model Article extends Content { id: String @id }
+            model User {
+                id: String @id
+                primary: Content
+                secondary: Content
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let err = validate_schema(ast).unwrap_err();
+        assert!(err.0.contains("Ambiguous relations: Model 'User' has multiple relations to 'Content'"));
     }
 }

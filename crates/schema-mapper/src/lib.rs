@@ -77,24 +77,33 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
             }
 
             match &field.field_type {
-                AstFieldType::ScalarArray(_) | AstFieldType::RelationArray(_) | AstFieldType::PolymorphicUnionArray(_) => {
+                AstFieldType::ScalarArray(_) | AstFieldType::RelationArray(_) | AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {
                     columns.push(PhysicalColumn {
                         name: field.name.clone(),
                         sqlite_type: "TEXT".to_string(), // Tagged internally for JSON1
                         is_json_array: true,             
                     });
                 },
-                AstFieldType::PolymorphicUnion(_) => {
+                AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicBase(_) => {
                     // Drop original field; inject discriminator string and ID pointer
+                    let type_col = format!("{}_type", field.name);
+                    let id_col = format!("{}_id", field.name);
+                    
                     columns.push(PhysicalColumn {
-                        name: format!("{}_type", field.name),
+                        name: type_col.clone(),
                         sqlite_type: "TEXT".to_string(),
                         is_json_array: false,
                     });
                     columns.push(PhysicalColumn {
-                        name: format!("{}_id", field.name),
+                        name: id_col.clone(),
                         sqlite_type: "TEXT".to_string(), // Or INTEGER depending on PK definition, assuming TEXT
                         is_json_array: false,
+                    });
+                    
+                    indexes.push(PhysicalIndex {
+                        name: format!("idx_{}_{}_polymorphic", model.name, field.name),
+                        columns: vec![type_col, id_col],
+                        unique: false,
                     });
                 },
                 AstFieldType::Scalar(t) => {
@@ -221,7 +230,11 @@ mod tests {
         let table = &tables[0];
         assert_eq!(table.name, "User");
         assert_eq!(table.columns.len(), 5);
-        assert_eq!(table.indexes.len(), 0);
+        assert_eq!(table.indexes.len(), 1);
+        let idx = &table.indexes[0];
+        assert_eq!(idx.name, "idx_User_search_polymorphic");
+        assert_eq!(idx.columns, vec!["search_type", "search_id"]);
+        assert_eq!(idx.unique, false);
         assert_eq!(table.triggers.len(), 0);
         
         let id_col = table.columns.iter().find(|c| c.name == "id").unwrap();
@@ -471,5 +484,86 @@ mod tests {
         
         // BUT the DB constraint MUST be intentionally omitted
         assert!(person_table.foreign_keys.is_empty());
+    }
+
+    #[test]
+    fn test_polymorphic_base_index_generation() {
+        let mut ast = SchemaAst {
+            bases: std::collections::HashMap::new(),
+            models: HashMap::new(),
+            unions: HashMap::new(),
+        };
+
+        ast.models.insert("Comment".to_string(), ModelNode {
+            name: "Comment".to_string(),
+            resolved_fields: vec![
+                FieldNode {
+                    name: "id".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
+                    attributes: vec![FieldAttribute::Id],
+                },
+                FieldNode {
+                    name: "parent".to_string(),
+                    field_type: AstFieldType::PolymorphicBase("Content".to_string()),
+                    is_optional: false,
+                    attributes: vec![],
+                }
+            ],
+            ..Default::default()
+        });
+
+        let tables = lower_ast_to_physical(&ast);
+        let comment_table = tables.iter().find(|t| t.name == "Comment").unwrap();
+        
+        assert!(comment_table.columns.iter().any(|c| c.name == "parent_type"));
+        assert!(comment_table.columns.iter().any(|c| c.name == "parent_id"));
+        
+        assert_eq!(comment_table.indexes.len(), 1);
+        let idx = &comment_table.indexes[0];
+        assert_eq!(idx.name, "idx_Comment_parent_polymorphic");
+        assert_eq!(idx.columns, vec!["parent_type", "parent_id"]);
+        assert_eq!(idx.unique, false);
+    }
+
+    #[test]
+    fn test_lower_polymorphic_base_array() {
+        let mut ast = SchemaAst {
+            bases: std::collections::HashMap::new(),
+            models: HashMap::new(),
+            unions: HashMap::new(),
+        };
+
+        ast.models.insert("Folder".to_string(), ModelNode {
+            name: "Folder".to_string(),
+            resolved_fields: vec![
+                FieldNode {
+                    name: "id".to_string(),
+                    field_type: AstFieldType::Scalar("String".to_string()),
+                    is_optional: false,
+                    attributes: vec![FieldAttribute::Id],
+                },
+                FieldNode {
+                    name: "contents".to_string(),
+                    field_type: AstFieldType::PolymorphicBaseArray("Node".to_string()),
+                    is_optional: false,
+                    attributes: vec![],
+                }
+            ],
+            ..Default::default()
+        });
+
+        let tables = lower_ast_to_physical(&ast);
+        let folder_table = tables.iter().find(|t| t.name == "Folder").unwrap();
+        
+        // Assert exactly two columns: id and contents
+        assert_eq!(folder_table.columns.len(), 2);
+        
+        let contents_col = folder_table.columns.iter().find(|c| c.name == "contents").unwrap();
+        assert_eq!(contents_col.sqlite_type, "TEXT");
+        assert_eq!(contents_col.is_json_array, true);
+        
+        // Assert NO indexes are generated for polymorphic arrays
+        assert!(folder_table.indexes.is_empty());
     }
 }

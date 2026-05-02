@@ -34,6 +34,8 @@ pub enum AstFieldType {
     Relation(String),          // Points to another Model
     PolymorphicUnion(String),  // Points to a defined Union
     PolymorphicUnionArray(String),
+    PolymorphicBase(String),       // Points to a defined Base
+    PolymorphicBaseArray(String),  // Array of defined Base
     // Extension for custom arrays, though not explicitly in the snippet
     RelationArray(String),
 }

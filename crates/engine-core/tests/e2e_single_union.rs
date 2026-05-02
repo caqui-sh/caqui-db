@@ -71,7 +71,7 @@ fn build_query() -> QueryNode {
         alias: "t0".to_string(),
         selections: vec![
             SelectField::Scalar("id".to_string()),
-            SelectField::PolymorphicUnion {
+            SelectField::Polymorphic {
                 field_name: "content".to_string(),
                 is_list: false,
                 target_fragments: fragments,

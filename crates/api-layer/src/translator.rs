@@ -108,13 +108,13 @@ pub fn hydrate_payload_to_ir(
                 // Since child_node is a PolymorphicUnion, we must mutate its branches to select resolved_fk.
                 let mut child_node = child_node;
                 if !is_forward {
-                    if !child_node.selections.iter().any(|s| match s { query_compiler::ir::SelectField::Scalar(name) => name == &resolved_fk, _ => false }) {
+                    if !child_node.selections.iter().any(|s| match s { query_compiler::ir::SelectField::Scalar(name) => *name == resolved_fk, _ => false }) {
                         child_node.selections.push(query_compiler::ir::SelectField::Scalar(resolved_fk.clone()));
                     }
                     
-                    if let query_compiler::ir::QueryIrSource::PolymorphicUnion { branches, .. } = &mut child_node.source {
+                    if let query_compiler::ir::QueryIrSource::Polymorphic { branches, .. } = &mut child_node.source {
                         for branch in branches {
-                            if !branch.selections.iter().any(|s| match s { query_compiler::ir::SelectField::Scalar(name) => name == &resolved_fk, _ => false }) {
+                            if !branch.selections.iter().any(|s| match s { query_compiler::ir::SelectField::Scalar(name) => *name == resolved_fk, _ => false }) {
                                 branch.selections.push(query_compiler::ir::SelectField::Scalar(resolved_fk.clone()));
                             }
                         }
@@ -129,10 +129,22 @@ pub fn hydrate_payload_to_ir(
                     query: Box::new(child_node),
                 });
             },
-            AstFieldType::PolymorphicUnion(union_name) | AstFieldType::PolymorphicUnionArray(union_name) => {
-                let is_list = matches!(field_def.field_type, AstFieldType::PolymorphicUnionArray(_));
-                let targets = ast.unions.get(union_name)
-                    .ok_or_else(|| format!("Security Exception: Union '{}' undefined.", union_name))?;
+            AstFieldType::PolymorphicUnion(target_name) | AstFieldType::PolymorphicUnionArray(target_name) | AstFieldType::PolymorphicBase(target_name) | AstFieldType::PolymorphicBaseArray(target_name) => {
+                let is_list = matches!(field_def.field_type, AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_));
+                
+                let targets = if let Some(union_targets) = ast.unions.get(target_name) {
+                    union_targets.clone()
+                } else if ast.bases.contains_key(target_name) {
+                    let mut impls = Vec::new();
+                    for model in ast.models.values() {
+                        if model.resolved_bases.contains(target_name) {
+                            impls.push(model.name.clone());
+                        }
+                    }
+                    impls
+                } else {
+                    return Err(format!("Security Exception: Target '{}' undefined.", target_name));
+                };
                     
                 let mut target_fragments = std::collections::HashMap::new();
                 
@@ -140,7 +152,7 @@ pub fn hydrate_payload_to_ir(
                 if let Some(union_queries) = sub_payload.as_object() {
                     for (target_model_name, target_payload) in union_queries {
                         if !targets.contains(target_model_name) {
-                            return Err(format!("Invalid union target '{}' for union '{}'.", target_model_name, union_name));
+                            return Err(format!("Invalid union target '{}' for union '{}'.", target_model_name, target_name));
                         }
                         
                         let fragment_node = hydrate_payload_to_ir(ast, target_model_name, target_payload, alias_counter, depth + 1)?;
@@ -152,7 +164,7 @@ pub fn hydrate_payload_to_ir(
                     return Err(format!("Missing union target fragments for field '{}'.", field_name));
                 }
 
-                selections.push(SelectField::PolymorphicUnion {
+                selections.push(SelectField::Polymorphic {
                     field_name: field_name.clone(),
                     is_list,
                     target_fragments,
@@ -351,8 +363,8 @@ mod tests {
         let mut alias_counter = 0;
         let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
         
-        let union_field = ir.selections.iter().find(|s| matches!(s, SelectField::PolymorphicUnion { .. })).unwrap();
-        if let SelectField::PolymorphicUnion { field_name, is_list, target_fragments } = union_field {
+        let union_field = ir.selections.iter().find(|s| matches!(s, SelectField::Polymorphic { .. })).unwrap();
+        if let SelectField::Polymorphic { field_name, is_list, target_fragments } = union_field {
             assert_eq!(field_name, "content");
             assert_eq!(*is_list, false);
             assert_eq!(target_fragments.len(), 2);
@@ -377,8 +389,8 @@ mod tests {
         let mut alias_counter = 0;
         let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
         
-        let union_field = ir.selections.iter().find(|s| matches!(s, SelectField::PolymorphicUnion { .. })).unwrap();
-        if let SelectField::PolymorphicUnion { field_name, is_list, target_fragments } = union_field {
+        let union_field = ir.selections.iter().find(|s| matches!(s, SelectField::Polymorphic { .. })).unwrap();
+        if let SelectField::Polymorphic { field_name, is_list, target_fragments } = union_field {
             assert_eq!(field_name, "contents");
             assert_eq!(*is_list, true);
             assert_eq!(target_fragments.len(), 2);
@@ -824,13 +836,13 @@ fn compile_polymorphic_read(
                     
                     let mut child_node = child_node;
                     if !is_forward {
-                        if !child_node.selections.iter().any(|s| match s { query_compiler::ir::SelectField::Scalar(name) => name == &resolved_fk, _ => false }) {
+                        if !child_node.selections.iter().any(|s| match s { query_compiler::ir::SelectField::Scalar(name) => *name == resolved_fk, _ => false }) {
                             child_node.selections.push(query_compiler::ir::SelectField::Scalar(resolved_fk.clone()));
                         }
                         
-                        if let query_compiler::ir::QueryIrSource::PolymorphicUnion { branches, .. } = &mut child_node.source {
+                        if let query_compiler::ir::QueryIrSource::Polymorphic { branches, .. } = &mut child_node.source {
                             for branch in branches {
-                                if !branch.selections.iter().any(|s| match s { query_compiler::ir::SelectField::Scalar(name) => name == &resolved_fk, _ => false }) {
+                                if !branch.selections.iter().any(|s| match s { query_compiler::ir::SelectField::Scalar(name) => *name == resolved_fk, _ => false }) {
                                     branch.selections.push(query_compiler::ir::SelectField::Scalar(resolved_fk.clone()));
                                 }
                             }
@@ -860,7 +872,7 @@ fn compile_polymorphic_read(
         .unwrap_or_else(|| "id".to_string());
 
     Ok(query_compiler::ir::QueryNode {
-        source: query_compiler::ir::QueryIrSource::PolymorphicUnion {
+        source: query_compiler::ir::QueryIrSource::Polymorphic {
             alias: base_def.name.clone(),
             branches,
         },

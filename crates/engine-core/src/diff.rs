@@ -7,8 +7,8 @@ use rusqlite::Connection;
 
 fn format_type(field: &FieldNode) -> String {
     let base = match &field.field_type {
-        AstFieldType::Scalar(t) | AstFieldType::Relation(t) | AstFieldType::PolymorphicUnion(t) => t.clone(),
-        AstFieldType::ScalarArray(t) | AstFieldType::RelationArray(t) | AstFieldType::PolymorphicUnionArray(t) => format!("{}[]", t),
+        AstFieldType::Scalar(t) | AstFieldType::Relation(t) | AstFieldType::PolymorphicUnion(t) | AstFieldType::PolymorphicBase(t) => t.clone(),
+        AstFieldType::ScalarArray(t) | AstFieldType::RelationArray(t) | AstFieldType::PolymorphicUnionArray(t) | AstFieldType::PolymorphicBaseArray(t) => format!("{}[]", t),
     };
     if field.is_optional {
         format!("{}?", base)
