@@ -45,7 +45,7 @@ fn build_query() -> QueryNode {
         primary_key: "__id".to_string(),
         source: query_compiler::ir::QueryIrSource::Table("Post".to_string()),
         alias: "t1".to_string(),
-        selections: vec![SelectField::Scalar("title".to_string())],
+        order_by: vec![], selections: vec![SelectField::Scalar("title".to_string())],
         filters: None,
         limit: None,
         offset: None,
@@ -55,7 +55,7 @@ fn build_query() -> QueryNode {
         primary_key: "__id".to_string(),
         source: query_compiler::ir::QueryIrSource::Table("Video".to_string()),
         alias: "t2".to_string(),
-        selections: vec![SelectField::Scalar("url".to_string())],
+        order_by: vec![], selections: vec![SelectField::Scalar("url".to_string())],
         filters: None,
         limit: None,
         offset: None,
@@ -69,7 +69,7 @@ fn build_query() -> QueryNode {
         primary_key: "__id".to_string(),
         source: query_compiler::ir::QueryIrSource::Table("User".to_string()),
         alias: "t0".to_string(),
-        selections: vec![
+        order_by: vec![], selections: vec![
             SelectField::Scalar("__id".to_string()),
             SelectField::Polymorphic {
                 field_name: "content".to_string(),
