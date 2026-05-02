@@ -113,12 +113,15 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
             }
 
             match &field.field_type {
-                AstFieldType::ScalarArray(_) | AstFieldType::RelationArray(_) | AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {
+                AstFieldType::ScalarArray(_) | AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {
                     columns.push(PhysicalColumn {
                         name: field.name.clone(),
                         sqlite_type: "TEXT".to_string(), // Tagged internally for JSON1
                         is_json_array: true,             
                     });
+                },
+                AstFieldType::RelationArray(_) => {
+                    // Do nothing for relational arrays, they are joined dynamically at query time
                 },
                 AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicBase(_) => {
                     // Drop original field; inject discriminator string and ID pointer

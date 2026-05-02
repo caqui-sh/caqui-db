@@ -391,8 +391,10 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
         }
     }
 
-    // Pass 3: Ambiguous Relations Check
-    for model in ast.models.values() {
+    // Pass 3: Ambiguous Relations Check & Dangling Array Check
+    let mut sorted_models: Vec<_> = ast.models.values().collect();
+    sorted_models.sort_by(|a, b| a.name.cmp(&b.name));
+    for model in sorted_models {
         let mut target_counts: std::collections::HashMap<&String, Vec<&FieldNode>> = std::collections::HashMap::new();
         
         for field in &model.resolved_fields {
@@ -400,6 +402,22 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                 AstFieldType::Relation(target_name) | AstFieldType::RelationArray(target_name) | AstFieldType::PolymorphicBase(target_name) | AstFieldType::PolymorphicBaseArray(target_name) => {
                     if model_symbols.contains(target_name) {
                         target_counts.entry(target_name).or_insert_with(Vec::new).push(field);
+                    }
+
+                    if let AstFieldType::RelationArray(_) = &field.field_type {
+                        if let Some(target_model) = ast.models.get(target_name) {
+                            let has_reverse = target_model.resolved_fields.iter().any(|f| {
+                                match &f.field_type {
+                                    AstFieldType::Relation(rev_target) | AstFieldType::PolymorphicBase(rev_target) => {
+                                        rev_target == &model.name || ast.bases.get(rev_target).map_or(false, |b| model.resolved_bases.contains(&b.name))
+                                    }
+                                    _ => false
+                                }
+                            });
+                            if !has_reverse {
+                                return Err(ValidationError(format!("Field '{}' in model '{}' defines a 1:N relationship, but target model '{}' is missing a relation field pointing back to '{}'.", field.name, model.name, target_name, model.name)));
+                            }
+                        }
                     }
                 },
                 _ => {}
@@ -694,12 +712,14 @@ mod tests {
             }
             model Post {
                 @@id(uuid)
+                author: User @relation
+                reviewer: User @relation
             }
         ";
         let ast = crate::parser::parse_schema(input).unwrap();
         let result = validate_schema(ast);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().0, "Ambiguous relations: Model 'User' has multiple relations to 'Post', but field 'authoredPosts' is missing a unique @relation(\"Name\").");
+        assert_eq!(result.unwrap_err().0, "Ambiguous relations: Model 'Post' has multiple relations to 'User', but field 'author' is missing a unique @relation(\"Name\").");
     }
 
     #[test]
@@ -712,12 +732,14 @@ mod tests {
             }
             model Post {
                 @@id(uuid)
+                author: User @relation(\"AuthorToPost\")
+                reviewer: User @relation(\"AuthorToPost\")
             }
         ";
         let ast = crate::parser::parse_schema(input).unwrap();
         let result = validate_schema(ast);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().0, "Ambiguous relations: Model 'User' has multiple relations to 'Post' with the same name 'AuthorToPost'. Each must be uniquely named.");
+        assert_eq!(result.unwrap_err().0, "Ambiguous relations: Model 'Post' has multiple relations to 'User' with the same name 'AuthorToPost'. Each must be uniquely named.");
     }
 
     #[test]
@@ -730,6 +752,8 @@ mod tests {
             }
             model Post {
                 @@id(uuid)
+                author: User @relation(\"AuthorToPost\")
+                reviewer: User @relation(\"ReviewerToPost\")
             }
         ";
         let ast = crate::parser::parse_schema(input).unwrap();

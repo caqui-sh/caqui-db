@@ -346,22 +346,19 @@ fn test_e2e_complex_graph_traversal() {
 
     let schema = "
         model User {
-
             name: String
             posts: Post[]
     @@id(uuid)
         }
         model Post {
-
             title: String
-            user_id: String
+            user: User @relation
             comments: Comment[]
     @@id(uuid)
         }
         model Comment {
-
             body: String
-            post_id: String
+            post: Post @relation
     @@id(uuid)
         }
     ";
@@ -376,8 +373,8 @@ fn test_e2e_complex_graph_traversal() {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         ).unwrap();
         conn.execute("INSERT INTO User (__id, name) VALUES ('u1', 'Alice')", []).unwrap();
-        conn.execute("INSERT INTO Post (__id, title, user_id) VALUES ('p1', 'First Post', 'u1')", []).unwrap();
-        conn.execute("INSERT INTO Comment (__id, body, post_id) VALUES ('c1', 'Nice post!', 'p1')", []).unwrap();
+        conn.execute("INSERT INTO Post (__id, title, userId) VALUES ('p1', 'First Post', 'u1')", []).unwrap();
+        conn.execute("INSERT INTO Comment (__id, body, postId) VALUES ('c1', 'Nice post!', 'p1')", []).unwrap();
     }
 
     let mut api_server = Command::new(caqui_bin).env("PORT", "4002").args(&["api", "start"]).current_dir(workspace).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
