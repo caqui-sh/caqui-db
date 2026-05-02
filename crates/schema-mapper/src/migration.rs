@@ -1,34 +1,10 @@
 use crate::differ::MigrationOp;
 use crate::PhysicalTable;
 
-pub fn generate_create_table_sql(table_name: &str, table: &PhysicalTable) -> String {
-    let mut sql = format!("CREATE TABLE {} (\n", table_name);
-    let mut cols = Vec::new();
-    for col in &table.columns {
-        cols.push(format!("    {} {}", col.name, col.sqlite_type));
-    }
-    for fk in &table.foreign_keys {
-        cols.push(format!("    {}", fk));
-    }
-    sql.push_str(&cols.join(",\n"));
-    sql.push_str("\n)");
-    sql
-}
-
 pub fn generate_sql(op: &MigrationOp) -> String {
     match op {
         MigrationOp::CreateTable { table } => {
-            let mut sql = generate_create_table_sql(&table.name, table);
-            sql.push_str(";\n");
-            for index in &table.indexes {
-                let unique_str = if index.unique { "UNIQUE " } else { "" };
-                sql.push_str(&format!("CREATE {}INDEX IF NOT EXISTS {} ON {} ({});\n", unique_str, index.name, table.name, index.columns.join(", ")));
-            }
-            for trigger in &table.triggers {
-                sql.push_str(&trigger.sql);
-                sql.push('\n');
-            }
-            sql
+            generate_create_table_sql(&table.name, table) + ";\n"
         },
         MigrationOp::DropTable { name } => {
             format!("DROP TABLE {};\n", name)
@@ -37,36 +13,22 @@ pub fn generate_sql(op: &MigrationOp) -> String {
             format!("ALTER TABLE {} ADD COLUMN {} {};\n", table, column.name, column.sqlite_type)
         },
         MigrationOp::RebuildTable { table, live_cols } => {
-            let orig_name = &table.name;
-            let temp_name = format!("_engine_new_{}", orig_name);
-            let create_sql = generate_create_table_sql(&temp_name, table);
+            let temp_name = format!("_engine_new_{}", table.name);
+            let create_temp = generate_create_table_sql(&temp_name, table);
             let cols_csv = live_cols.join(", ");
             
-            // The Atomic SQLite Table Rebuild Sequence
-            let mut sql = format!(
+            format!(
                 "PRAGMA foreign_keys=OFF;\n\
                  BEGIN TRANSACTION;\n\
-                 {create_sql};\n\
-                 INSERT INTO {temp} ({cols}) SELECT {cols} FROM {orig};\n\
-                 DROP TABLE {orig};\n\
-                 ALTER TABLE {temp} RENAME TO {orig};\n\
-                 PRAGMA foreign_key_check;\n",
-                temp = temp_name,
-                orig = orig_name,
-                cols = cols_csv
-            );
-
-            for index in &table.indexes {
-                let unique_str = if index.unique { "UNIQUE " } else { "" };
-                sql.push_str(&format!("CREATE {}INDEX IF NOT EXISTS {} ON {} ({});\n", unique_str, index.name, table.name, index.columns.join(", ")));
-            }
-            for trigger in &table.triggers {
-                sql.push_str(&trigger.sql);
-                sql.push('\n');
-            }
-
-            sql.push_str("COMMIT;\nPRAGMA foreign_keys=ON;\n");
-            sql
+                 {};\n\
+                 INSERT INTO {} ({}) SELECT {} FROM {};\n\
+                 DROP TABLE {};\n\
+                 ALTER TABLE {} RENAME TO {};\n\
+                 PRAGMA foreign_key_check;\n\
+                 COMMIT;\n\
+                 PRAGMA foreign_keys=ON;\n",
+                create_temp, temp_name, cols_csv, cols_csv, table.name, table.name, temp_name, table.name
+            )
         },
         MigrationOp::CreateIndex { table, columns, unique } => {
             let unique_str = if *unique { "UNIQUE " } else { "" };
@@ -74,10 +36,27 @@ pub fn generate_sql(op: &MigrationOp) -> String {
             let index_name = format!("idx_{}_{}", table, cols_csv);
             format!("CREATE {}INDEX {} ON {} ({});\n", unique_str, index_name, table, columns.join(", "))
         },
+        MigrationOp::DropIndex { name } => {
+            format!("DROP INDEX {};\n", name)
+        },
         MigrationOp::CreateTrigger { trigger } => {
             format!("{}\n", trigger.sql)
         },
     }
+}
+
+fn generate_create_table_sql(name: &str, table: &PhysicalTable) -> String {
+    let mut sql = format!("CREATE TABLE {} (\n", name);
+    let mut entries = Vec::new();
+    for col in &table.columns {
+        entries.push(format!("    {} {}", col.name, col.sqlite_type));
+    }
+    for fk in &table.foreign_keys {
+        entries.push(format!("    {}", fk));
+    }
+    sql.push_str(&entries.join(",\n"));
+    sql.push_str("\n)");
+    sql
 }
 
 #[cfg(test)]
@@ -152,58 +131,21 @@ mod tests {
 
     #[test]
     fn test_generate_sql_create_index() {
-        let op = MigrationOp::CreateIndex { 
-            table: "User".to_string(), 
-            columns: vec!["email".to_string()], 
-            unique: true 
+        let op = MigrationOp::CreateIndex {
+            table: "User".to_string(),
+            columns: vec!["email".to_string()],
+            unique: true,
         };
         let sql = generate_sql(&op);
         assert_eq!(sql, "CREATE UNIQUE INDEX idx_User_email ON User (email);\n");
     }
 
     #[test]
-    fn test_generate_create_table_with_auxiliary() {
-        let table = PhysicalTable {
-            name: "Device".to_string(),
-            columns: vec![
-                PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
-            ],
-            indexes: vec![
-                PhysicalIndex { name: "idx_Device_id".to_string(), columns: vec!["__id".to_string()], unique: true }
-            ],
-            triggers: vec![
-                PhysicalTrigger { name: "trg_test".to_string(), sql: "CREATE TRIGGER trg_test AFTER INSERT ON Device BEGIN SELECT 1; END;".to_string() }
-            ],
-            foreign_keys: vec![],
+    fn test_generate_sql_drop_index() {
+        let op = MigrationOp::DropIndex {
+            name: "idx_User_email".to_string(),
         };
-        let op = MigrationOp::CreateTable { table };
         let sql = generate_sql(&op);
-        
-        assert!(sql.contains("CREATE TABLE Device"));
-        assert!(sql.contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_Device_id ON Device (__id);"));
-        assert!(sql.contains("CREATE TRIGGER trg_test"));
-        }
-
-        #[test]
-        fn test_generate_sql_rebuild_table_with_indexes() {
-        let table = PhysicalTable {
-            name: "User".to_string(),
-            columns: vec![
-                PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
-            ],
-            indexes: vec![
-                PhysicalIndex { name: "idx_User_id".to_string(), columns: vec!["__id".to_string()], unique: true }
-            ],
-            triggers: vec![],
-            foreign_keys: vec![],
-        };
-        let live_cols = vec!["__id".to_string()];
-        let op = MigrationOp::RebuildTable { table, live_cols };
-        let sql = generate_sql(&op);
-
-        // Verify the atomic rebuild sequence correctly sequences the index with IF NOT EXISTS
-        assert!(sql.contains("ALTER TABLE _engine_new_User RENAME TO User;"));
-        assert!(sql.contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_User_id ON User (__id);"));
-        assert!(sql.contains("COMMIT;"));
-        }
-        }
+        assert_eq!(sql, "DROP INDEX idx_User_email;\n");
+    }
+}

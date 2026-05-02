@@ -8,6 +8,12 @@ pub fn register_custom_functions(conn: &rusqlite::Connection) -> rusqlite::Resul
         FunctionFlags::SQLITE_UTF8,
         |_ctx| Ok(uuid::Uuid::now_v7().to_string()),
     )?;
+    conn.create_scalar_function(
+        "gen_cuid",
+        0,
+        FunctionFlags::SQLITE_UTF8,
+        |_ctx| Ok(cuid::cuid().unwrap_or_else(|_| uuid::Uuid::new_v4().to_string())),
+    )?;
     Ok(())
 }
 

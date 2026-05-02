@@ -5,6 +5,7 @@ use std::collections::HashMap;
 pub struct LiveTable {
     pub name: String,
     pub columns: HashMap<String, LiveColumn>, // HashMap for O(1) diffing lookups
+    pub indexes: Vec<crate::PhysicalIndex>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -50,6 +51,34 @@ pub fn introspect_table_columns(conn: &Connection, table_name: &str) -> Result<H
     }
     
     Ok(col_map)
+}
+
+pub fn introspect_table_indexes(conn: &Connection, table_name: &str) -> Result<Vec<crate::PhysicalIndex>> {
+    let query = format!("PRAGMA index_list('{}')", table_name);
+    let mut stmt = conn.prepare(&query)?;
+    
+    let mut indexes = Vec::new();
+    let index_rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(1)?, row.get::<_, i32>(2)? == 1))
+    })?;
+
+    for res in index_rows {
+        let (name, unique) = res?;
+        if name.starts_with("sqlite_") { continue; }
+        
+        let info_query = format!("PRAGMA index_info('{}')", name);
+        let mut info_stmt = conn.prepare(&info_query)?;
+        let columns = info_stmt.query_map([], |row| row.get::<_, String>(2))?
+            .collect::<Result<Vec<String>, _>>()?;
+            
+        indexes.push(crate::PhysicalIndex {
+            name,
+            columns,
+            unique,
+        });
+    }
+    
+    Ok(indexes)
 }
 
 #[cfg(test)]

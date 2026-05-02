@@ -147,6 +147,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                     let is_id = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Id));
                     let is_autoincrement = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalDefault(DefaultFunc::AutoIncrement)));
                     let is_uuid = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalDefault(DefaultFunc::Uuid)));
+                    let is_cuid = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalDefault(DefaultFunc::Cuid)));
                     let is_updated_at = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalTracked) || matches!(a, FieldAttribute::InternalFieldTracked(_)));
 
                     let mut sql_type = match t.as_str() {
@@ -165,6 +166,8 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                         
                         if is_uuid {
                             sql_type = format!("{} DEFAULT (gen_uuid7())", sql_type);
+                        } else if is_cuid {
+                            sql_type = format!("{} DEFAULT (gen_cuid())", sql_type);
                         }
                     } else if is_updated_at {
                         sql_type = format!("{} DEFAULT CURRENT_TIMESTAMP", sql_type);

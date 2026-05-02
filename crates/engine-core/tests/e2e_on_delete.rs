@@ -281,3 +281,47 @@ async fn test_e2e_polymorphic_cascade_delete() {
     
     assert_eq!(count_after, 0, "Comment should be deleted by application-level cascade");
 }
+
+#[tokio::test]
+async fn test_e2e_on_delete_no_action() {
+    let dir = tempdir().unwrap();
+    let workspace = dir.path();
+    let _ = engine_core::vfs::bootstrap_custom_vfs();
+    
+    let caqui_bin = env!("CARGO_BIN_EXE_caqui");
+    let db_uri = format!("file:{}?vfs=git", workspace.join("app.db").display());
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.arg("init").current_dir(workspace);
+    run_cmd(cmd);
+
+    let schema = "
+        model Parent {
+            @@id(uuid)
+        }
+        
+        model Child {
+            parentId: String
+            parent: Parent @relation(fields: [parentId], references: [__id], onDelete: NoAction)
+            @@id(uuid)
+        }
+    ";
+    fs::write(workspace.join("schema.cq"), schema).unwrap();
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+    
+    conn.interact(|db| {
+        db.execute("INSERT INTO Parent (__id) VALUES ('p1')", []).unwrap();
+        db.execute("INSERT INTO Child (__id, parentId) VALUES ('c1', 'p1')", []).unwrap();
+        
+        // Delete parent - should fail due to NO ACTION (which behaves like RESTRICT in SQLite when foreign_keys=ON)
+        let res = db.execute("DELETE FROM Parent WHERE __id = 'p1'", []);
+        assert!(res.is_err(), "Deletion should have been blocked by NO ACTION");
+        Ok::<(), rusqlite::Error>(())
+    }).await.unwrap().unwrap();
+}
