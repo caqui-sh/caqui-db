@@ -196,7 +196,6 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                     name,
                     fields,
                     extends,
-                    block_attributes,
                     resolved_fields: Vec::new(),
                     resolved_bases: BTreeSet::new(),
                 });
@@ -470,10 +469,10 @@ mod tests {
         let schema_str = r#"
             base Timestamped {
                 createdAt: DateTime
-    @@id(uuid)
+    
             }
             base Record extends Timestamped {
-    @@id(uuid)
+    
 
             }
             model User extends Record, Timestamped {
@@ -506,7 +505,7 @@ mod tests {
     #[test]
     fn test_parse_base_trailing_commas_and_whitespace() {
         let schema_str = r#"
-            base A { id: String @@id(uuid) }
+            base A { id: String  }
             base B extends A, {
                 name: String
             }
@@ -526,10 +525,10 @@ mod tests {
     #[test]
     fn test_parse_empty_base_and_single_inheritance() {
         let schema_str = r#"
-            base Empty { @@id(uuid)}
+            base Empty { }
             base Single extends Empty {
                 id: String
-    @@id(uuid)
+    
             }
         "#;
         

@@ -26,7 +26,7 @@ async fn test_e2e_abstract_mutations_blocked() {
     run_cmd(git_init);
 
     let schema = r#"
-        base Node { @@id(uuid) }
+        base Node {  }
         model Document extends Node { title: String @@id(uuid) }
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -60,7 +60,7 @@ async fn test_e2e_malicious_marker_spoofing_stripped() {
     run_cmd(git_init);
 
     let schema = r#"
-        base SecureEntity { @@id(uuid) }
+        base SecureEntity {  }
         model Vault extends SecureEntity { name: String @@id(uuid) }
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -118,7 +118,7 @@ async fn test_e2e_polymorphic_mutations() {
     run_cmd(git_init);
 
     let schema = r#"
-        base Content { @@id(uuid) }
+        base Content {  }
         model Article extends Content { title: String @@id(uuid) }
         model Video extends Content { duration: Int @@id(uuid) }
         
@@ -208,7 +208,7 @@ async fn test_e2e_polymorphic_array_mutations() {
     run_cmd(git_init);
 
     let schema = r#"
-        base Content { @@id(uuid) }
+        base Content {  }
         model Article extends Content { title: String @@id(uuid) }
         model Video extends Content { duration: Int @@id(uuid) }
         
@@ -261,7 +261,7 @@ async fn test_e2e_polymorphic_reparent_and_disconnect() {
     run_cmd(git_init);
 
     let schema = r#"
-        base Content { @@id(uuid) }
+        base Content {  }
         model Article extends Content { title: String @@id(uuid) }
         model Video extends Content { duration: Int @@id(uuid) }
         

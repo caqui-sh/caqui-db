@@ -213,7 +213,7 @@ async fn test_e2e_polymorphic_cascade_delete() {
     run_cmd(cmd);
 
     let schema = "
-        base Content { @@id(uuid) }
+        base Content { }
         model Article extends Content { title: String @@id(uuid) }
         model Video extends Content { duration: Int @@id(uuid) }
         

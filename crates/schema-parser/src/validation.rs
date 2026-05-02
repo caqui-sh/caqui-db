@@ -505,8 +505,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
-    fn test_missing_id() {
+    fn test_default_id_fallback() {
         let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
@@ -525,8 +524,11 @@ mod tests {
         });
         
         let result = validate_schema(ast);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().0, "Model 'User' must have exactly one field with the '@id' attribute, found 0.");
+        assert!(result.is_ok());
+        let ast = result.unwrap();
+        let user = ast.models.get("User").unwrap();
+        let id_field = user.resolved_fields.iter().find(|f| f.name == "__id").unwrap();
+        assert_eq!(id_field.field_type, AstFieldType::Scalar("Int".to_string()));
     }
     
     #[test]
@@ -549,8 +551,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
-    fn test_multiple_ids() {
+    fn test_explicit_double_underscore_id_rejected() {
         let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
@@ -560,23 +561,17 @@ mod tests {
             name: "User".to_string(),
             fields: vec![
                 FieldNode {
-                    name: "id1".to_string(),
+                    name: "__id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
                     is_optional: false,
-                    attributes: vec![FieldAttribute::Id],
-                },
-                FieldNode {
-                    name: "id2".to_string(),
-                    field_type: AstFieldType::Scalar("String".to_string()),
-                    is_optional: false,
-                    attributes: vec![FieldAttribute::Id],
+                    attributes: vec![],
                 }
             ]
         });
         
         let result = validate_schema(ast);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().0, "Model 'User' must have exactly one field with the '@id' attribute, found 2.");
+        assert_eq!(result.unwrap_err().0, "Model 'User' cannot define a field named '__id', as it is reserved for the automatic primary key.");
     }
 
     #[test]
@@ -852,22 +847,30 @@ mod tests {
             column: None,
         }]);
     }
+#[test]
+fn test_explicit_at_id_rejected() {
+    let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
+        models: std::collections::HashMap::new(),
+        unions: std::collections::HashMap::new(),
+    };
 
-    #[test]
-    #[ignore]
-    fn test_validation_optional_id_fails() {
-        let input = "
-            model User {
-                @@id(uuid)
+    ast.models.insert("User".to_string(), ModelNode { extends: vec![], resolved_fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        name: "User".to_string(),
+        block_attributes: vec![],
+        fields: vec![
+            FieldNode {
+                name: "id".to_string(),
+                field_type: AstFieldType::Scalar("String".to_string()),
+                is_optional: false,
+                attributes: vec![FieldAttribute::Id],
             }
-        ";
-        let ast = crate::parser::parse_schema(input).unwrap();
-        let res = validate_schema(ast);
-        assert!(res.is_err());
-        assert!(res.unwrap_err().0.contains("Primary keys cannot be optional"));
-    }
+        ]
+    });
 
-    #[test]
+    let res = validate_schema(ast);
+    assert!(res.is_err());
+    assert!(res.unwrap_err().0.contains("Model 'User' cannot define an explicit field 'id' with '@id'."));
+}    #[test]
     fn test_validation_optional_array_fails() {
         let input = "
             model User {
@@ -935,7 +938,7 @@ mod tests {
     #[test]
     fn test_deep_transitive_flattening_and_synthetic_injections() {
         let input = "
-            base Node { @@id(uuid) }
+            base Node {  }
             base Timestamped extends Node { createdAt: String }
             model User extends Timestamped { name: String }
         ";
@@ -962,7 +965,7 @@ mod tests {
     #[test]
     fn test_rejects_cyclic_inheritance() {
         let input = "
-            base A extends B { @@id(uuid) }
+            base A extends B {  }
             base B extends A { name: String }
             model User extends A { email: String }
         ";
@@ -972,19 +975,20 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
-    fn test_invalid_field_shadowing() {
+    fn test_id_cuid_mapping() {
         let input = "
-            base Node { @@id(uuid) }
-            model User extends Node { 
-                @@id(autoincrement) 
+            model User {
+                name: String
+                @@id(cuid)
             }
         ";
         let ast = crate::parser::parse_schema(input).unwrap();
-        let err = validate_schema(ast).unwrap_err();
-        assert_eq!(err.0, "Field shadowing mismatch in shape 'User' for field 'id'.");
+        let validated_ast = validate_schema(ast).unwrap();
+        let user = validated_ast.models.get("User").unwrap();
+        let id_field = user.resolved_fields.iter().find(|f| f.name == "__id").unwrap();
+        assert_eq!(id_field.field_type, AstFieldType::Scalar("String".to_string()));
+        assert!(id_field.attributes.contains(&FieldAttribute::Default(DefaultFunc::Cuid)));
     }
-
     #[test]
     fn test_reserved_marker_column_collisions() {
         let mut ast = SchemaAst {
@@ -994,7 +998,6 @@ mod tests {
         };
 
         ast.bases.insert("Timestamped".to_string(), BaseNode {
-                    block_attributes: vec![],
                     name: "Timestamped".to_string(),
             fields: vec![FieldNode { name: "createdAt".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] }],
             extends: vec![],
@@ -1025,7 +1028,7 @@ mod tests {
         assert_eq!(err1.0, "Shape 'Admin' cannot extend 'User' because it is a model, not a base.");
 
         let input2 = "
-            base BaseEntity { @@id(uuid) }
+            base BaseEntity {  }
             union SearchResult = BaseEntity
         ";
         let ast2 = crate::parser::parse_schema(input2).unwrap();
@@ -1099,7 +1102,7 @@ mod tests {
     #[test]
     fn test_polymorphic_base_transitive_implementors() {
         let input = "
-            base Node { @@id(uuid) }
+            base Node {  }
             base Content extends Node { title: String }
             model Article extends Content { body: String }
             

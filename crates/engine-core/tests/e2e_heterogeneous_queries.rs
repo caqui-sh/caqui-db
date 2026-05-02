@@ -26,7 +26,7 @@ async fn test_e2e_polymorphic_union_reads() {
     run_cmd(git_init);
 
     let schema = r#"
-        base Employee { department: String @@id(uuid) }
+        base Employee { department: String  }
         model Engineer extends Employee { language: String @@id(uuid) }
         model Manager extends Employee { directReports: Int @@id(uuid) }
     "#;
@@ -103,7 +103,7 @@ async fn test_e2e_nested_polymorphic_relations() {
     run_cmd(git_init);
 
     let schema = r#"
-        base Employee { teamId: String @@id(uuid) }
+        base Employee { teamId: String  }
         model Engineer extends Employee { language: String @@id(uuid) }
         model Manager extends Employee { directReports: Int @@id(uuid) }
         
@@ -184,7 +184,7 @@ async fn test_e2e_polymorphic_filtering() {
     run_cmd(git_init);
 
     let schema = r#"
-        base Content { @@id(uuid) }
+        base Content {  }
         model Article extends Content { title: String @@id(uuid) }
         model Video extends Content { duration: Int @@id(uuid) }
         
@@ -265,8 +265,8 @@ async fn test_e2e_diamond_inheritance() {
     run_cmd(git_init);
 
     let schema = r#"
-        base Timestamped { createdAt: String @@id(uuid) }
-        base Node { @@id(uuid) }
+        base Timestamped { createdAt: String  }
+        base Node {  }
         base Record extends Node, Timestamped {}
         model Post extends Record { text: String @@id(uuid) }
     "#;

@@ -30,8 +30,8 @@ fn test_e2e_rejects_cyclic_inheritance() {
     let caqui_bin = env!("CARGO_BIN_EXE_caqui");
 
     let schema = r#"
-        base Node extends Entity { @@id(uuid)}
-        base Entity extends Node { @@id(uuid)}
+        base Node extends Entity { }
+        base Entity extends Node { }
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
 
@@ -66,7 +66,7 @@ fn test_e2e_rejects_bases_in_unions() {
     let caqui_bin = env!("CARGO_BIN_EXE_caqui");
 
     let schema = r#"
-        base Timestamped { createdAt: String @@id(uuid) }
+        base Timestamped { createdAt: String  }
         model Task { @@id(uuid) }
         union SearchResult = Task | Timestamped
     "#;
@@ -91,7 +91,7 @@ fn test_e2e_polymorphic_unique_isolation() {
 
     // Setup schema with unique trait
     let schema = r#"
-        base User { email: String @unique @@id(uuid) }
+        base User { email: String @unique  }
         model Admin extends User { role: String @@id(uuid) }
         model Customer extends User { balance: Int @@id(uuid) }
     "#;

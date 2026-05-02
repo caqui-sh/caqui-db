@@ -26,7 +26,7 @@ fn test_e2e_ddl_ignores_bases_and_injects_markers() {
     run_cmd(git_init);
 
     let schema = r#"
-        base Identifiable { @@id(uuid) }
+        base Identifiable {  }
         model User extends Identifiable { name: String @@id(uuid) }
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -94,7 +94,7 @@ fn test_e2e_retroactive_trait_implementation() {
 
     // Stage 2: Abstract trait introduced and inherited
     let v2_schema = r#"
-        base Auditable { updatedAt: String @@id(uuid) }
+        base Auditable { updatedAt: String }
         model Post extends Auditable { text: String @@id(uuid) }
     "#;
     fs::write(workspace.join("schema.cq"), v2_schema).unwrap();
