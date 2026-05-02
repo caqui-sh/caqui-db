@@ -58,13 +58,32 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
             }
 
             let mut is_updated_at = false;
-            let mut target_tracked_field = None;
+            let mut target_tracked_fields: Vec<String> = Vec::new();
             for attr in &field.attributes {
                 match attr {
                     FieldAttribute::InternalTracked => is_updated_at = true,
                     FieldAttribute::InternalFieldTracked(target) => {
                         is_updated_at = true;
-                        target_tracked_field = Some(target.clone());
+                        // Resolve physical columns for the target field
+                        if let Some(target_field) = model.resolved_fields.iter().find(|f| &f.name == target) {
+                            if let Some(FieldAttribute::Map(mapped_name)) = target_field.attributes.iter().find(|a| matches!(a, FieldAttribute::Map(_))) {
+                                target_tracked_fields.push(mapped_name.clone());
+                            } else if let Some(FieldAttribute::Relation { fields, .. }) = target_field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                                if !fields.is_empty() {
+                                    target_tracked_fields.extend(fields.clone());
+                                } else {
+                                    // Implicit relation foreign key
+                                    target_tracked_fields.push(format!("{}Id", target));
+                                }
+                            } else if matches!(target_field.field_type, AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicBase(_)) {
+                                target_tracked_fields.push(format!("{}_type", target));
+                                target_tracked_fields.push(format!("{}_id", target));
+                            } else {
+                                target_tracked_fields.push(target.clone());
+                            }
+                        } else {
+                            target_tracked_fields.push(target.clone());
+                        }
                     }
                     _ => {}
                 }
@@ -72,9 +91,10 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
 
             if is_updated_at {
                 let trigger_name = format!("trg_update_{}_{}", model.name, field.name);
-                let on_clause = match &target_tracked_field {
-                    Some(target) => format!("AFTER UPDATE OF {} ON {}", target, model.name),
-                    None => format!("AFTER UPDATE ON {}", model.name),
+                let on_clause = if !target_tracked_fields.is_empty() {
+                    format!("AFTER UPDATE OF {} ON {}", target_tracked_fields.join(", "), model.name)
+                } else {
+                    format!("AFTER UPDATE ON {}", model.name)
                 };
                 let sql = format!(
                     "CREATE TRIGGER IF NOT EXISTS {} \n\

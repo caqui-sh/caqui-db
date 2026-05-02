@@ -10,6 +10,7 @@ pub enum MigrationOp {
     /// Triggered when SQLite limitations prevent a simple ALTER TABLE
     RebuildTable { table: PhysicalTable, live_cols: Vec<String> }, 
     CreateIndex { table: String, columns: Vec<String>, unique: bool },
+    CreateTrigger { trigger: crate::PhysicalTrigger },
 }
 
 pub fn compute_diff(desired: &[PhysicalTable], live: &HashMap<String, LiveTable>) -> Vec<MigrationOp> {
@@ -70,6 +71,11 @@ pub fn compute_diff(desired: &[PhysicalTable], live: &HashMap<String, LiveTable>
                             table: des_table.name.clone(),
                             columns: index.columns.clone(),
                             unique: index.unique,
+                        });
+                    }
+                    for trigger in &des_table.triggers {
+                        ops.push(MigrationOp::CreateTrigger {
+                            trigger: trigger.clone(),
                         });
                     }
                 }

@@ -74,6 +74,9 @@ pub fn generate_sql(op: &MigrationOp) -> String {
             let index_name = format!("idx_{}_{}", table, cols_csv);
             format!("CREATE {}INDEX {} ON {} ({});\n", unique_str, index_name, table, columns.join(", "))
         },
+        MigrationOp::CreateTrigger { trigger } => {
+            format!("{}\n", trigger.sql)
+        },
     }
 }
 

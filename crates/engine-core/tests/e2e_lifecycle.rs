@@ -561,3 +561,60 @@ fn test_e2e_field_level_track() {
     
     assert!(bio_updated_at_after_bio_change > initial_bio_updated_at, "bio_updatedAt did not progress when bio was updated");
 }
+
+#[test]
+fn test_e2e_field_level_track_edge_cases() {
+    let dir = tempdir().unwrap();
+    let workspace = dir.path();
+    engine_core::vfs::bootstrap_custom_vfs();
+    let caqui_bin = env!("CARGO_BIN_EXE_caqui");
+
+    let mut cmd = Command::new("git");
+    cmd.arg("init").current_dir(workspace);
+    run_cmd(cmd);
+
+    let schema = "
+        model User {
+            @@id(uuid)
+        }
+
+        model ComplexModel {
+            @@id(uuid)
+            status: String @track
+            bio: String @track @map(\"user_bio\")
+            
+            authorId: String?
+            author: User? @relation(fields: [authorId], references: [__id]) @track
+        }
+    ";
+    fs::write(workspace.join("schema.cq"), schema).unwrap();
+    
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let db_uri = format!("file:{}?vfs=git", workspace.join("app.db").display());
+    let conn = rusqlite::Connection::open_with_flags(
+        &db_uri,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+    ).unwrap();
+
+    // Verify Triggers are generated correctly with correct columns
+    let mut stmt = conn.prepare("SELECT name, sql FROM sqlite_master WHERE type='trigger' AND tbl_name='ComplexModel' ORDER BY name").unwrap();
+    let triggers: Vec<(String, String)> = stmt.query_map([], |row| Ok((row.get(0).unwrap(), row.get(1).unwrap()))).unwrap().map(|r| r.unwrap()).collect();
+    
+    println!("TRIGGERS GENERATED: {:#?}", triggers);
+    assert_eq!(triggers.len(), 3);
+
+    // Verify Author Relation Track uses authorId
+    let trg_author = triggers.iter().find(|(n, _)| n == "trg_update_ComplexModel___author_updatedAt").unwrap();
+    assert!(trg_author.1.contains("AFTER UPDATE OF authorId ON ComplexModel"));
+    
+    // Verify Bio Map Track uses user_bio
+    let trg_bio = triggers.iter().find(|(n, _)| n == "trg_update_ComplexModel___bio_updatedAt").unwrap();
+    assert!(trg_bio.1.contains("AFTER UPDATE OF user_bio ON ComplexModel"));
+
+    // Verify Status Track uses status
+    let trg_status = triggers.iter().find(|(n, _)| n == "trg_update_ComplexModel___status_updatedAt").unwrap();
+    assert!(trg_status.1.contains("AFTER UPDATE OF status ON ComplexModel"));
+}
