@@ -130,7 +130,5 @@ Attributes that apply to the entire model.
 
 | Attribute | Description |
 | :--- | :--- |
-| `@@unique([f1, f2])` | Defines a composite unique constraint. |
-| `@@index([f1, f2])` | Defines a composite database index. |
 | `@@id(strategy)` | Defines the primary key strategy (`uuid`, `cuid`, or `autoincrement`). |
 | `@@track` | Automatically injects a hidden `__updatedAt` timestamp field into the model that updates anytime the record is modified. |

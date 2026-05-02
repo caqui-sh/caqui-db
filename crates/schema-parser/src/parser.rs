@@ -313,7 +313,7 @@ mod tests {
         let input = "
             model User {
                 email: String @unique
-                bio: String @default(\"no bio\")
+                bio: String
                 posts: Post[] @relation(fields: [__id], references: [authorId], onDelete: Cascade)
     @@id(uuid)
             }

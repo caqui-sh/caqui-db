@@ -97,7 +97,7 @@ fn test_e2e_lifecycle() {
     // Read and mutate the generated schema.cq
     let schema_path = workspace.join("schema.cq");
     let mut schema = fs::read_to_string(&schema_path).unwrap();
-    schema = schema.replace("name: String", "name: String\n  status: String @default(\"active\")");
+    schema = schema.replace("name: String", "name: String\n  status: String");
     fs::write(&schema_path, schema).unwrap();
 
     let mut db_push_feature = Command::new(caqui_bin);
