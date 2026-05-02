@@ -121,7 +121,7 @@ Attributes customize the behavior of individual fields.
 | Attribute | Description |
 | :--- | :--- |
 | `@unique` | Ensures all values in the column are unique. |
-| `@updatedAt` | Automatically updates the timestamp on modification. Defaults to `CURRENT_TIMESTAMP` on creation. |
+| `@track` | Automatically injects a sibling hidden `__<FieldName>_updatedAt` timestamp field that only updates when this specific field is modified. |
 | `@map("name")` | Maps the field to a different underlying database column name. |
 | `@relation(...)` | Defines the relationship. Accepts `fields` (local keys), `references` (foreign keys), `onDelete` (e.g., `CASCADE`, `SET NULL`, `RESTRICT`, `NO ACTION`), and `deferrable` (for deferring constraint checks). |
 
@@ -134,3 +134,4 @@ Attributes that apply to the entire model.
 | `@@unique([f1, f2])` | Defines a composite unique constraint. |
 | `@@index([f1, f2])` | Defines a composite database index. |
 | `@@id(strategy)` | Defines the primary key strategy (`uuid`, `cuid`, or `autoincrement`). |
+| `@@track` | Automatically injects a hidden `__updatedAt` timestamp field into the model that updates anytime the record is modified. |

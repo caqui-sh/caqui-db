@@ -61,6 +61,7 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> FieldNode {
             match attr_ident {
                 "__id" => attributes.push(FieldAttribute::Id),
                 "unique" => attributes.push(FieldAttribute::Unique),
+                "track" => attributes.push(FieldAttribute::Track),
                 "map" => {
                     if let Some(args_rule) = attr_inner.next() {
                         let arg_val = args_rule.into_inner().next().unwrap().into_inner().next().unwrap().as_str();

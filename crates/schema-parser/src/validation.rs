@@ -240,6 +240,23 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                 attributes: vec![FieldAttribute::InternalTracked],
             });
         }
+        
+        let mut field_trackers = Vec::new();
+        for field in &current_fields {
+            if field.attributes.contains(&FieldAttribute::Track) {
+                let tracker_name = format!("__{}_updatedAt", field.name);
+                if current_fields.iter().any(|f| f.name == tracker_name) {
+                    return Err(ValidationError(format!("Model '{}' cannot define an explicit field '{}'. This name is reserved for the automatic tracking timestamp of field '{}'.", model.name, tracker_name, field.name)));
+                }
+                field_trackers.push(FieldNode {
+                    name: tracker_name,
+                    field_type: AstFieldType::Scalar("DateTime".to_string()),
+                    is_optional: false,
+                    attributes: vec![FieldAttribute::InternalFieldTracked(field.name.clone())],
+                });
+            }
+        }
+        current_fields.extend(field_trackers);
 
         current_fields.sort_by(|a, b| a.name.cmp(&b.name));
 

@@ -506,3 +506,58 @@ fn test_e2e_custom_functions_and_triggers() {
     assert_eq!(__id, "item_1");
     assert!(!updated_at.is_empty());
 }
+
+#[test]
+fn test_e2e_field_level_track() {
+    let dir = tempdir().unwrap();
+    let workspace = dir.path();
+    engine_core::vfs::bootstrap_custom_vfs();
+    let caqui_bin = env!("CARGO_BIN_EXE_caqui");
+    let db_uri = format!("file:{}?vfs=git", workspace.join("app.db").display());
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.arg("init").current_dir(workspace);
+    run_cmd(cmd);
+
+    let schema = "
+        model Profile {
+            bio: String @track
+            location: String
+            @@id(uuid)
+        }
+    ";
+    fs::write(workspace.join("schema.cq"), schema).unwrap();
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let conn = rusqlite::Connection::open_with_flags(
+        &db_uri,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+    ).unwrap();
+    
+    // Register custom functions manually here so the INSERT works natively
+    api_layer::db::register_custom_functions(&conn).unwrap();
+    
+    conn.execute("INSERT INTO Profile (__id, bio, location) VALUES ('prof_1', 'Initial bio', 'NY')", []).unwrap();
+    
+    let initial_bio_updated_at: String = conn.query_row("SELECT __bio_updatedAt FROM Profile WHERE __id = 'prof_1'", [], |r| r.get(0)).unwrap();
+    
+    std::thread::sleep(Duration::from_secs(1));
+    
+    // Update location (bio should NOT update)
+    conn.execute("UPDATE Profile SET location = 'SF' WHERE __id = 'prof_1'", []).unwrap();
+    
+    let bio_updated_at_after_loc_change: String = conn.query_row("SELECT __bio_updatedAt FROM Profile WHERE __id = 'prof_1'", [], |r| r.get(0)).unwrap();
+    
+    assert_eq!(bio_updated_at_after_loc_change, initial_bio_updated_at, "bio_updatedAt changed when it shouldn't have");
+
+    std::thread::sleep(Duration::from_secs(1));
+    
+    // Update bio (bio SHOULD update)
+    conn.execute("UPDATE Profile SET bio = 'New bio' WHERE __id = 'prof_1'", []).unwrap();
+    
+    let bio_updated_at_after_bio_change: String = conn.query_row("SELECT __bio_updatedAt FROM Profile WHERE __id = 'prof_1'", [], |r| r.get(0)).unwrap();
+    
+    assert!(bio_updated_at_after_bio_change > initial_bio_updated_at, "bio_updatedAt did not progress when bio was updated");
+}

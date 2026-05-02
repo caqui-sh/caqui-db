@@ -57,18 +57,34 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                 });
             }
 
-            let is_updated_at = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalTracked));
+            let mut is_updated_at = false;
+            let mut target_tracked_field = None;
+            for attr in &field.attributes {
+                match attr {
+                    FieldAttribute::InternalTracked => is_updated_at = true,
+                    FieldAttribute::InternalFieldTracked(target) => {
+                        is_updated_at = true;
+                        target_tracked_field = Some(target.clone());
+                    }
+                    _ => {}
+                }
+            }
+
             if is_updated_at {
                 let trigger_name = format!("trg_update_{}_{}", model.name, field.name);
+                let on_clause = match &target_tracked_field {
+                    Some(target) => format!("AFTER UPDATE OF {} ON {}", target, model.name),
+                    None => format!("AFTER UPDATE ON {}", model.name),
+                };
                 let sql = format!(
                     "CREATE TRIGGER IF NOT EXISTS {} \n\
-                     AFTER UPDATE ON {} \n\
+                     {} \n\
                      FOR EACH ROW \n\
                      WHEN OLD.{} IS NULL OR NEW.{} <= OLD.{} \n\
                      BEGIN \n\
                          UPDATE {} SET {} = CURRENT_TIMESTAMP WHERE __id = OLD.__id; \n\
                      END;",
-                    trigger_name, model.name, field.name, field.name, field.name, model.name, field.name
+                    trigger_name, on_clause, field.name, field.name, field.name, model.name, field.name
                 );
                 triggers.push(PhysicalTrigger {
                     name: trigger_name,
@@ -110,7 +126,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                     let is_id = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Id));
                     let is_autoincrement = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalDefault(DefaultFunc::AutoIncrement)));
                     let is_uuid = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalDefault(DefaultFunc::Uuid)));
-                    let is_updated_at = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalTracked));
+                    let is_updated_at = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalTracked) || matches!(a, FieldAttribute::InternalFieldTracked(_)));
 
                     let mut sql_type = match t.as_str() {
                         "Int" => "INTEGER",

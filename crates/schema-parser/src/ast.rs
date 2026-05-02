@@ -60,7 +60,9 @@ pub enum DefaultFunc {
 pub enum FieldAttribute {
     Id,
     Unique,
+    Track,
     InternalTracked,
+    InternalFieldTracked(String),
     Map(String),
     InternalDefault(DefaultFunc),
     Relation { name: Option<String>, fields: Vec<String>, references: Vec<String>, on_delete: Option<String>, deferrable: bool, column: Option<String> },
