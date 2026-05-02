@@ -72,7 +72,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "api-layer"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "axum",
  "deadpool",
@@ -320,7 +320,7 @@ dependencies = [
 
 [[package]]
 name = "engine-core"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "api-layer",
  "axum",
@@ -840,7 +840,7 @@ dependencies = [
 
 [[package]]
 name = "query-compiler"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "serde_json",
 ]
@@ -909,7 +909,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "schema-mapper"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "rusqlite",
  "schema-parser",
@@ -918,7 +918,7 @@ dependencies = [
 
 [[package]]
 name = "schema-parser"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "pest",
  "pest_derive",
