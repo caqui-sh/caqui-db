@@ -108,9 +108,10 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                 },
                 AstFieldType::Scalar(t) => {
                     let is_id = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Id));
-                    let is_autoincrement = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Default(DefaultFunc::AutoIncrement)));
-                    let is_uuid = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Default(DefaultFunc::Uuid)));
-                    
+                    let is_autoincrement = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalDefault(DefaultFunc::AutoIncrement)));
+                    let is_uuid = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalDefault(DefaultFunc::Uuid)));
+                    let is_updated_at = field.attributes.iter().any(|a| matches!(a, FieldAttribute::UpdatedAt));
+
                     let mut sql_type = match t.as_str() {
                         "Int" => "INTEGER",
                         "Float" => "REAL",
@@ -128,8 +129,10 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                         if is_uuid {
                             sql_type = format!("{} DEFAULT (gen_uuid7())", sql_type);
                         }
+                    } else if is_updated_at {
+                        sql_type = format!("{} DEFAULT CURRENT_TIMESTAMP", sql_type);
                     } else if field.name.starts_with("__") {
-                        if let Some(FieldAttribute::Default(DefaultFunc::Static(val))) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Default(DefaultFunc::Static(_)))) {
+                        if let Some(FieldAttribute::InternalDefault(DefaultFunc::Static(val))) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalDefault(DefaultFunc::Static(_)))) {
                             if sql_type == "INTEGER" && val == "true" {
                                 sql_type = format!("{} DEFAULT 1 NOT NULL", sql_type);
                             } else if sql_type == "INTEGER" && val == "false" {
@@ -269,7 +272,7 @@ mod tests {
                     name: "__id".to_string(),
                     field_type: AstFieldType::Scalar("String".to_string()),
                     is_optional: false,
-                    attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::Uuid)],
+                    attributes: vec![FieldAttribute::Id, FieldAttribute::InternalDefault(DefaultFunc::Uuid)],
                 },
                 FieldNode {
                     name: "serial".to_string(),
@@ -293,7 +296,7 @@ mod tests {
                     name: "__id".to_string(),
                     field_type: AstFieldType::Scalar("Int".to_string()),
                     is_optional: false,
-                    attributes: vec![FieldAttribute::Id, FieldAttribute::Default(DefaultFunc::AutoIncrement)],
+                    attributes: vec![FieldAttribute::Id, FieldAttribute::InternalDefault(DefaultFunc::AutoIncrement)],
                 },
             ]
         });
@@ -415,7 +418,7 @@ mod tests {
                     name: "__Employee".to_string(),
                     field_type: AstFieldType::Scalar("Boolean".to_string()),
                     is_optional: false,
-                    attributes: vec![FieldAttribute::Default(DefaultFunc::Static("true".to_string()))],
+                    attributes: vec![FieldAttribute::InternalDefault(DefaultFunc::Static("true".to_string()))],
                 }
             ],
             ..Default::default()

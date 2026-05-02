@@ -60,9 +60,8 @@ pub enum FieldAttribute {
     Id,
     Unique,
     UpdatedAt,
-    Ignore,
     Map(String),
-    Default(DefaultFunc),
+    InternalDefault(DefaultFunc),
     Relation { name: Option<String>, fields: Vec<String>, references: Vec<String>, on_delete: Option<String>, deferrable: bool, column: Option<String> },
 }
 

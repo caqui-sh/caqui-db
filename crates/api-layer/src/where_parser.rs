@@ -93,7 +93,7 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
         }
 
         let field_def_opt = model_def.resolved_fields.iter().find(|f| &f.name == k);
-        let field_def = match field_def_opt {
+        let field_def = match model_def.resolved_fields.iter().find(|f| &f.name == k) {
             Some(f) => f,
             None => {
                 if k.starts_with("__") {
@@ -106,10 +106,6 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
                 }
             }
         };
-
-        if field_def.attributes.iter().any(|a| matches!(a, FieldAttribute::Ignore)) {
-            return Err(format!("Security Exception: Prohibited filter on ignored field '{}'", k));
-        }
 
         match &field_def.field_type {
             AstFieldType::Scalar(_) | AstFieldType::ScalarArray(_) | AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {

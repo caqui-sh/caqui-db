@@ -230,10 +230,6 @@ fn translate_create_node(
         let field_def = model_def.resolved_fields.iter().find(|f| &f.name == key)
             .ok_or_else(|| format!("Invalid field '{}' for model '{}'.", key, model_name))?;
 
-        if field_def.attributes.iter().any(|a| matches!(a, FieldAttribute::Ignore)) {
-            return Err(format!("Security Exception: Prohibited write to ignored field '{}'", key));
-        }
-        
         match &field_def.field_type {
             AstFieldType::Scalar(_) => {
                 columns.push(key.clone());
@@ -475,10 +471,6 @@ fn translate_update_node(
         let field_def = model_def.resolved_fields.iter().find(|f| &f.name == key)
             .ok_or_else(|| format!("Invalid field '{}' for model '{}'.", key, model_name))?;
 
-        if field_def.attributes.iter().any(|a| matches!(a, FieldAttribute::Ignore)) {
-            return Err(format!("Security Exception: Prohibited write to ignored field '{}'", key));
-        }
-        
         match &field_def.field_type {
             AstFieldType::Scalar(_) => {
                 set_clauses.push(format!("{} = ?{}", key, param_idx));
@@ -1263,7 +1255,7 @@ mod tests {
                 FieldNode { name: "__id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "age".to_string(), field_type: AstFieldType::Scalar("Int".to_string()), is_optional: false, attributes: vec![] },
-                FieldNode { name: "password".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Ignore] },
+                FieldNode { name: "password".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::UpdatedAt] },
             ]
         });
 

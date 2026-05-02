@@ -188,7 +188,7 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
             name: "__id".to_string(),
             field_type: AstFieldType::Scalar(id_type.to_string()),
             is_optional: false,
-            attributes: vec![FieldAttribute::Id, FieldAttribute::Default(default_id_func)],
+            attributes: vec![FieldAttribute::Id, FieldAttribute::InternalDefault(default_id_func)],
         });
 
         for injected_base in &current_bases {
@@ -201,7 +201,7 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                 name: marker_name,
                 field_type: AstFieldType::Scalar("Boolean".to_string()),
                 is_optional: false,
-                attributes: vec![FieldAttribute::Default(DefaultFunc::Static("true".to_string()))],
+                attributes: vec![FieldAttribute::InternalDefault(DefaultFunc::Static("true".to_string()))],
             };
             current_fields.push(synthetic_field);
         }
@@ -214,7 +214,7 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
             name: model_marker_name,
             field_type: AstFieldType::Scalar("Boolean".to_string()),
             is_optional: false,
-            attributes: vec![FieldAttribute::Default(DefaultFunc::Static("true".to_string()))],
+            attributes: vec![FieldAttribute::InternalDefault(DefaultFunc::Static("true".to_string()))],
         });
 
         let kind_marker_name = "__kind".to_string();
@@ -225,7 +225,7 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
             name: kind_marker_name,
             field_type: AstFieldType::Scalar("String".to_string()),
             is_optional: false,
-            attributes: vec![FieldAttribute::Default(DefaultFunc::Static(model.name.clone()))],
+            attributes: vec![FieldAttribute::InternalDefault(DefaultFunc::Static(model.name.clone()))],
         });
 
         current_fields.sort_by(|a, b| a.name.cmp(&b.name));
@@ -987,7 +987,7 @@ fn test_explicit_at_id_rejected() {
         let user = validated_ast.models.get("User").unwrap();
         let id_field = user.resolved_fields.iter().find(|f| f.name == "__id").unwrap();
         assert_eq!(id_field.field_type, AstFieldType::Scalar("String".to_string()));
-        assert!(id_field.attributes.contains(&FieldAttribute::Default(DefaultFunc::Cuid)));
+        assert!(id_field.attributes.contains(&FieldAttribute::InternalDefault(DefaultFunc::Cuid)));
     }
     #[test]
     fn test_reserved_marker_column_collisions() {

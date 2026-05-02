@@ -62,25 +62,11 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> FieldNode {
                 "__id" => attributes.push(FieldAttribute::Id),
                 "unique" => attributes.push(FieldAttribute::Unique),
                 "updatedAt" => attributes.push(FieldAttribute::UpdatedAt),
-                "ignore" => attributes.push(FieldAttribute::Ignore),
                 "map" => {
                     if let Some(args_rule) = attr_inner.next() {
                         let arg_val = args_rule.into_inner().next().unwrap().into_inner().next().unwrap().as_str();
                         let clean_val = arg_val.trim_matches('"').to_string();
                         attributes.push(FieldAttribute::Map(clean_val));
-                    }
-                },
-                "default" => {
-                    if let Some(args_rule) = attr_inner.next() {
-                        let arg_val = args_rule.into_inner().next().unwrap().into_inner().next().unwrap().as_str();
-                        let default_func = match arg_val {
-                            "autoincrement()" => DefaultFunc::AutoIncrement,
-                            "now()" => DefaultFunc::Now,
-                            "uuid()" => DefaultFunc::Uuid,
-                            "cuid()" => DefaultFunc::Cuid,
-                            _ => DefaultFunc::Static(arg_val.trim_matches('"').to_string()),
-                        };
-                        attributes.push(FieldAttribute::Default(default_func));
                     }
                 },
                 "relation" => {
@@ -349,8 +335,6 @@ mod tests {
             model User {
                 email: String @unique @map(\"user_id\")
                 bio: String @default(\"no bio\")
-                createdAt: DateTime @default(now())
-                token: String @ignore
                 posts: Post[] @relation(fields: [__id], references: [authorId], onDelete: Cascade)
     @@id(uuid)
             }
@@ -371,17 +355,11 @@ mod tests {
         let email_field = user.fields.iter().find(|f| f.name == "email").unwrap();
         assert_eq!(email_field.attributes, vec![FieldAttribute::Unique, FieldAttribute::Map("user_id".to_string())]);
         
-        // @default("string")
-        let bio_field = user.fields.iter().find(|f| f.name == "bio").unwrap();
-        assert_eq!(bio_field.attributes, vec![FieldAttribute::Default(DefaultFunc::Static("no bio".to_string()))]);
         
-        // @default(now())
-        let created_at_field = user.fields.iter().find(|f| f.name == "createdAt").unwrap();
-        assert_eq!(created_at_field.attributes, vec![FieldAttribute::Default(DefaultFunc::Now)]);
         
-        // @ignore
-        let token_field = user.fields.iter().find(|f| f.name == "token").unwrap();
-        assert_eq!(token_field.attributes, vec![FieldAttribute::Ignore]);
+        
+        
+        
         
         // @relation
         let posts_field = user.fields.iter().find(|f| f.name == "posts").unwrap();
