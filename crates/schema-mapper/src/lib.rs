@@ -68,7 +68,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                         if let Some(target_field) = model.resolved_fields.iter().find(|f| &f.name == target) {
                             if let Some(FieldAttribute::Map(mapped_name)) = target_field.attributes.iter().find(|a| matches!(a, FieldAttribute::Map(_))) {
                                 target_tracked_fields.push(mapped_name.clone());
-                            } else if let Some(FieldAttribute::Relation { fields, .. }) = target_field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                            } else if let Some(FieldAttribute::InternalRelation { fields, .. }) = target_field.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
                                 if !fields.is_empty() {
                                     target_tracked_fields.extend(fields.clone());
                                 } else {
@@ -191,7 +191,14 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
 
                     if !is_base_target {
                         // Map @relation attributes to physical FOREIGN KEY definitions
-                        if let Some(FieldAttribute::Relation { name: _, fields, references, on_delete, deferrable, .. }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                        let mut fields = Vec::new();
+                        let mut references = Vec::new();
+                        if let Some(FieldAttribute::InternalRelation { fields: f, references: r }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+                            fields = f.clone();
+                            references = r.clone();
+                        }
+                        
+                        if let Some(FieldAttribute::Relation { name: _, on_delete }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
                             if !fields.is_empty() && !references.is_empty() {
                                 let mut fk_def = format!("FOREIGN KEY ({}) REFERENCES \"{}\" ({})", fields.join(", "), ref_model, references.join(", "));
                                 
@@ -206,9 +213,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                                     fk_def.push_str(&format!(" ON DELETE {}", sql_action));
                                 }
 
-                                if *deferrable {
-                                    fk_def.push_str(" DEFERRABLE INITIALLY DEFERRED");
-                                }
+                                fk_def.push_str(" DEFERRABLE INITIALLY DEFERRED");
                                 
                                 foreign_keys.push(fk_def);
                             }
@@ -384,13 +389,13 @@ mod tests {
                     field_type: AstFieldType::Relation("User".to_string()),
                     is_optional: false,
                     attributes: vec![
-                        FieldAttribute::Relation {
-                            name: None,
+                        FieldAttribute::InternalRelation {
                             fields: vec!["authorId".to_string()],
                             references: vec!["__id".to_string()],
+                        },
+                        FieldAttribute::Relation {
+                            name: None,
                             on_delete: Some("Cascade".to_string()),
-                            deferrable: false,
-                            column: None,
                         }
                     ],
                 },
@@ -402,7 +407,7 @@ mod tests {
         
         let post_table = tables.iter().find(|t| t.name == "Post").unwrap();
         assert_eq!(post_table.foreign_keys.len(), 1);
-        assert_eq!(post_table.foreign_keys[0], "FOREIGN KEY (authorId) REFERENCES \"User\" (__id) ON DELETE CASCADE");
+        assert_eq!(post_table.foreign_keys[0], "FOREIGN KEY (authorId) REFERENCES \"User\" (__id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED");
     }
 
     #[test]
@@ -501,13 +506,13 @@ mod tests {
                     field_type: AstFieldType::Relation("Vehicle".to_string()),
                     is_optional: false,
                     attributes: vec![
-                        FieldAttribute::Relation {
-                            name: None,
+                        FieldAttribute::InternalRelation {
                             fields: vec!["carId".to_string()],
                             references: vec!["__id".to_string()],
+                        },
+                        FieldAttribute::Relation {
+                            name: None,
                             on_delete: None,
-                            deferrable: false,
-                            column: None,
                         }
                     ],
                 }

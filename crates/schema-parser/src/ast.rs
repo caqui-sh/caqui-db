@@ -65,7 +65,8 @@ pub enum FieldAttribute {
     InternalFieldTracked(String),
     Map(String),
     InternalDefault(DefaultFunc),
-    Relation { name: Option<String>, fields: Vec<String>, references: Vec<String>, on_delete: Option<String>, deferrable: bool, column: Option<String> },
+    Relation { name: Option<String>, on_delete: Option<String> },
+    InternalRelation { fields: Vec<String>, references: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

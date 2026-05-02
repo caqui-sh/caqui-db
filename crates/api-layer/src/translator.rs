@@ -71,8 +71,8 @@ pub fn hydrate_payload_to_ir(
                 for target_field in target_resolved_fields {
                     if let AstFieldType::Relation(ref_model) | AstFieldType::RelationArray(ref_model) = &target_field.field_type {
                         if ref_model == model_name {
-                            if let Some(FieldAttribute::Relation { name: target_name, fields, .. }) = target_field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
-                                if relation_name == *target_name {
+                            if let (Some(target_name), Some(fields)) = (target_field.attributes.iter().find_map(|a| if let FieldAttribute::Relation { name, .. } = a { Some(name.clone()) } else { None }), target_field.attributes.iter().find_map(|a| if let FieldAttribute::InternalRelation { fields, .. } = a { Some(fields.clone()) } else { None })) {
+                                if relation_name == target_name {
                                     if !fields.is_empty() {
                                         resolved_fk = fields[0].clone();
                                         break;
@@ -86,7 +86,7 @@ pub fn hydrate_payload_to_ir(
                 let mut is_forward = false;
                 
                 // If we are on the child side (we own the foreign key), our own @relation holds the fields
-                if let Some(FieldAttribute::Relation { fields, references, .. }) = relation_attr {
+                if let Some(FieldAttribute::InternalRelation { fields, references, .. }) = field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
                     if !fields.is_empty() {
                         let is_pk = model_def.resolved_fields.iter().any(|f| &f.name == &fields[0] && f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)));
                         if is_pk {
@@ -753,7 +753,7 @@ fn compile_polymorphic_read(
                     let mut resolved_fk = format!("{}_id", base_def.name.to_lowercase()); 
                     let relation_attr = fd.attributes.iter().find(|a| matches!(a, schema_parser::ast::FieldAttribute::Relation { .. }));
                     let mut is_forward = true;
-                    if let Some(schema_parser::ast::FieldAttribute::Relation { fields, references, .. }) = relation_attr {
+                    if let Some(schema_parser::ast::FieldAttribute::InternalRelation { fields, references, .. }) = fd.attributes.iter().find(|a| matches!(a, schema_parser::ast::FieldAttribute::InternalRelation { .. })) {
                         if !fields.is_empty() {
                             let is_pk = base_def.resolved_fields.iter().any(|f| &f.name == &fields[0] && f.attributes.iter().any(|a| matches!(a, schema_parser::ast::FieldAttribute::Id)));
                             if is_pk {
@@ -766,7 +766,7 @@ fn compile_polymorphic_read(
                             is_forward = false;
                         }
                     }
-                    if let Some(schema_parser::ast::FieldAttribute::Relation { references, .. }) = relation_attr {
+                    if let Some(schema_parser::ast::FieldAttribute::InternalRelation { references, .. }) = fd.attributes.iter().find(|a| matches!(a, schema_parser::ast::FieldAttribute::InternalRelation { .. })) {
                         if !is_forward && !references.is_empty() {
                             resolved_fk = references[0].clone();
                         }
@@ -785,8 +785,8 @@ fn compile_polymorphic_read(
                         for target_field in target_resolved_fields {
                             if let schema_parser::ast::AstFieldType::Relation(ref_model) | schema_parser::ast::AstFieldType::RelationArray(ref_model) = &target_field.field_type {
                                 if ref_model == &base_def.name {
-                                    if let Some(schema_parser::ast::FieldAttribute::Relation { name: target_name, fields, .. }) = target_field.attributes.iter().find(|a| matches!(a, schema_parser::ast::FieldAttribute::Relation { .. })) {
-                                        let name_matches = match (&relation_name, target_name) {
+                                    if let (Some(target_name), Some(fields)) = (target_field.attributes.iter().find_map(|a| if let schema_parser::ast::FieldAttribute::Relation { name, .. } = a { Some(name.clone()) } else { None }), target_field.attributes.iter().find_map(|a| if let schema_parser::ast::FieldAttribute::InternalRelation { fields, .. } = a { Some(fields.clone()) } else { None })) {
+                                        let name_matches = match (&relation_name, &target_name) {
                                             (Some(a), Some(b)) => a == b,
                                             (None, None) => true,
                                             _ => false,

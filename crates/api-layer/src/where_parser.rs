@@ -171,7 +171,7 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
                     let mut fk_column = "".to_string();
 
                     for attr in &field_def.attributes {
-                        if let FieldAttribute::Relation { fields, .. } = attr {
+                        if let FieldAttribute::InternalRelation { fields, .. } = attr {
                             if !fields.is_empty() {
                                 we_hold_fk = true;
                                 fk_column = fields[0].clone();
@@ -186,7 +186,7 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
                             if let AstFieldType::Relation(back_target) | AstFieldType::RelationArray(back_target) = &target_field.field_type {
                                 if back_target == &model_def.name {
                                     for attr in &target_field.attributes {
-                                        if let FieldAttribute::Relation { fields, .. } = attr {
+                                        if let FieldAttribute::InternalRelation { fields, .. } = attr {
                                             if !fields.is_empty() {
                                                 we_hold_fk = false;
                                                 fk_column = fields[0].clone();

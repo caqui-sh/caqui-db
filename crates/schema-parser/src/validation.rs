@@ -341,7 +341,7 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                             )));
                         }
                         for attr in &field.attributes {
-                            if let FieldAttribute::Relation { references, .. } = attr {
+                            if let FieldAttribute::InternalRelation { references, .. } = attr {
                                 if !references.is_empty() {
                                     return Err(ValidationError(format!(
                                         "Field '{}' in model '{}' is a polymorphic base and cannot define explicit relation references.",
@@ -369,7 +369,7 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                             )));
                         }
                         for attr in &field.attributes {
-                            if let FieldAttribute::Relation { references, .. } = attr {
+                            if let FieldAttribute::InternalRelation { references, .. } = attr {
                                 if !references.is_empty() {
                                     return Err(ValidationError(format!(
                                         "Field '{}' in model '{}' is a polymorphic base and cannot define explicit relation references.",
@@ -449,57 +449,55 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
 
     for model in ast.models.values_mut() {
         let mut added_fields = Vec::new();
+        let existing_names: std::collections::HashSet<String> = model.resolved_fields.iter().map(|f| f.name.clone()).collect();
         
         for field in &mut model.resolved_fields {
             if let AstFieldType::Relation(target_name) = &field.field_type {
                 let mut relation_attr_idx = None;
-                let mut needs_injection = false;
+                let mut needs_injection = true; // Always inject unless physical field exists
                 let mut col_name = format!("{}Id", field.name);
                 
+                // If the user provided @map, we use it for the column name
+                if let Some(FieldAttribute::Map(mapped_name)) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Map(_))) {
+                    col_name = mapped_name.clone();
+                }
+
                 for (idx, attr) in field.attributes.iter().enumerate() {
-                    if let FieldAttribute::Relation { fields, column, .. } = attr {
+                    if let FieldAttribute::Relation { .. } = attr {
                         relation_attr_idx = Some(idx);
-                        if fields.is_empty() {
-                            needs_injection = true;
-                            if let Some(c) = column {
-                                col_name = c.clone();
-                            }
-                        }
                         break;
                     }
                 }
                 
                 if relation_attr_idx.is_none() {
-                    needs_injection = true;
                     field.attributes.push(FieldAttribute::Relation {
                         name: None,
-                        fields: vec![],
-                        references: vec![],
                         on_delete: None,
-                        deferrable: false,
-                        column: None,
                     });
-                    relation_attr_idx = Some(field.attributes.len() - 1);
                 }
 
-                if needs_injection {
-                    if let Some((target_id_name, target_id_type)) = model_id_info.get(target_name) {
+                // Check if the user manually created the foreign key field already
+                if existing_names.contains(&col_name) {
+                    needs_injection = false;
+                }
+
+                if let Some((target_id_name, target_id_type)) = model_id_info.get(target_name) {
+                    if needs_injection {
                         added_fields.push(FieldNode {
                             name: col_name.clone(),
                             field_type: target_id_type.clone(),
                             is_optional: field.is_optional,
                             attributes: vec![],
                         });
-                        
-                        if let Some(idx) = relation_attr_idx {
-                            if let FieldAttribute::Relation { fields, references, .. } = &mut field.attributes[idx] {
-                                *fields = vec![col_name.clone()];
-                                *references = vec![target_id_name.clone()];
-                            }
-                        }
-                    } else {
-                        return Err(ValidationError(format!("Target model '{}' does not have an @id field.", target_name)));
                     }
+                    
+                    // Attach the InternalRelation to tell the mapper what to link
+                    field.attributes.push(FieldAttribute::InternalRelation {
+                        fields: vec![col_name.clone()],
+                        references: vec![target_id_name.clone()],
+                    });
+                } else {
+                    return Err(ValidationError(format!("Target model '{}' does not have an @id field.", target_name)));
                 }
             }
         }
@@ -748,7 +746,7 @@ mod tests {
             model Post {
                 @@id(uuid)
                 author: User @relation(\"AuthorToPost\")
-                reviewer: User @relation(\"ReviewerToPost\", column: \"reviewer_id\")
+                reviewer: User @relation(\"ReviewerToPost\") @map(\"reviewer_id\")
             }
         ";
         let mut ast = crate::parser::parse_schema(input).unwrap();
@@ -763,24 +761,10 @@ mod tests {
         assert_eq!(reviewer_id_field.field_type, AstFieldType::Scalar("String".to_string()));
         
         let author_rel = post.resolved_fields.iter().find(|f| f.name == "author").unwrap();
-        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation {
-            name: Some("AuthorToPost".to_string()),
-            fields: vec!["authorId".to_string()],
-            references: vec!["__id".to_string()],
-            on_delete: None,
-            deferrable: false,
-            column: None,
-        }]);
+        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: Some("AuthorToPost".to_string()), on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
 
         let reviewer_rel = post.resolved_fields.iter().find(|f| f.name == "reviewer").unwrap();
-        assert_eq!(reviewer_rel.attributes, vec![FieldAttribute::Relation {
-            name: Some("ReviewerToPost".to_string()),
-            fields: vec!["reviewer_id".to_string()],
-            references: vec!["__id".to_string()],
-            on_delete: None,
-            deferrable: false,
-            column: Some("reviewer_id".to_string()),
-        }]);
+        assert_eq!(reviewer_rel.attributes, vec![FieldAttribute::Relation { name: Some("ReviewerToPost".to_string()), on_delete: None }, FieldAttribute::Map("reviewer_id".to_string()), FieldAttribute::InternalRelation { fields: vec!["reviewer_id".to_string()], references: vec!["__id".to_string()] }]);
     }
 
     #[test]
@@ -792,7 +776,7 @@ mod tests {
             model Post {
                 @@id(uuid)
                 authorId: String
-                author: User @relation(fields: [authorId], references: [__id])
+                author: User @relation
             }
         ";
         let mut ast = crate::parser::parse_schema(input).unwrap();
@@ -802,14 +786,7 @@ mod tests {
         assert_eq!(post.resolved_fields.len(), 5);
         
         let author_rel = post.resolved_fields.iter().find(|f| f.name == "author").unwrap();
-        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation {
-            name: None,
-            fields: vec!["authorId".to_string()],
-            references: vec!["__id".to_string()],
-            on_delete: None,
-            deferrable: false,
-            column: None,
-        }]);
+        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: None, on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
     }
 
     #[test]
@@ -862,14 +839,7 @@ mod tests {
         assert_eq!(manager_id_field.field_type, AstFieldType::Scalar("String".to_string()));
         
         let manager_rel = employee.resolved_fields.iter().find(|f| f.name == "manager").unwrap();
-        assert_eq!(manager_rel.attributes, vec![FieldAttribute::Relation {
-            name: Some("Management".to_string()),
-            fields: vec!["managerId".to_string()],
-            references: vec!["__id".to_string()],
-            on_delete: None,
-            deferrable: false,
-            column: None,
-        }]);
+        assert_eq!(manager_rel.attributes, vec![FieldAttribute::Relation { name: Some("Management".to_string()), on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["managerId".to_string()], references: vec!["__id".to_string()] }]);
     }
 #[test]
 fn test_explicit_at_id_rejected() {
@@ -1092,21 +1062,6 @@ fn test_explicit_at_id_rejected() {
     }
 
     #[test]
-    fn test_polymorphic_base_explicit_relation() {
-        let input = "
-            base Content { title: String }
-            model Article extends Content { @@id(uuid) }
-            model User {
-                @@id(uuid)
-                favorite: Content @relation(references: [__id])
-            }
-        ";
-        let ast = crate::parser::parse_schema(input).unwrap();
-        let err = validate_schema(ast).unwrap_err();
-        assert_eq!(err.0, "Field 'favorite' in model 'User' is a polymorphic base and cannot define explicit relation references.");
-    }
-
-    #[test]
     fn test_polymorphic_base_array_upgrade() {
         let input = "
             base Content { title: String }
@@ -1154,7 +1109,7 @@ fn test_explicit_at_id_rejected() {
         let user_model = validated_ast.models.get("User").unwrap();
         let primary_field = user_model.resolved_fields.iter().find(|f| f.name == "primary").unwrap();
         
-        assert!(primary_field.attributes.iter().any(|a| matches!(a, FieldAttribute::Relation { name: Some(n), .. } if n == "PrimaryContent")));
+        assert!(primary_field.attributes.iter().any(|a| matches!(a, FieldAttribute::Relation { name: Some(n), on_delete: None } if n == "PrimaryContent")));
     }
 
     #[test]

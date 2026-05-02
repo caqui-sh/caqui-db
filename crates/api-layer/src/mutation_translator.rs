@@ -193,14 +193,14 @@ fn translate_create_node(
         let mut is_our_fk = false;
 
         for attr in &parent_field_def.attributes {
-            if let FieldAttribute::Relation { fields, references, .. } = attr {
+            if let FieldAttribute::InternalRelation { fields, references, .. } = attr {
                 if fields.is_empty() && references.is_empty() {
                     // Parent does not hold the FK. We must hold it.
                     for our_field in &model_def.resolved_fields {
                         if let AstFieldType::Relation(target) = &our_field.field_type {
                             if target == &rel.parent_model {
                                 for our_attr in &our_field.attributes {
-                                    if let FieldAttribute::Relation { fields: our_fields, .. } = our_attr {
+                                    if let FieldAttribute::InternalRelation { fields: our_fields, .. } = our_attr {
                                         if !our_fields.is_empty() {
                                             fk_column_name = Some(our_fields[0].clone());
                                             is_our_fk = true;
@@ -250,7 +250,7 @@ fn translate_create_node(
                 let mut we_hold_fk = false;
                 let mut fk_column = None;
                 for attr in &field_def.attributes {
-                    if let FieldAttribute::Relation { fields, .. } = attr {
+                    if let FieldAttribute::InternalRelation { fields, .. } = attr {
                         if !fields.is_empty() {
                             we_hold_fk = true;
                             fk_column = Some(fields[0].clone());
@@ -502,7 +502,7 @@ fn translate_update_node(
                 let mut we_hold_fk = false;
                 let mut fk_column = None;
                 for attr in &field_def.attributes {
-                    if let FieldAttribute::Relation { fields, .. } = attr {
+                    if let FieldAttribute::InternalRelation { fields, .. } = attr {
                         if !fields.is_empty() {
                             we_hold_fk = true;
                             fk_column = Some(fields[0].clone());
@@ -696,13 +696,13 @@ fn translate_update_node(
         let mut is_our_fk = false;
 
         for attr in parent_model_def.resolved_fields.iter().find(|f| f.name == rel.relation_field_name).unwrap().attributes.iter() {
-            if let FieldAttribute::Relation { fields, references, .. } = attr {
+            if let FieldAttribute::InternalRelation { fields, references, .. } = attr {
                 if fields.is_empty() && references.is_empty() {
                     for our_field in &model_def.resolved_fields {
                         if let AstFieldType::Relation(target) = &our_field.field_type {
                             if target == &rel.parent_model {
                                 for our_attr in &our_field.attributes {
-                                    if let FieldAttribute::Relation { fields: our_fields, .. } = our_attr {
+                                    if let FieldAttribute::InternalRelation { fields: our_fields, .. } = our_attr {
                                         if !our_fields.is_empty() {
                                             fk_column_name = Some(our_fields[0].clone());
                                             is_our_fk = true;
@@ -873,7 +873,7 @@ fn process_deferred_children(
             if let AstFieldType::Relation(target) = &our_field.field_type {
                 if target == parent_model_name {
                     for our_attr in &our_field.attributes {
-                        if let FieldAttribute::Relation { fields: our_fields, .. } = our_attr {
+                        if let FieldAttribute::InternalRelation { fields: our_fields, .. } = our_attr {
                             if !our_fields.is_empty() {
                                 fk_column_name = Some(our_fields[0].clone());
                             }
@@ -990,7 +990,7 @@ fn process_deferred_children(
             DeferredAction::Upsert(create_data, update_data) => {
                 let mut parent_fk_col = None;
                 for attr in &ast.models.get(parent_model_name).unwrap().resolved_fields.iter().find(|f| f.name == child.relation_field_name).unwrap().attributes {
-                    if let FieldAttribute::Relation { fields, references: _, .. } = attr {
+                    if let FieldAttribute::InternalRelation { fields, references: _, .. } = attr {
                         if !fields.is_empty() {
                             parent_fk_col = Some(fields[0].clone());
                         }

@@ -30,25 +30,25 @@ async fn test_e2e_deferrable() {
     cmd.arg("init").current_dir(workspace);
     run_cmd(cmd);
 
-    // 2. Define schema with circular dependency using deferrable: true
+    // 2. Define schema with circular dependency using 
     let schema = "
         model User {
             profileId: String
-            profile: Profile @relation(fields: [profileId], references: [__id], deferrable: true)
+            profile: Profile @relation(fields: [profileId], references: [__id])
             comments: Comment[]
             @@id(uuid)
         }
         
         model Profile {
             userId: String
-            user: User @relation(fields: [userId], references: [__id], deferrable: true)
+            user: User @relation(fields: [userId], references: [__id])
             @@id(uuid)
         }
         
         model Comment {
             text: String
             userId: String
-            user: User @relation(fields: [userId], references: [__id], deferrable: true)
+            user: User @relation(fields: [userId], references: [__id])
             @@id(uuid)
         }
     ";
@@ -146,7 +146,7 @@ async fn test_e2e_deferrable() {
         ").unwrap();
         
         // Normally, deleting User before Comment triggers an immediate Restrict error.
-        // Because of deferrable: true, we can delete the User first inside a transaction!
+        // Because of  we can delete the User first inside a transaction!
         db.execute_batch("
             BEGIN TRANSACTION;
             DELETE FROM User WHERE __id = 'u4';

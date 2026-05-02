@@ -174,25 +174,11 @@ mod tests {
                 FieldNode { name: "tags".to_string(), field_type: AstFieldType::ScalarArray("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "updated_at".to_string(), field_type: AstFieldType::Scalar("DateTime".to_string()), is_optional: false, attributes: vec![FieldAttribute::InternalTracked] },
                 FieldNode { name: "posts".to_string(), field_type: AstFieldType::RelationArray("Post".to_string()), is_optional: false, attributes: vec![
-                    FieldAttribute::Relation {
-                        name: None,
-                        fields: vec![],
-                        references: vec![],
-                        on_delete: None,
-                        deferrable: false,
-                        column: None,
-                    }
+                    FieldAttribute::InternalRelation { fields: vec![], references: vec![] }, FieldAttribute::Relation { name: None, on_delete: None }
                 ] },
                 FieldNode { name: "profileId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "profile".to_string(), field_type: AstFieldType::Relation("Profile".to_string()), is_optional: false, attributes: vec![
-                    FieldAttribute::Relation {
-                        name: None,
-                        fields: vec!["profileId".to_string()],
-                        references: vec!["__id".to_string()],
-                        on_delete: None,
-                        deferrable: false,
-                        column: None,
-                    }
+                    FieldAttribute::InternalRelation { fields: vec!["profileId".to_string()], references: vec!["__id".to_string()] }, FieldAttribute::Relation { name: None, on_delete: None }
                 ] },
             ]
         });
@@ -212,24 +198,10 @@ mod tests {
                 FieldNode { name: "title".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "authorId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "author".to_string(), field_type: AstFieldType::Relation("User".to_string()), is_optional: false, attributes: vec![
-                    FieldAttribute::Relation {
-                        name: None,
-                        fields: vec!["authorId".to_string()],
-                        references: vec!["__id".to_string()],
-                        on_delete: Some("Cascade".to_string()),
-                        deferrable: false,
-                        column: None,
-                    }
+                    FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }, FieldAttribute::Relation { name: None, on_delete: Some("Cascade".to_string()) }
                 ] },
                 FieldNode { name: "comments".to_string(), field_type: AstFieldType::RelationArray("Comment".to_string()), is_optional: false, attributes: vec![
-                    FieldAttribute::Relation {
-                        name: None,
-                        fields: vec![],
-                        references: vec![],
-                        on_delete: None,
-                        deferrable: false,
-                        column: None,
-                    }
+                    FieldAttribute::InternalRelation { fields: vec![], references: vec![] }, FieldAttribute::Relation { name: None, on_delete: None }
                 ] },
             ]
         });
@@ -241,14 +213,7 @@ mod tests {
                 FieldNode { name: "text".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "postId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "post".to_string(), field_type: AstFieldType::Relation("Post".to_string()), is_optional: false, attributes: vec![
-                    FieldAttribute::Relation {
-                        name: None,
-                        fields: vec!["postId".to_string()],
-                        references: vec!["__id".to_string()],
-                        on_delete: Some("Cascade".to_string()),
-                        deferrable: false,
-                        column: None,
-                    }
+                    FieldAttribute::InternalRelation { fields: vec!["postId".to_string()], references: vec!["__id".to_string()] }, FieldAttribute::Relation { name: None, on_delete: Some("Cascade".to_string()) }
                 ] },
             ]
         });
@@ -260,24 +225,10 @@ mod tests {
                 FieldNode { name: "name".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "managerId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: true, attributes: vec![] },
                 FieldNode { name: "manager".to_string(), field_type: AstFieldType::Relation("Employee".to_string()), is_optional: true, attributes: vec![
-                    FieldAttribute::Relation {
-                        name: Some("Management".to_string()),
-                        fields: vec!["managerId".to_string()],
-                        references: vec!["__id".to_string()],
-                        on_delete: None,
-                        deferrable: false,
-                        column: None,
-                    }
+                    FieldAttribute::InternalRelation { fields: vec!["managerId".to_string()], references: vec!["__id".to_string()] }, FieldAttribute::Relation { name: Some("Management".to_string()), on_delete: None }
                 ] },
                 FieldNode { name: "subordinates".to_string(), field_type: AstFieldType::RelationArray("Employee".to_string()), is_optional: false, attributes: vec![
-                    FieldAttribute::Relation {
-                        name: Some("Management".to_string()),
-                        fields: vec![],
-                        references: vec![],
-                        on_delete: None,
-                        deferrable: false,
-                        column: None,
-                    }
+                    FieldAttribute::InternalRelation { fields: vec![], references: vec![] }, FieldAttribute::Relation { name: Some("Management".to_string()), on_delete: None }
                 ] },
             ]
         });
