@@ -31,6 +31,7 @@ pub struct ModelNode {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModelAttribute {
     Id(DefaultFunc),
+    Track,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -59,7 +60,7 @@ pub enum DefaultFunc {
 pub enum FieldAttribute {
     Id,
     Unique,
-    UpdatedAt,
+    InternalTracked,
     Map(String),
     InternalDefault(DefaultFunc),
     Relation { name: Option<String>, fields: Vec<String>, references: Vec<String>, on_delete: Option<String>, deferrable: bool, column: Option<String> },

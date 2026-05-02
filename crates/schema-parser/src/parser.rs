@@ -61,7 +61,6 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> FieldNode {
             match attr_ident {
                 "__id" => attributes.push(FieldAttribute::Id),
                 "unique" => attributes.push(FieldAttribute::Unique),
-                "updatedAt" => attributes.push(FieldAttribute::UpdatedAt),
                 "map" => {
                     if let Some(args_rule) = attr_inner.next() {
                         let arg_val = args_rule.into_inner().next().unwrap().into_inner().next().unwrap().as_str();
@@ -216,6 +215,8 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                                     }
                                 }
                                 block_attributes.push(ModelAttribute::Id(default_func));
+                            } else if attr_name == "track" {
+                                block_attributes.push(ModelAttribute::Track);
                             }
                         }
                         _ => {}

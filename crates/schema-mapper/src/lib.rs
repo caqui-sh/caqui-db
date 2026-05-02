@@ -57,7 +57,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                 });
             }
 
-            let is_updated_at = field.attributes.iter().any(|a| matches!(a, FieldAttribute::UpdatedAt));
+            let is_updated_at = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalTracked));
             if is_updated_at {
                 let trigger_name = format!("trg_update_{}_{}", model.name, field.name);
                 let sql = format!(
@@ -110,7 +110,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                     let is_id = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Id));
                     let is_autoincrement = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalDefault(DefaultFunc::AutoIncrement)));
                     let is_uuid = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalDefault(DefaultFunc::Uuid)));
-                    let is_updated_at = field.attributes.iter().any(|a| matches!(a, FieldAttribute::UpdatedAt));
+                    let is_updated_at = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalTracked));
 
                     let mut sql_type = match t.as_str() {
                         "Int" => "INTEGER",
@@ -284,7 +284,7 @@ mod tests {
                     name: "updated_at".to_string(),
                     field_type: AstFieldType::Scalar("DateTime".to_string()),
                     is_optional: false,
-                    attributes: vec![FieldAttribute::UpdatedAt],
+                    attributes: vec![FieldAttribute::InternalTracked],
                 },
             ]
         });

@@ -228,6 +228,19 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
             attributes: vec![FieldAttribute::InternalDefault(DefaultFunc::Static(model.name.clone()))],
         });
 
+        let track_marker_name = "__updatedAt".to_string();
+        if current_fields.iter().any(|f| f.name == track_marker_name) {
+            return Err(ValidationError(format!("Model '{}' cannot define an explicit field '{}'. This name is reserved for the automatic tracking timestamp.", model.name, track_marker_name)));
+        }
+        if model.block_attributes.contains(&ModelAttribute::Track) {
+            current_fields.push(FieldNode {
+                name: track_marker_name,
+                field_type: AstFieldType::Scalar("DateTime".to_string()),
+                is_optional: false,
+                attributes: vec![FieldAttribute::InternalTracked],
+            });
+        }
+
         current_fields.sort_by(|a, b| a.name.cmp(&b.name));
 
         resolution_registry.insert(model.name.clone(), ResolvedState {

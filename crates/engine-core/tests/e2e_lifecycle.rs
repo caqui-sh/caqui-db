@@ -452,7 +452,7 @@ fn test_e2e_custom_functions_and_triggers() {
     let schema = "
         model Item {
             name: String
-            updatedAt: DateTime @updatedAt
+            @@track
     @@id(uuid)
         }
     ";
@@ -478,7 +478,7 @@ fn test_e2e_custom_functions_and_triggers() {
     let curl_output = Command::new("curl").args(&[
         "-s", "-X", "POST", "http://localhost:4003/api/v1/query",
         "-H", "Content-Type: application/json",
-        "-d", r#"{"model":"Item","action":"findMany","select":{"__id":true,"name":true,"updatedAt":true}}"#
+        "-d", r#"{"model":"Item","action":"findMany","select":{"__id":true,"name":true,"__updatedAt":true}}"#
     ]).output().unwrap();
 
     api_server.kill().unwrap();
@@ -491,7 +491,7 @@ fn test_e2e_custom_functions_and_triggers() {
     assert_eq!(items.len(), 1);
     
     let __id = items[0]["__id"].as_str().unwrap();
-    let updated_at = items[0]["updatedAt"].as_str().unwrap();
+    let updated_at = items[0]["__updatedAt"].as_str().unwrap();
 
     assert_eq!(__id.len(), 36);
     assert!(__id.contains('-'));

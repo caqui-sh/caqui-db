@@ -172,7 +172,7 @@ mod tests {
                 FieldNode { name: "age".to_string(), field_type: AstFieldType::Scalar("Int".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "bio".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
                 FieldNode { name: "tags".to_string(), field_type: AstFieldType::ScalarArray("String".to_string()), is_optional: false, attributes: vec![] },
-                FieldNode { name: "updated_at".to_string(), field_type: AstFieldType::Scalar("DateTime".to_string()), is_optional: false, attributes: vec![FieldAttribute::UpdatedAt] },
+                FieldNode { name: "updated_at".to_string(), field_type: AstFieldType::Scalar("DateTime".to_string()), is_optional: false, attributes: vec![FieldAttribute::InternalTracked] },
                 FieldNode { name: "posts".to_string(), field_type: AstFieldType::RelationArray("Post".to_string()), is_optional: false, attributes: vec![
                     FieldAttribute::Relation {
                         name: None,
