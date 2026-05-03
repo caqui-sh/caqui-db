@@ -4,6 +4,9 @@ use schema_parser::ast::{SchemaAst, AstFieldType, FieldAttribute};
 use crate::where_parser::parse_where_clause;
 
 fn validate_and_normalize_scalar(field_name: &str, type_name: &str, val: &Value) -> Result<Value, String> {
+    if val.is_null() {
+        return Ok(Value::Null);
+    }
     match type_name {
         "Float" => {
             if val.as_f64().is_some() {

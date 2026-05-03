@@ -36,6 +36,8 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir) {
         model Reading {
             value: Float
             recordedAt: DateTime
+            optionalValue: Float?
+            updatedAt: DateTime?
             @@id(uuid)
         }
     "#;
@@ -305,4 +307,208 @@ async fn test_validation_rejections() {
         .unwrap();
     let res2 = app.clone().oneshot(req2).await.unwrap();
     assert_eq!(res2.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_mutation_lifecycle_update() {
+    let (app, _dir) = setup_app().await;
+
+    // 1. Create
+    let create_req = Request::builder()
+        .method(http::Method::POST)
+        .uri("/api/v1/query")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::json!({
+            "model": "Reading",
+            "action": "create",
+            "data": {
+                "value": 1.0,
+                "recordedAt": "2025-01-01T00:00:00Z"
+            },
+            "select": { "__id": true }
+        }).to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(create_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+    let json: Value = serde_json::from_slice(&body_bytes).unwrap();
+    let id = json["data"]["__id"].as_str().unwrap();
+
+    // 2. Update with new offset and value
+    let update_req = Request::builder()
+        .method(http::Method::POST)
+        .uri("/api/v1/query")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::json!({
+            "model": "Reading",
+            "action": "update",
+            "where": { "__id": id },
+            "data": {
+                "value": 2.5,
+                "recordedAt": "2025-10-10T12:00:00-04:00"
+            },
+            "select": { "value": true, "recordedAt": true }
+        }).to_string()))
+        .unwrap();
+    let res2 = app.clone().oneshot(update_req).await.unwrap();
+    assert_eq!(res2.status(), StatusCode::OK);
+    let body_bytes2 = axum::body::to_bytes(res2.into_body(), 1024 * 1024).await.unwrap();
+    let json2: Value = serde_json::from_slice(&body_bytes2).unwrap();
+    let record = &json2["data"];
+
+    assert_eq!(record["value"].as_f64().unwrap(), 2.5);
+    assert_eq!(record["recordedAt"].as_str().unwrap(), "2025-10-10T16:00:00.000Z");
+}
+
+#[tokio::test]
+async fn test_broad_filter_operators() {
+    let (app, _dir) = setup_app().await;
+
+    let items = vec![
+        ("2024-01-01T00:00:00Z", 10.0),
+        ("2024-02-01T00:00:00Z", 20.0),
+        ("2024-03-01T00:00:00Z", 30.0),
+    ];
+
+    for (d, v) in items {
+        let req = Request::builder()
+            .method(http::Method::POST)
+            .uri("/api/v1/query")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::json!({
+                "model": "Reading",
+                "action": "create",
+                "data": { "value": v, "recordedAt": d },
+                "select": { "__id": true }
+            }).to_string()))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap();
+    }
+
+    // Test 'in' operator
+    let query_in = Request::builder()
+        .method(http::Method::POST)
+        .uri("/api/v1/query")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::json!({
+            "model": "Reading",
+            "action": "findMany",
+            "where": {
+                "recordedAt": { "in": ["2024-01-01T00:00:00Z", "2024-03-01T00:00:00Z"] }
+            },
+            "select": { "value": true }
+        }).to_string()))
+        .unwrap();
+    let res_in = app.clone().oneshot(query_in).await.unwrap();
+    let body_in = axum::body::to_bytes(res_in.into_body(), 1024 * 1024).await.unwrap();
+    let json_in: Value = serde_json::from_slice(&body_in).unwrap();
+    let records_in = json_in["data"].as_array().unwrap();
+    assert_eq!(records_in.len(), 2);
+
+    // Test 'notEq' operator
+    let query_not_eq = Request::builder()
+        .method(http::Method::POST)
+        .uri("/api/v1/query")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::json!({
+            "model": "Reading",
+            "action": "findMany",
+            "where": {
+                "value": { "notEq": 20.0 }
+            },
+            "select": { "value": true }
+        }).to_string()))
+        .unwrap();
+    let res_not_eq = app.clone().oneshot(query_not_eq).await.unwrap();
+    let body_not_eq = axum::body::to_bytes(res_not_eq.into_body(), 1024 * 1024).await.unwrap();
+    let json_not_eq: Value = serde_json::from_slice(&body_not_eq).unwrap();
+    let records_not_eq = json_not_eq["data"].as_array().unwrap();
+    assert_eq!(records_not_eq.len(), 2);
+}
+
+#[tokio::test]
+async fn test_edge_case_numeric_boundaries() {
+    let (app, _dir) = setup_app().await;
+
+    let values = vec![42.5, -42.5, 0.0];
+    for v in values {
+        let req = Request::builder()
+            .method(http::Method::POST)
+            .uri("/api/v1/query")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::json!({
+                "model": "Reading",
+                "action": "create",
+                "data": { "value": v, "recordedAt": "2025-01-01T00:00:00Z" },
+                "select": { "__id": true }
+            }).to_string()))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap();
+    }
+
+    let query_req = Request::builder()
+        .method(http::Method::POST)
+        .uri("/api/v1/query")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::json!({
+            "model": "Reading",
+            "action": "findMany",
+            "orderBy": { "value": "asc" },
+            "select": { "value": true }
+        }).to_string()))
+        .unwrap();
+
+    let res = app.clone().oneshot(query_req).await.unwrap();
+    let body_bytes = axum::body::to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+    let json: Value = serde_json::from_slice(&body_bytes).unwrap();
+    let records = json["data"].as_array().unwrap();
+
+    assert_eq!(records[0]["value"].as_f64().unwrap(), -42.5);
+    assert_eq!(records[1]["value"].as_f64().unwrap(), 0.0);
+    assert_eq!(records[2]["value"].as_f64().unwrap(), 42.5);
+}
+
+#[tokio::test]
+async fn test_nullability_and_omission() {
+    let (app, _dir) = setup_app().await;
+
+    let create_req = Request::builder()
+        .method(http::Method::POST)
+        .uri("/api/v1/query")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::json!({
+            "model": "Reading",
+            "action": "create",
+            "data": {
+                "value": 10.0,
+                "recordedAt": "2025-01-01T00:00:00Z",
+                "optionalValue": null,
+                "updatedAt": null
+            },
+            "select": { "__id": true }
+        }).to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(create_req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let query_req = Request::builder()
+        .method(http::Method::POST)
+        .uri("/api/v1/query")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::json!({
+            "model": "Reading",
+            "action": "findMany",
+            "where": {
+                "updatedAt": { "isNull": true }
+            },
+            "select": { "value": true }
+        }).to_string()))
+        .unwrap();
+
+    let res_query = app.clone().oneshot(query_req).await.unwrap();
+    assert_eq!(res_query.status(), StatusCode::OK);
+    let body_query = axum::body::to_bytes(res_query.into_body(), 1024 * 1024).await.unwrap();
+    let json_query: Value = serde_json::from_slice(&body_query).unwrap();
+    let records = json_query["data"].as_array().unwrap();
+    assert_eq!(records.len(), 1);
 }
