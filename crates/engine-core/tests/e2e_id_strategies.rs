@@ -2,6 +2,11 @@ use tempfile::tempdir;
 use std::process::Command;
 use std::fs;
 use std::env;
+use std::sync::Arc;
+use ax_body::Body;
+use axum::{body as ax_body, http::{self, Request, StatusCode}};
+use tower::util::ServiceExt;
+use serde_json::{json, Value};
 
 fn run_cmd(mut cmd: Command) -> String {
     let output = cmd.output().expect("Failed to execute command");
@@ -13,8 +18,7 @@ fn run_cmd(mut cmd: Command) -> String {
     stdout
 }
 
-#[tokio::test]
-async fn test_e2e_id_strategies() {
+async fn setup_app(schema: &str) -> (axum::Router, tempfile::TempDir, String) {
     let dir = tempdir().unwrap();
     let workspace = dir.path();
     let _ = engine_core::vfs::bootstrap_custom_vfs();
@@ -29,6 +33,51 @@ async fn test_e2e_id_strategies() {
     caqui_init.arg("init").current_dir(workspace);
     run_cmd(caqui_init);
 
+    fs::write(workspace.join("schema.cq"), schema).unwrap();
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let db_path = workspace.join("app.db");
+    let db_uri = format!("file:{}?vfs=git", db_path.display());
+    
+    let pool = api_layer::db::create_pool(&db_uri);
+    
+    let ast = schema_parser::parser::parse_schema(schema).unwrap();
+    let ast = schema_parser::validation::validate_schema(ast).unwrap();
+    let state = api_layer::state::EngineState { 
+        ast: Arc::new(ast), 
+        db_pool: pool.clone()
+    };
+    let app = api_layer::router::build_dynamic_router(state);
+    
+    (app, dir, db_uri)
+}
+
+async fn post_query(app: &axum::Router, payload: Value) -> (StatusCode, Value) {
+    let response = app.clone()
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/api/v1/query")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body_bytes = axum::body::to_bytes(response.into_body(), 100000).await.unwrap();
+    let body_val: Value = serde_json::from_slice(&body_bytes).unwrap_or_else(|_| {
+        json!({ "error": String::from_utf8_lossy(&body_bytes) })
+    });
+    (status, body_val)
+}
+
+#[tokio::test]
+async fn test_e2e_id_strategies() {
     let schema = r#"
         model CuidModel {
             name: String
@@ -40,43 +89,35 @@ async fn test_e2e_id_strategies() {
             @@id(autoincrement)
         }
     "#;
-    fs::write(workspace.join("schema.cq"), schema).unwrap();
+    let (app, _dir, _db_uri) = setup_app(schema).await;
 
-    let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "push"]).current_dir(workspace);
-    run_cmd(cmd);
-
-    let db_path = workspace.join("app.db");
-    let db_uri = format!("file:{}?vfs=git", db_path.display());
-    
-    let ast = schema_parser::parser::parse_schema(schema).unwrap();
-    let ast = schema_parser::validation::validate_schema(ast).unwrap();
-    let pool = api_layer::db::create_pool(&db_uri);
-    
     // Test CUID
-    let payload = serde_json::json!({
+    let payload = json!({
+        "action": "create",
+        "model": "CuidModel",
         "data": { "name": "CuidTest" }
     });
     
-    let mut alias_idx = 0;
-    let plan = api_layer::mutation_translator::hydrate_mutation_to_plan(&ast, "CuidModel", "create", &payload, &mut alias_idx).unwrap();
-    
-    let response = api_layer::executor::execute_mutation_plan(&pool, plan).await.unwrap();
-    
-    // Verify it's generated string
-    assert!(response.len() > 10, "Cuid should be generated and have sufficient length, got: {}", response);
+    let (status, response) = post_query(&app, payload).await;
+    println!("CUID RESPONSE: {:?}", response);
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+    let cuid = response["data"].as_str().or_else(|| response["data"]["__id"].as_str()).unwrap();
+    assert!(cuid.len() > 10, "Cuid should be generated and have sufficient length, got: {}", cuid);
     
     // Test AutoIncrement
-    let payload_auto = serde_json::json!({
+    let payload_auto = json!({
+        "action": "create",
+        "model": "AutoIncModel",
         "data": { "name": "AutoTest" }
     });
     
-    // Refresh pool for new model
-    let pool2 = api_layer::db::create_pool(&db_uri);
-    
-    let mut alias_idx = 0;
-    let plan_auto = api_layer::mutation_translator::hydrate_mutation_to_plan(&ast, "AutoIncModel", "create", &payload_auto, &mut alias_idx).unwrap();
-    
-    let response_auto = api_layer::executor::execute_mutation_plan(&pool2, plan_auto).await.unwrap();
-    assert_eq!(response_auto, "1", "Autoincrement should generate sequential IDs starting at 1");
+    let (status_auto, response_auto) = post_query(&app, payload_auto).await;
+    println!("AUTOINC RESPONSE: {:?}", response_auto);
+    assert_eq!(status_auto, StatusCode::OK, "Response: {:?}", response_auto);
+    let auto_id = response_auto["data"].as_i64()
+        .or_else(|| response_auto["data"]["__id"].as_i64())
+        .or_else(|| response_auto["data"].as_str().and_then(|s| s.parse().ok()))
+        .or_else(|| response_auto["data"]["__id"].as_str().and_then(|s| s.parse().ok()))
+        .unwrap();
+    assert_eq!(auto_id, 1, "Autoincrement should generate sequential IDs starting at 1");
 }

@@ -1,70 +1,106 @@
-use std::process::Command;
-use std::env;
-use std::fs;
 use tempfile::tempdir;
-use serde_json::json;
+use std::process::Command;
+use std::fs;
+use std::env;
+use std::sync::Arc;
+use axum::{body::Body, http::{self, Request, StatusCode}};
+use tower::util::ServiceExt;
+use serde_json::{json, Value};
 
 fn run_cmd(mut cmd: Command) -> String {
-    let output = cmd.output().unwrap_or_else(|e| panic!("Failed to execute process: {:?}", e));
+    let output = cmd.output().expect("Failed to execute command");
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     if !output.status.success() {
-        panic!("Command failed: {:?}\nSTDOUT:\n{}\nSTDERR:\n{}", 
-               cmd, 
-               stdout,
-               stderr);
+        panic!("Command {:?} failed!\nstdout: {}\nstderr: {}", cmd, stdout, stderr);
     }
     stdout
 }
 
-#[tokio::test]
-async fn test_e2e_relation_names() {
+async fn setup_app(schema: &str) -> (axum::Router, tempfile::TempDir, String) {
     let dir = tempdir().unwrap();
     let workspace = dir.path();
-    engine_core::vfs::bootstrap_custom_vfs();
+    let _ = engine_core::vfs::bootstrap_custom_vfs();
     
     let caqui_bin = env!("CARGO_BIN_EXE_caqui");
-    let db_uri = format!("file:{}?vfs=git", workspace.join("app.db").display());
 
-    // 1. Initialize caqui
-    let mut cmd = Command::new(caqui_bin);
-    cmd.arg("init").current_dir(workspace);
-    run_cmd(cmd);
+    let mut git_init = Command::new("git");
+    git_init.arg("init").current_dir(workspace);
+    run_cmd(git_init);
 
-    // 2. Define schema with multiple relations
-    let schema = "
-        model User {
+    let mut caqui_init = Command::new(caqui_bin);
+    caqui_init.arg("init").current_dir(workspace);
+    run_cmd(caqui_init);
 
-            name: String
-            authoredPosts: Post[] @relation(\"AuthorToPost\")
-            reviewedPosts: Post[] @relation(\"ReviewerToPost\")
-    @@id(uuid)
-        }
-        
-        model Post {
-
-            title: String
-            authorId: String
-            author: User @relation(\"AuthorToPost\", fields: [authorId], references: [__id])
-            reviewerId: String
-            reviewer: User @relation(\"ReviewerToPost\", fields: [reviewerId], references: [__id])
-    @@id(uuid)
-        }
-    ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();
 
-    // 3. Push schema
     let mut cmd = Command::new(caqui_bin);
     cmd.args(&["schema", "push"]).current_dir(workspace);
     run_cmd(cmd);
 
-    // 4. Create connection pool & Insert Data
+    let db_path = workspace.join("app.db");
+    let db_uri = format!("file:{}?vfs=git", db_path.display());
+    
+    let pool = api_layer::db::create_pool(&db_uri);
+    
+    let ast = schema_parser::parser::parse_schema(schema).unwrap();
+    let ast = schema_parser::validation::validate_schema(ast).unwrap();
+    let state = api_layer::state::EngineState { 
+        ast: Arc::new(ast), 
+        db_pool: pool.clone()
+    };
+    let app = api_layer::router::build_dynamic_router(state);
+    
+    (app, dir, db_uri)
+}
+
+async fn post_query(app: &axum::Router, payload: Value) -> Value {
+    let response = app.clone()
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/api/v1/query")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body_bytes = axum::body::to_bytes(response.into_body(), 100000).await.unwrap();
+    if status != StatusCode::OK {
+        panic!("Request failed with status {}: {:?}", status, String::from_utf8_lossy(&body_bytes));
+    }
+    serde_json::from_slice(&body_bytes).unwrap()
+}
+
+#[tokio::test]
+async fn test_e2e_relation_names() {
+    let schema = r#"
+        model User {
+            name: String
+            authoredPosts: Post[] @relation("AuthorToPost")
+            reviewedPosts: Post[] @relation("ReviewerToPost")
+            @@id(uuid)
+        }
+        
+        model Post {
+            title: String
+            authorId: String
+            author: User @relation("AuthorToPost", fields: [authorId], references: [__id])
+            reviewerId: String?
+            reviewer: User? @relation("ReviewerToPost", fields: [reviewerId], references: [__id])
+            @@id(uuid)
+        }
+    "#;
+
+    let (app, _dir, db_uri) = setup_app(schema).await;
     let pool = api_layer::db::create_pool(&db_uri);
     
     let conn = pool.get().await.unwrap();
     conn.interact(|db| {
         db.execute_batch("
-            BEGIN TRANSACTION;
             INSERT INTO User (__id, name) VALUES ('u1', 'Alice');
             INSERT INTO User (__id, name) VALUES ('u2', 'Bob');
             
@@ -76,17 +112,12 @@ async fn test_e2e_relation_names() {
             
             -- Alice authors Post 3, no reviewer
             INSERT INTO Post (__id, title, authorId, reviewerId) VALUES ('p3', 'Zero Overhead', 'u1', NULL);
-            COMMIT;
         ").unwrap();
-        Ok::<(), rusqlite::Error>(())
-    }).await.unwrap().unwrap();
+    }).await.unwrap();
 
-    // 5. Build State & Execute API Payload directly via API core (bypassing HTTP router for E2E speed)
-    let ast = schema_parser::parser::parse_schema(schema).unwrap();
-    let ast = schema_parser::validation::validate_schema(ast).unwrap();
-    
     let payload = json!({
         "action": "findMany",
+        "model": "User",
         "select": {
             "name": true,
             "authoredPosts": {
@@ -101,18 +132,8 @@ async fn test_e2e_relation_names() {
         }
     });
 
-    let mut alias_counter = 0;
-    let ir = api_layer::translator::hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
-    let sql = query_compiler::read::compile_select(&ir, None);
-
-    let conn2 = pool.get().await.unwrap();
-    let result_json: String = conn2.interact(move |db| {
-        let mut stmt = db.prepare(&sql).unwrap();
-        stmt.query_row([], |row| row.get(0))
-    }).await.unwrap().unwrap();
-
-    let result_val: serde_json::Value = serde_json::from_str(&result_json).unwrap();
-    let rows = result_val.as_array().unwrap();
+    let response = post_query(&app, payload).await;
+    let rows = response["data"].as_array().unwrap();
     
     assert_eq!(rows.len(), 1, "Should return exactly one user (Alice)");
     let alice = &rows[0];
@@ -133,53 +154,32 @@ async fn test_e2e_relation_names() {
 
 #[tokio::test]
 async fn test_e2e_self_referential_relations() {
-    let dir = tempdir().unwrap();
-    let workspace = dir.path();
-    engine_core::vfs::bootstrap_custom_vfs();
-    
-    let caqui_bin = env!("CARGO_BIN_EXE_caqui");
-    let db_uri = format!("file:{}?vfs=git", workspace.join("app.db").display());
-
-    let mut cmd = Command::new(caqui_bin);
-    cmd.arg("init").current_dir(workspace);
-    run_cmd(cmd);
-
-    let schema = "
+    let schema = r#"
         model Employee {
-
             name: String
             managerId: String?
-            manager: Employee? @relation(\"ManagerToEmployee\", fields: [managerId], references: [__id])
-            directReports: Employee[] @relation(\"ManagerToEmployee\")
-    @@id(uuid)
+            manager: Employee? @relation("ManagerToEmployee", fields: [managerId], references: [__id])
+            directReports: Employee[] @relation("ManagerToEmployee")
+            @@id(uuid)
         }
-    ";
-    fs::write(workspace.join("schema.cq"), schema).unwrap();
+    "#;
 
-    let mut cmd = Command::new(caqui_bin);
-    cmd.args(&["schema", "push"]).current_dir(workspace);
-    run_cmd(cmd);
-
+    let (app, _dir, db_uri) = setup_app(schema).await;
     let pool = api_layer::db::create_pool(&db_uri);
     
     let conn = pool.get().await.unwrap();
     conn.interact(|db| {
         db.execute_batch("
-            BEGIN TRANSACTION;
             INSERT INTO Employee (__id, name, managerId) VALUES ('e1', 'CEO', 'e1');
             INSERT INTO Employee (__id, name, managerId) VALUES ('e2', 'VP', 'e1');
             INSERT INTO Employee (__id, name, managerId) VALUES ('e3', 'Manager', 'e2');
             INSERT INTO Employee (__id, name, managerId) VALUES ('e4', 'IC', 'e3');
-            COMMIT;
         ").unwrap();
-        Ok::<(), rusqlite::Error>(())
-    }).await.unwrap().unwrap();
+    }).await.unwrap();
 
-    let ast = schema_parser::parser::parse_schema(schema).unwrap();
-    let ast = schema_parser::validation::validate_schema(ast).unwrap();
-    
     let payload = json!({
         "action": "findMany",
+        "model": "Employee",
         "select": {
             "name": true,
             "directReports": {
@@ -204,19 +204,8 @@ async fn test_e2e_self_referential_relations() {
         }
     });
 
-    let mut alias_counter = 0;
-    let ir = api_layer::translator::hydrate_payload_to_ir(&ast, "Employee", &payload, &mut alias_counter, 0).unwrap();
-    let sql = query_compiler::read::compile_select(&ir, None);
-    println!("GENERATED SQL:\n{}", sql);
-
-    let conn2 = pool.get().await.unwrap();
-    let result_json: String = conn2.interact(move |db| {
-        let mut stmt = db.prepare(&sql).unwrap();
-        stmt.query_row([], |row| row.get(0))
-    }).await.unwrap().unwrap();
-
-    let result_val: serde_json::Value = serde_json::from_str(&result_json).unwrap();
-    let rows = result_val.as_array().unwrap();
+    let response = post_query(&app, payload).await;
+    let rows = response["data"].as_array().unwrap();
     
     assert_eq!(rows.len(), 1, "Should return exactly one CEO");
     let ceo = &rows[0];

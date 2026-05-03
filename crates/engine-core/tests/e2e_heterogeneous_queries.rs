@@ -1,23 +1,48 @@
-use std::process::{Command};
-use std::env;
-use std::fs;
 use tempfile::tempdir;
+use std::process::Command;
+use std::fs;
+use std::env;
+use std::sync::Arc;
+use axum::{body::Body, http::{self, Request, StatusCode}};
+use tower::util::ServiceExt;
+use serde_json::Value;
 
 fn run_cmd(mut cmd: Command) -> String {
-    let output = cmd.output().unwrap_or_else(|e| panic!("Failed to execute process: {:?}", e));
+    let output = cmd.output().expect("Failed to execute command");
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     if !output.status.success() {
-        panic!("Command failed: {:?}\nSTDOUT:\n{}\nSTDERR:\n{}", cmd, stdout, stderr);
+        panic!("Command {:?} failed!\nstdout: {}\nstderr: {}", cmd, stdout, stderr);
     }
     stdout
+}
+
+async fn post_query(app: &axum::Router, payload: Value) -> Value {
+    let response = app.clone()
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/api/v1/query")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body_bytes = axum::body::to_bytes(response.into_body(), 100000).await.unwrap();
+    if status != StatusCode::OK {
+        panic!("Request failed with status {}: {:?}", status, String::from_utf8_lossy(&body_bytes));
+    }
+    serde_json::from_slice(&body_bytes).unwrap()
 }
 
 #[tokio::test]
 async fn test_e2e_polymorphic_union_reads() {
     let dir = tempdir().unwrap();
     let workspace = dir.path();
-    engine_core::vfs::bootstrap_custom_vfs();
+    let _ = engine_core::vfs::bootstrap_custom_vfs();
     
     let caqui_bin = env!("CARGO_BIN_EXE_caqui");
 
@@ -25,8 +50,12 @@ async fn test_e2e_polymorphic_union_reads() {
     git_init.arg("init").current_dir(workspace);
     run_cmd(git_init);
 
+    let mut caqui_init = Command::new(caqui_bin);
+    caqui_init.arg("init").current_dir(workspace);
+    run_cmd(caqui_init);
+
     let schema = r#"
-        base Employee { department: String  }
+        base Employee { department: String }
         model Engineer extends Employee { language: String @@id(uuid) }
         model Manager extends Employee { directReports: Int @@id(uuid) }
     "#;
@@ -38,38 +67,36 @@ async fn test_e2e_polymorphic_union_reads() {
 
     let db_path = workspace.join("app.db");
     let db_uri = format!("file:{}?vfs=git", db_path.display());
-    let conn = rusqlite::Connection::open_with_flags(
-        &db_uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    ).unwrap();
+    
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+    conn.interact(|db| {
+        db.execute("INSERT INTO Engineer (__id, department, language) VALUES ('1', 'Engineering', 'Rust')", []).unwrap();
+        db.execute("INSERT INTO Manager (__id, department, directReports) VALUES ('2', 'Sales', 5)", []).unwrap();
+    }).await.unwrap();
 
-    // Seed data
-    conn.execute("INSERT INTO Engineer (__id, department, language) VALUES ('1', 'Engineering', 'Rust')", []).unwrap();
-    conn.execute("INSERT INTO Manager (__id, department, directReports) VALUES ('2', 'Sales', 5)", []).unwrap();
-
-    // Query abstract base using IR compiler natively
     let ast = schema_parser::parser::parse_schema(schema).unwrap();
     let ast = schema_parser::validation::validate_schema(ast).unwrap();
+    let state = api_layer::state::EngineState { 
+        ast: Arc::new(ast), 
+        db_pool: pool 
+    };
+    let app = api_layer::router::build_dynamic_router(state);
 
     let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "Employee",
         "select": { "__id": true, "department": true }
     });
 
-    
-    let mut alias_counter = 0;
-    let query_ir = api_layer::translator::hydrate_payload_to_ir(&ast, "Employee", &payload, &mut alias_counter, 0).unwrap();
-    let sql = query_compiler::read::compile_select(&query_ir, None);
+    let response = post_query(&app, payload).await;
+    let rows = response["data"].as_array().unwrap();
 
-    let raw_json_string: String = conn.query_row(&sql, [], |row| row.get(0)).unwrap();
-    println!("SQL IS: {}", sql);
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&raw_json_string).unwrap();
+    assert_eq!(rows.len(), 2);
 
-    assert_eq!(rows.len(), 2, "UNION ALL failed to fetch from all concrete tables");
-
-    // Verify Heterogeneous Serialization & Symmetry
     let eng_row = rows.iter().find(|r| r["department"] == "Engineering").unwrap();
     assert_eq!(eng_row["department"], "Engineering");
-    assert!(eng_row.get("language").is_none(), "Concrete fields bled into abstract read!");
+    assert!(eng_row.get("language").is_none());
 
     let mgr_row = rows.iter().find(|r| r["department"] == "Sales").unwrap();
     assert_eq!(mgr_row["department"], "Sales");
@@ -77,14 +104,13 @@ async fn test_e2e_polymorphic_union_reads() {
 
     // Test Filtering
     let filtered_payload = serde_json::json!({
+        "action": "findMany",
+        "model": "Employee",
         "select": { "department": true },
         "where": { "department": "Engineering" }
     });
-    let mut filter_alias_counter = 0;
-    let filter_ir = api_layer::translator::hydrate_payload_to_ir(&ast, "Employee", &filtered_payload, &mut filter_alias_counter, 0).unwrap();
-    let filter_sql = query_compiler::read::compile_select(&filter_ir, None);
-    let filter_raw_json_string: String = conn.query_row(&filter_sql, [], |row| row.get(0)).unwrap();
-    let filter_rows: Vec<serde_json::Value> = serde_json::from_str(&filter_raw_json_string).unwrap();
+    let response = post_query(&app, filtered_payload).await;
+    let filter_rows = response["data"].as_array().unwrap();
     
     assert_eq!(filter_rows.len(), 1);
     assert_eq!(filter_rows[0]["department"], "Engineering");
@@ -94,7 +120,7 @@ async fn test_e2e_polymorphic_union_reads() {
 async fn test_e2e_nested_polymorphic_relations() {
     let dir = tempdir().unwrap();
     let workspace = dir.path();
-    engine_core::vfs::bootstrap_custom_vfs();
+    let _ = engine_core::vfs::bootstrap_custom_vfs();
     
     let caqui_bin = env!("CARGO_BIN_EXE_caqui");
 
@@ -102,16 +128,19 @@ async fn test_e2e_nested_polymorphic_relations() {
     git_init.arg("init").current_dir(workspace);
     run_cmd(git_init);
 
+    let mut caqui_init = Command::new(caqui_bin);
+    caqui_init.arg("init").current_dir(workspace);
+    run_cmd(caqui_init);
+
     let schema = r#"
         base Employee { teamId: String  }
         model Engineer extends Employee { language: String @@id(uuid) }
         model Manager extends Employee { directReports: Int @@id(uuid) }
         
         model Team {
-
             name: String
-            members: Employee[] @relation("TeamMembers")
-    @@id(uuid)
+            members: Employee[] @relation(fields: [teamId], references: [__id])
+            @@id(uuid)
         }
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -122,20 +151,26 @@ async fn test_e2e_nested_polymorphic_relations() {
 
     let db_path = workspace.join("app.db");
     let db_uri = format!("file:{}?vfs=git", db_path.display());
-    let conn = rusqlite::Connection::open_with_flags(
-        &db_uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    ).unwrap();
-
-    // Seed Data
-    conn.execute("INSERT INTO Team (__id, name) VALUES ('t1', 'Platform')", []).unwrap();
-    conn.execute("INSERT INTO Engineer (__id, teamId, language) VALUES ('e1', 't1', 'Rust')", []).unwrap();
-    conn.execute("INSERT INTO Manager (__id, teamId, directReports) VALUES ('m1', 't1', 5)", []).unwrap();
+    
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+    conn.interact(|db| {
+        db.execute("INSERT INTO Team (__id, name) VALUES ('t1', 'Platform')", []).unwrap();
+        db.execute("INSERT INTO Engineer (__id, teamId, language) VALUES ('e1', 't1', 'Rust')", []).unwrap();
+        db.execute("INSERT INTO Manager (__id, teamId, directReports) VALUES ('m1', 't1', 5)", []).unwrap();
+    }).await.unwrap();
 
     let ast = schema_parser::parser::parse_schema(schema).unwrap();
     let ast = schema_parser::validation::validate_schema(ast).unwrap();
+    let state = api_layer::state::EngineState { 
+        ast: Arc::new(ast), 
+        db_pool: pool 
+    };
+    let app = api_layer::router::build_dynamic_router(state);
 
     let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "Team",
         "select": { 
             "name": true,
             "members": {
@@ -145,21 +180,14 @@ async fn test_e2e_nested_polymorphic_relations() {
         }
     });
 
-    let mut alias_counter = 0;
-    let query_ir = api_layer::translator::hydrate_payload_to_ir(&ast, "Team", &payload, &mut alias_counter, 0).unwrap();
-    let sql = query_compiler::read::compile_select(&query_ir, None);
-    
-
-    let raw_json_string: String = conn.query_row(&sql, [], |row| row.get(0)).unwrap();
-    println!("SQL IS: {}", sql);
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&raw_json_string).unwrap();
+    let response = post_query(&app, payload).await;
+    let rows = response["data"].as_array().unwrap();
 
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["name"], "Platform");
     
     let members = rows[0]["members"].as_array().expect("members must be array");
     
-    // We only care that the query succeeded. Full polymorphic traversal for bases without explicit FKs might need a separate relation linking table, but we proved it compiles
     if members.len() > 0 {
         let engineer = members.iter().find(|m| m.get("language").is_some()).unwrap();
         assert_eq!(engineer["__id"], "e1");
@@ -175,7 +203,7 @@ async fn test_e2e_nested_polymorphic_relations() {
 async fn test_e2e_polymorphic_filtering() {
     let dir = tempdir().unwrap();
     let workspace = dir.path();
-    engine_core::vfs::bootstrap_custom_vfs();
+    let _ = engine_core::vfs::bootstrap_custom_vfs();
     
     let caqui_bin = env!("CARGO_BIN_EXE_caqui");
 
@@ -183,16 +211,19 @@ async fn test_e2e_polymorphic_filtering() {
     git_init.arg("init").current_dir(workspace);
     run_cmd(git_init);
 
+    let mut caqui_init = Command::new(caqui_bin);
+    caqui_init.arg("init").current_dir(workspace);
+    run_cmd(caqui_init);
+
     let schema = r#"
         base Content {  }
         model Article extends Content { title: String @@id(uuid) }
         model Video extends Content { duration: Int @@id(uuid) }
         
         model Comment {
-
             text: String
-            parent: Content
-    @@id(uuid)
+            parent: Content @relation(fields: [parent_type, parent_id], references: [__kind, __id])
+            @@id(uuid)
         }
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -204,28 +235,29 @@ async fn test_e2e_polymorphic_filtering() {
     let db_path = workspace.join("app.db");
     let db_uri = format!("file:{}?vfs=git", db_path.display());
     
-    let conn = rusqlite::Connection::open_with_flags(
-        &db_uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    ).unwrap();
-
-    conn.execute_batch("
-        BEGIN TRANSACTION;
-        INSERT INTO Article (__id, title) VALUES ('a1', 'Match');
-        INSERT INTO Article (__id, title) VALUES ('a2', 'No Match');
-        INSERT INTO Video (__id, duration) VALUES ('v1', 120);
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+    conn.interact(|db| {
+        db.execute("INSERT INTO Article (__id, title) VALUES ('a1', 'Match')", []).unwrap();
+        db.execute("INSERT INTO Article (__id, title) VALUES ('a2', 'No Match')", []).unwrap();
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('v1', 120)", []).unwrap();
         
-        INSERT INTO Comment (__id, text, parent_type, parent_id) VALUES ('c1', 'C1', 'Article', 'a1');
-        INSERT INTO Comment (__id, text, parent_type, parent_id) VALUES ('c2', 'C2', 'Article', 'a2');
-        INSERT INTO Comment (__id, text, parent_type, parent_id) VALUES ('c3', 'C3', 'Video', 'v1');
-        COMMIT;
-    ").unwrap();
+        db.execute("INSERT INTO Comment (__id, text, parent_type, parent_id) VALUES ('c1', 'C1', 'Article', 'a1')", []).unwrap();
+        db.execute("INSERT INTO Comment (__id, text, parent_type, parent_id) VALUES ('c2', 'C2', 'Article', 'a2')", []).unwrap();
+        db.execute("INSERT INTO Comment (__id, text, parent_type, parent_id) VALUES ('c3', 'C3', 'Video', 'v1')", []).unwrap();
+    }).await.unwrap();
 
     let ast = schema_parser::parser::parse_schema(schema).unwrap();
     let ast = schema_parser::validation::validate_schema(ast).unwrap();
+    let state = api_layer::state::EngineState { 
+        ast: Arc::new(ast), 
+        db_pool: pool 
+    };
+    let app = api_layer::router::build_dynamic_router(state);
 
     let payload = serde_json::json!({
         "action": "findMany",
+        "model": "Comment",
         "where": {
             "parent": {
                 "Article": {
@@ -239,13 +271,8 @@ async fn test_e2e_polymorphic_filtering() {
         }
     });
 
-    let mut alias_counter = 0;
-    let query_ir = api_layer::translator::hydrate_payload_to_ir(&ast, "Comment", &payload, &mut alias_counter, 0).unwrap();
-    let sql = query_compiler::read::compile_select(&query_ir, None);
-
-    let raw_json_string: String = conn.query_row(&sql, [], |row| row.get(0)).unwrap();
-    println!("FILTERING SQL IS: {}", sql);
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&raw_json_string).unwrap();
+    let response = post_query(&app, payload).await;
+    let rows = response["data"].as_array().unwrap();
 
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["__id"], "c1");
@@ -256,13 +283,17 @@ async fn test_e2e_polymorphic_filtering() {
 async fn test_e2e_diamond_inheritance() {
     let dir = tempdir().unwrap();
     let workspace = dir.path();
-    engine_core::vfs::bootstrap_custom_vfs();
+    let _ = engine_core::vfs::bootstrap_custom_vfs();
     
     let caqui_bin = env!("CARGO_BIN_EXE_caqui");
 
     let mut git_init = Command::new("git");
     git_init.arg("init").current_dir(workspace);
     run_cmd(git_init);
+
+    let mut caqui_init = Command::new(caqui_bin);
+    caqui_init.arg("init").current_dir(workspace);
+    run_cmd(caqui_init);
 
     let schema = r#"
         base Timestamped { createdAt: String  }
@@ -278,33 +309,33 @@ async fn test_e2e_diamond_inheritance() {
 
     let db_path = workspace.join("app.db");
     let db_uri = format!("file:{}?vfs=git", db_path.display());
-    let conn = rusqlite::Connection::open_with_flags(
-        &db_uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE | rusqlite::OpenFlags::SQLITE_OPEN_URI,
-    ).unwrap();
-
-    conn.execute("INSERT INTO Post (__id, createdAt, text) VALUES ('post_1', '2023-01-01', 'Deep Diamond')", []).unwrap();
+    
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+    conn.interact(|db| {
+        db.execute("INSERT INTO Post (__id, createdAt, text) VALUES ('post_1', '2023-01-01', 'Deep Diamond')", []).unwrap();
+    }).await.unwrap();
 
     let ast = schema_parser::parser::parse_schema(schema).unwrap();
     let ast = schema_parser::validation::validate_schema(ast).unwrap();
+    let state = api_layer::state::EngineState { 
+        ast: Arc::new(ast), 
+        db_pool: pool 
+    };
+    let app = api_layer::router::build_dynamic_router(state);
 
     // Query abstract Node
     let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "Node",
         "select": { "__id": true, "__Timestamped": true, "__Record": true, "__Node": true }
     });
 
-    
-    let mut alias_counter = 0;
-    let query_ir = api_layer::translator::hydrate_payload_to_ir(&ast, "Node", &payload, &mut alias_counter, 0).unwrap();
-    let sql = query_compiler::read::compile_select(&query_ir, None);
-
-    let raw_json_string: String = conn.query_row(&sql, [], |row| row.get(0)).unwrap();
-    println!("SQL IS: {}", sql);
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&raw_json_string).unwrap();
+    let response = post_query(&app, payload).await;
+    let rows = response["data"].as_array().unwrap();
 
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["__id"], "post_1");
-    // Prove it successfully inherited the deep transitive bases!
     assert_eq!(rows[0]["__Node"], true);
     assert_eq!(rows[0]["__Timestamped"], true);
     assert_eq!(rows[0]["__Record"], true);
