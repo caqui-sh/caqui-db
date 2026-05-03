@@ -249,15 +249,15 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
             
             triggers.push(PhysicalTrigger {
                 name: format!("{}_fts_ai", model.name),
-                sql: format!("CREATE TRIGGER IF NOT EXISTS {0}_fts_ai AFTER INSERT ON {0} BEGIN\n  INSERT INTO {0}_fts(rowid, {1}) VALUES (new.__id, {2});\nEND;", model.name, fields_csv, new_fields),
+                sql: format!("CREATE TRIGGER IF NOT EXISTS {0}_fts_ai AFTER INSERT ON {0} BEGIN\n  INSERT INTO {0}_fts(rowid, {1}) VALUES (new.rowid, {2});\nEND;", model.name, fields_csv, new_fields),
             });
             triggers.push(PhysicalTrigger {
                 name: format!("{}_fts_ad", model.name),
-                sql: format!("CREATE TRIGGER IF NOT EXISTS {0}_fts_ad AFTER DELETE ON {0} BEGIN\n  INSERT INTO {0}_fts({0}_fts, rowid, {1}) VALUES('delete', old.__id, {2});\nEND;", model.name, fields_csv, old_fields),
+                sql: format!("CREATE TRIGGER IF NOT EXISTS {0}_fts_ad AFTER DELETE ON {0} BEGIN\n  INSERT INTO {0}_fts({0}_fts, rowid, {1}) VALUES('delete', old.rowid, {2});\nEND;", model.name, fields_csv, old_fields),
             });
             triggers.push(PhysicalTrigger {
                 name: format!("{}_fts_au", model.name),
-                sql: format!("CREATE TRIGGER IF NOT EXISTS {0}_fts_au AFTER UPDATE ON {0} BEGIN\n  INSERT INTO {0}_fts({0}_fts, rowid, {1}) VALUES('delete', old.__id, {2});\n  INSERT INTO {0}_fts(rowid, {1}) VALUES (new.__id, {3});\nEND;", model.name, fields_csv, old_fields, new_fields),
+                sql: format!("CREATE TRIGGER IF NOT EXISTS {0}_fts_au AFTER UPDATE ON {0} BEGIN\n  INSERT INTO {0}_fts({0}_fts, rowid, {1}) VALUES('delete', old.rowid, {2});\n  INSERT INTO {0}_fts(rowid, {1}) VALUES (new.rowid, {3});\nEND;", model.name, fields_csv, old_fields, new_fields),
             });
         }
 

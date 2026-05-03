@@ -4,7 +4,11 @@ use crate::PhysicalTable;
 pub fn generate_sql(op: &MigrationOp) -> String {
     match op {
         MigrationOp::CreateTable { table } => {
-            generate_create_table_sql(&table.name, table) + ";\n"
+            let mut sql = generate_create_table_sql(&table.name, table) + ";\n";
+            if let Some(ref fields) = table.fts_fields {
+                sql.push_str(&format!("CREATE VIRTUAL TABLE IF NOT EXISTS {}_fts USING fts5({}, content='{}', content_rowid='rowid');\n", table.name, fields.join(", "), table.name));
+            }
+            sql
         },
         MigrationOp::DropTable { name } => {
             format!("DROP TABLE {};\n", name)
@@ -29,7 +33,7 @@ pub fn generate_sql(op: &MigrationOp) -> String {
 
             if let Some(ref fields) = table.fts_fields {
                 sql.push_str(&format!("DROP TABLE IF EXISTS {}_fts;\n", table.name));
-                sql.push_str(&format!("CREATE VIRTUAL TABLE IF NOT EXISTS {}_fts USING fts5({}, content='{}', content_rowid='__id');\n", table.name, fields.join(", "), table.name));
+                sql.push_str(&format!("CREATE VIRTUAL TABLE IF NOT EXISTS {}_fts USING fts5(__id UNINDEXED, {}, content='{}');\n", table.name, fields.join(", "), table.name));
                 sql.push_str(&format!("INSERT INTO {}_fts({}_fts) VALUES('rebuild');\n", table.name, table.name));
             }
 
