@@ -7,8 +7,8 @@ use rusqlite::Connection;
 
 fn format_type(field: &FieldNode) -> String {
     let base = match &field.field_type {
-        AstFieldType::Scalar(t) | AstFieldType::Relation(t) | AstFieldType::PolymorphicUnion(t) | AstFieldType::PolymorphicBase(t) => t.clone(),
-        AstFieldType::ScalarArray(t) | AstFieldType::RelationArray(t) | AstFieldType::PolymorphicUnionArray(t) | AstFieldType::PolymorphicBaseArray(t) => format!("{}[]", t),
+        AstFieldType::Scalar(t) | AstFieldType::Relation(t) | AstFieldType::PolymorphicUnion(t) | AstFieldType::PolymorphicBase(t) | AstFieldType::Enum(t) => t.clone(),
+        AstFieldType::ScalarArray(t) | AstFieldType::RelationArray(t) | AstFieldType::PolymorphicUnionArray(t) | AstFieldType::PolymorphicBaseArray(t) | AstFieldType::EnumArray(t) => format!("{}[]", t),
     };
     if field.is_optional {
         format!("{}?", base)
@@ -49,8 +49,8 @@ pub fn run_diff(old_ref: &str) {
     let old_schema_text = fs::read_to_string(&old_schema_path).unwrap_or_default();
     let new_schema_text = fs::read_to_string(current_dir.join("schema.cq")).unwrap_or_default();
     
-    let old_ast = parse_schema(&old_schema_text).unwrap_or_else(|_| SchemaAst { bases: std::collections::HashMap::new(), models: HashMap::new(), unions: HashMap::new() });
-    let new_ast = parse_schema(&new_schema_text).unwrap_or_else(|_| SchemaAst { bases: std::collections::HashMap::new(), models: HashMap::new(), unions: HashMap::new() });
+    let old_ast = parse_schema(&old_schema_text).unwrap_or_else(|_| SchemaAst { bases: std::collections::HashMap::new(), models: HashMap::new(), unions: HashMap::new(), enums: HashMap::new() });
+    let new_ast = parse_schema(&new_schema_text).unwrap_or_else(|_| SchemaAst { bases: std::collections::HashMap::new(), models: HashMap::new(), unions: HashMap::new(), enums: HashMap::new() });
     
     let mut diff_report: HashMap<String, ModelDiff> = HashMap::new();
     
@@ -376,5 +376,23 @@ mod tests {
             attributes: vec![],
         };
         assert_eq!(format_type(&f5), "SearchResult[]");
+
+        // Enum
+        let f6 = FieldNode {
+            name: "role".to_string(),
+            field_type: AstFieldType::Enum("Role".to_string()),
+            is_optional: false,
+            attributes: vec![],
+        };
+        assert_eq!(format_type(&f6), "Role");
+
+        // Enum Array
+        let f7 = FieldNode {
+            name: "roles".to_string(),
+            field_type: AstFieldType::EnumArray("Role".to_string()),
+            is_optional: true,
+            attributes: vec![],
+        };
+        assert_eq!(format_type(&f7), "Role[]?");
     }
 }
