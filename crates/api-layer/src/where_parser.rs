@@ -333,3 +333,41 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
         Ok(WhereClause::And(clauses))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_val_to_string_float() {
+        assert_eq!(val_to_string(&json!(10.5), Some("Float")).unwrap(), "10.5");
+        assert_eq!(val_to_string(&json!(10), Some("Float")).unwrap(), "10");
+        assert!(val_to_string(&json!("10.5"), Some("Float")).is_err());
+    }
+
+    #[test]
+    fn test_val_to_string_datetime() {
+        assert_eq!(
+            val_to_string(&json!("2025-10-10T12:00:00-04:00"), Some("DateTime")).unwrap(),
+            "2025-10-10T16:00:00.000Z"
+        );
+        assert!(val_to_string(&json!("Next Tuesday"), Some("DateTime")).is_err());
+    }
+
+    #[test]
+    fn test_parse_where_condition_datetime() {
+        let condition = parse_where_condition(&json!({ "gte": "2025-10-10T12:00:00-04:00" }), Some("DateTime")).unwrap();
+        assert_eq!(condition, WhereCondition::Gte("2025-10-10T16:00:00.000Z".to_string()));
+
+        let err = parse_where_condition(&json!({ "gte": "Next Tuesday" }), Some("DateTime"));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_val_to_string_fallback() {
+        assert_eq!(val_to_string(&json!("Alice"), None).unwrap(), "Alice");
+        assert_eq!(val_to_string(&json!(true), None).unwrap(), "1");
+        assert_eq!(val_to_string(&json!(null), None).unwrap(), "");
+    }
+}

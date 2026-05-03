@@ -1333,6 +1333,40 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_and_normalize_scalar_float() {
+        assert_eq!(
+            validate_and_normalize_scalar("val", "Float", &json!(10.5)).unwrap(),
+            json!(10.5)
+        );
+        assert_eq!(
+            validate_and_normalize_scalar("val", "Float", &json!(10)).unwrap(),
+            json!(10)
+        );
+        assert!(validate_and_normalize_scalar("val", "Float", &json!("10.5")).is_err());
+    }
+
+    #[test]
+    fn test_validate_and_normalize_scalar_datetime() {
+        assert_eq!(
+            validate_and_normalize_scalar("date", "DateTime", &json!("2025-01-01T00:00:00Z")).unwrap(),
+            json!("2025-01-01T00:00:00.000Z")
+        );
+        assert_eq!(
+            validate_and_normalize_scalar("date", "DateTime", &json!("2025-10-10T12:00:00-04:00")).unwrap(),
+            json!("2025-10-10T16:00:00.000Z")
+        );
+        assert!(validate_and_normalize_scalar("date", "DateTime", &json!("Next Tuesday")).is_err());
+    }
+
+    #[test]
+    fn test_validate_and_normalize_scalar_fallback() {
+        assert_eq!(
+            validate_and_normalize_scalar("name", "String", &json!("Alice")).unwrap(),
+            json!("Alice")
+        );
+    }
+
+    #[test]
     fn test_hydrate_create() {
         let ast = mock_ast();
         let payload = json!({
