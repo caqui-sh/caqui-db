@@ -393,6 +393,36 @@ async fn test_advanced_string_filtering() {
     
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // 8. Case-Insensitivity (SQLite default LIKE behavior)
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "User",
+        "where": { "name": { "startsWith": "app" } },
+        "select": { "name": true }
+    });
+    let response = post_query(&app, payload).await;
+    let items = response["data"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+
+    // 9. Compound String Filtering
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "User",
+        "where": {
+            "OR": [
+                { "name": { "startsWith": "App" } },
+                { "name": { "endsWith": "le" } }
+            ]
+        },
+        "select": { "name": true }
+    });
+    let response = post_query(&app, payload).await;
+    let items = response["data"].as_array().unwrap();
+    // App -> Apple, Application, Apple_Pie
+    // le -> Apple, Snapple
+    // Union -> Apple, Application, Apple_Pie, Snapple -> 4
+    assert_eq!(items.len(), 4);
 }
 
 #[tokio::test]
@@ -458,4 +488,41 @@ async fn test_fulltext_search() {
     
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["title"], "Rust Programming");
+
+    // 2. Multi-column match (search in title)
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "Document",
+        "search": "Rust",
+        "select": { "title": true }
+    });
+    let response = post_query(&app_fts, payload).await;
+    let items = response["data"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["title"], "Rust Programming");
+
+    // 3. FTS5 Boolean OR syntax
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "Document",
+        "search": "quick OR lazy",
+        "select": { "title": true }
+    });
+    let response = post_query(&app_fts, payload).await;
+    let items = response["data"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    let titles: Vec<&str> = items.iter().map(|i| i["title"].as_str().unwrap()).collect();
+    assert!(titles.contains(&"Rust Programming"));
+    assert!(titles.contains(&"Python Guide"));
+
+    // 4. Missing Term
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "Document",
+        "search": "missing_word",
+        "select": { "title": true }
+    });
+    let response = post_query(&app_fts, payload).await;
+    let items = response["data"].as_array().unwrap();
+    assert_eq!(items.len(), 0);
 }
