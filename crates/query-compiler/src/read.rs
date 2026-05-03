@@ -396,6 +396,7 @@ mod tests {
     #[test]
     fn test_compile_basic_select() {
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
@@ -415,6 +416,7 @@ mod tests {
     #[test]
     fn test_compile_relation_select() {
         let child_query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Post".to_string()),
             alias: "t1".to_string(),
@@ -429,6 +431,7 @@ mod tests {
         };
         
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
@@ -457,6 +460,7 @@ mod tests {
     #[test]
     fn test_compile_polymorphic_union() {
         let article_fragment = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
@@ -474,6 +478,7 @@ mod tests {
         fragments.insert("Article".to_string(), article_fragment);
         
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
@@ -500,6 +505,7 @@ mod tests {
     #[test]
     fn test_compile_deep_recursive_relation() {
         let comments_query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Comment".to_string()),
             alias: "t2".to_string(),
@@ -514,6 +520,7 @@ mod tests {
         };
         
         let posts_query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Post".to_string()),
             alias: "t1".to_string(),
@@ -534,6 +541,7 @@ mod tests {
         };
         
         let user_query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
@@ -563,6 +571,7 @@ mod tests {
     #[test]
     fn test_compile_scalar_array() {
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
@@ -582,6 +591,7 @@ mod tests {
     #[test]
     fn test_compile_single_relation() {
         let child_query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Profile".to_string()),
             alias: "t1".to_string(),
@@ -595,6 +605,7 @@ mod tests {
         };
         
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
@@ -623,6 +634,7 @@ mod tests {
     #[test]
     fn test_compile_multi_fragment_polymorphic_union() {
         let article_fragment = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
@@ -631,6 +643,7 @@ mod tests {
             filters: None, limit: None, offset: None,
         };
         let video_fragment = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Video".to_string()),
             alias: "t2".to_string(),
@@ -645,6 +658,7 @@ mod tests {
         fragments.insert("Article".to_string(), article_fragment);
         
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
@@ -672,6 +686,7 @@ mod tests {
     #[test]
     fn test_compile_pagination_and_filtering() {
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
@@ -720,6 +735,7 @@ mod tests {
     #[test]
     fn test_compile_relation_with_pagination_and_filtering() {
         let child_query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Post".to_string()),
             alias: "t1".to_string(),
@@ -731,6 +747,7 @@ mod tests {
         };
         
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
@@ -760,6 +777,7 @@ mod tests {
     #[test]
     fn test_compile_polymorphic_union_with_filtering() {
         let article_fragment = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
@@ -773,6 +791,7 @@ mod tests {
         fragments.insert("Article".to_string(), article_fragment);
         
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
@@ -800,6 +819,7 @@ mod tests {
     #[test]
     fn test_compile_polymorphic_base_singular() {
         let article_fragment = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
@@ -809,6 +829,7 @@ mod tests {
         };
 
         let video_fragment = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Video".to_string()),
             alias: "t2".to_string(),
@@ -822,6 +843,7 @@ mod tests {
         fragments.insert("Video".to_string(), video_fragment);
 
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Comment".to_string()),
             alias: "t0".to_string(),
@@ -848,6 +870,7 @@ mod tests {
     #[test]
     fn test_compile_polymorphic_base_array() {
         let article_fragment = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
@@ -860,6 +883,7 @@ mod tests {
         fragments.insert("Article".to_string(), article_fragment);
 
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
@@ -887,6 +911,7 @@ mod tests {
     #[test]
     fn test_compile_polymorphic_union_array() {
         let article_fragment = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Article".to_string()),
             alias: "t1".to_string(),
@@ -901,6 +926,7 @@ mod tests {
         fragments.insert("Article".to_string(), article_fragment);
         
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
@@ -927,6 +953,7 @@ mod tests {
     #[test]
     fn test_compile_multiple_cte_accumulation() {
         let post_query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Post".to_string()),
             alias: "t1".to_string(),
@@ -938,6 +965,7 @@ mod tests {
         };
 
         let video_query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Video".to_string()),
             alias: "t2".to_string(),
@@ -949,6 +977,7 @@ mod tests {
         };
 
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
@@ -987,6 +1016,7 @@ mod tests {
     fn test_compile_polymorphic_array_pagination() {
         let mut branches = Vec::new();
         branches.push(QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Post".to_string()),
             alias: "t1".to_string(),
@@ -995,6 +1025,7 @@ mod tests {
             filters: None, limit: None, offset: None,
         });
         branches.push(QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Video".to_string()),
             alias: "t2".to_string(),
@@ -1004,6 +1035,7 @@ mod tests {
         });
 
         let child_query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Polymorphic {
                 alias: "poly".to_string(),
@@ -1018,6 +1050,7 @@ mod tests {
         };
 
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
@@ -1044,6 +1077,7 @@ mod tests {
     #[test]
     fn test_compile_window_function_order_by() {
         let child_query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Post".to_string()),
             alias: "t1".to_string(),
@@ -1055,6 +1089,7 @@ mod tests {
         };
 
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("User".to_string()),
             alias: "t0".to_string(),
@@ -1080,6 +1115,7 @@ mod tests {
     #[test]
     fn test_compile_inverse_partition_key() {
         let child_query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Tag".to_string()),
             alias: "t1".to_string(),
@@ -1091,6 +1127,7 @@ mod tests {
         };
 
         let query = QueryNode {
+            search: None,
             primary_key: "__id".to_string(),
             source: QueryIrSource::Table("Post".to_string()),
             alias: "t0".to_string(),
@@ -1111,5 +1148,22 @@ mod tests {
 
         let sql = compile_select(&query, None, &mut CTEContext::new());
         assert!(sql.contains("ROW_NUMBER() OVER (PARTITION BY __id) AS caqui_rn"));
+    }
+
+    #[test]
+    fn test_compile_where_clause_string_filters() {
+        let malicious_str = "100%_juice\\'s";
+        
+        let c_contains = WhereClause::Field("name".to_string(), WhereCondition::Contains(malicious_str.to_string()));
+        let sql_contains = compile_where_clause(&c_contains, "t0");
+        assert_eq!(sql_contains, "t0.name LIKE '%100\\%\\_juice\\\\''s%' ESCAPE '\\'");
+        
+        let c_starts = WhereClause::Field("name".to_string(), WhereCondition::StartsWith(malicious_str.to_string()));
+        let sql_starts = compile_where_clause(&c_starts, "t0");
+        assert_eq!(sql_starts, "t0.name LIKE '100\\%\\_juice\\\\''s%' ESCAPE '\\'");
+        
+        let c_ends = WhereClause::Field("name".to_string(), WhereCondition::EndsWith(malicious_str.to_string()));
+        let sql_ends = compile_where_clause(&c_ends, "t0");
+        assert_eq!(sql_ends, "t0.name LIKE '%100\\%\\_juice\\\\''s' ESCAPE '\\'");
     }
 }

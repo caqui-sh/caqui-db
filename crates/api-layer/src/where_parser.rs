@@ -74,6 +74,18 @@ pub fn parse_where_condition(ast: &SchemaAst, val: &Value, type_name: Option<&st
         if let Some(lte) = obj.get("lte") {
             return Ok(WhereCondition::Lte(val_to_string(ast, lte, type_name, is_enum)?));
         }
+        if let Some(contains) = obj.get("contains") {
+            if type_name != Some("String") { return Err("Validation Error: 'contains' operator is only valid on String fields.".to_string()); }
+            return Ok(WhereCondition::Contains(val_to_string(ast, contains, type_name, is_enum)?));
+        }
+        if let Some(starts_with) = obj.get("startsWith") {
+            if type_name != Some("String") { return Err("Validation Error: 'startsWith' operator is only valid on String fields.".to_string()); }
+            return Ok(WhereCondition::StartsWith(val_to_string(ast, starts_with, type_name, is_enum)?));
+        }
+        if let Some(ends_with) = obj.get("endsWith") {
+            if type_name != Some("String") { return Err("Validation Error: 'endsWith' operator is only valid on String fields.".to_string()); }
+            return Ok(WhereCondition::EndsWith(val_to_string(ast, ends_with, type_name, is_enum)?));
+        }
         if let Some(in_vals) = obj.get("in").and_then(|v| v.as_array()) {
             let vals: Result<Vec<String>, String> = in_vals.iter()
                 .filter(|v| !v.is_null())
@@ -416,5 +428,32 @@ mod tests {
         assert_eq!(val_to_string(&ast, &json!("Alice"), None, false).unwrap(), "Alice");
         assert_eq!(val_to_string(&ast, &json!(true), None, false).unwrap(), "1");
         assert_eq!(val_to_string(&ast, &json!(null), None, false).unwrap(), "");
+    }
+
+    #[test]
+    fn test_parse_where_condition_string_filters() {
+        let ast = mock_ast();
+        let cond1 = parse_where_condition(&ast, &json!({ "contains": "search_term" }), Some("String"), false).unwrap();
+        assert_eq!(cond1, WhereCondition::Contains("search_term".to_string()));
+
+        let cond2 = parse_where_condition(&ast, &json!({ "startsWith": "prefix" }), Some("String"), false).unwrap();
+        assert_eq!(cond2, WhereCondition::StartsWith("prefix".to_string()));
+
+        let cond3 = parse_where_condition(&ast, &json!({ "endsWith": "suffix" }), Some("String"), false).unwrap();
+        assert_eq!(cond3, WhereCondition::EndsWith("suffix".to_string()));
+    }
+
+    #[test]
+    fn test_parse_where_condition_string_filters_type_rejection() {
+        let ast = mock_ast();
+        
+        let err1 = parse_where_condition(&ast, &json!({ "contains": "100" }), Some("Int"), false).unwrap_err();
+        assert!(err1.contains("only valid on String fields"));
+
+        let err2 = parse_where_condition(&ast, &json!({ "startsWith": "100" }), Some("Float"), false).unwrap_err();
+        assert!(err2.contains("only valid on String fields"));
+
+        let err3 = parse_where_condition(&ast, &json!({ "endsWith": "2025" }), Some("DateTime"), false).unwrap_err();
+        assert!(err3.contains("only valid on String fields"));
     }
 }

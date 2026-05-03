@@ -1521,4 +1521,34 @@ mod tests {
             panic!("Expected Query step");
         }
     }
+
+    #[test]
+    fn test_compile_parameterized_where_string_filters() {
+        use query_compiler::ir::{WhereClause, WhereCondition};
+        
+        let c_contains = WhereClause::Field("name".to_string(), WhereCondition::Contains("100%_juice\\'s".to_string()));
+        let mut idx = 1;
+        let (sql_c, params_c) = compile_parameterized_where(&c_contains, "t0", &mut idx);
+        assert_eq!(sql_c, "t0.name LIKE ?1 ESCAPE '\\'");
+        assert_eq!(params_c.len(), 1);
+        if let Parameter::Literal(serde_json::Value::String(s)) = &params_c[0] {
+            assert_eq!(s, "%100\\%\\_juice\\\\'s%");
+        } else { panic!("Expected string parameter"); }
+
+        let c_starts = WhereClause::Field("name".to_string(), WhereCondition::StartsWith("100%_juice\\'s".to_string()));
+        let mut idx = 1;
+        let (sql_s, params_s) = compile_parameterized_where(&c_starts, "t0", &mut idx);
+        assert_eq!(sql_s, "t0.name LIKE ?1 ESCAPE '\\'");
+        if let Parameter::Literal(serde_json::Value::String(s)) = &params_s[0] {
+            assert_eq!(s, "100\\%\\_juice\\\\'s%");
+        } else { panic!("Expected string parameter"); }
+
+        let c_ends = WhereClause::Field("name".to_string(), WhereCondition::EndsWith("100%_juice\\'s".to_string()));
+        let mut idx = 1;
+        let (sql_e, params_e) = compile_parameterized_where(&c_ends, "t0", &mut idx);
+        assert_eq!(sql_e, "t0.name LIKE ?1 ESCAPE '\\'");
+        if let Parameter::Literal(serde_json::Value::String(s)) = &params_e[0] {
+            assert_eq!(s, "%100\\%\\_juice\\\\'s");
+        } else { panic!("Expected string parameter"); }
+    }
 }
