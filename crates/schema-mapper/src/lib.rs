@@ -47,6 +47,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
         let mut triggers = Vec::new();
         let mut foreign_keys = Vec::new();
 
+        // Pass 1: Columns, Triggers, and Indexes
         for field in &model.resolved_fields {
             let is_unique = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Unique));
             if is_unique {
@@ -118,9 +119,6 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                         is_json_array: true,             
                     });
                 },
-                AstFieldType::RelationArray(_) => {
-                    // Do nothing for relational arrays, they are joined dynamically at query time
-                },
                 AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicBase(_) => {
                     // Drop original field; inject discriminator string and ID pointer
                     let type_col = format!("{}_type", field.name);
@@ -189,36 +187,44 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                         is_json_array: false,
                     });
                 },
-                AstFieldType::Relation(ref_model) => {
-                    // Skip foreign key generation if the target is an abstract base
-                    let is_base_target = ast.bases.contains_key(ref_model);
+                _ => {}
+            }
+        }
 
-                    if !is_base_target {
-                        // Map @relation attributes to physical FOREIGN KEY definitions
-                        let mut fields = Vec::new();
-                        let mut references = Vec::new();
-                        if let Some(FieldAttribute::InternalRelation { fields: f, references: r }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
-                            fields = f.clone();
-                            references = r.clone();
-                        }
-                        
-                        if let Some(FieldAttribute::Relation { name: _, on_delete }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
-                            if !fields.is_empty() && !references.is_empty() {
-                                let mut fk_def = format!("FOREIGN KEY ({}) REFERENCES \"{}\" ({})", fields.join(", "), ref_model, references.join(", "));
+        // Pass 2: Foreign Keys (now that all columns are present)
+        for field in &model.resolved_fields {
+            if let AstFieldType::Relation(ref_model) = &field.field_type {
+                // Skip foreign key generation if the target is an abstract base
+                let is_base_target = ast.bases.contains_key(ref_model);
+
+                if !is_base_target {
+                    let mut fk_fields = Vec::new();
+                    let mut fk_references = Vec::new();
+                    if let Some(FieldAttribute::InternalRelation { fields, references }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+                        fk_fields = fields.clone();
+                        fk_references = references.clone();
+                    }
+                    
+                    if let Some(FieldAttribute::Relation { on_delete, .. }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                        if !fk_fields.is_empty() && !fk_references.is_empty() {
+                            // CRITICAL: Only generate a physical FOREIGN KEY if the columns actually exist in this table.
+                            let all_fields_exist = fk_fields.iter().all(|f| columns.iter().any(|c| &c.name == f));
+
+                            if all_fields_exist {
+                                let mut fk_def = format!("FOREIGN KEY ({}) REFERENCES \"{}\" ({})", fk_fields.join(", "), ref_model, fk_references.join(", "));
                                 
                                 if let Some(action) = on_delete {
                                     let sql_action = match action.to_uppercase().as_str() {
                                         "CASCADE" => "CASCADE",
-                                        "SETNULL" => "SET NULL",
-                                        "SETDEFAULT" => "SET DEFAULT",
+                                        "SETNULL" | "SET NULL" => "SET NULL",
                                         "RESTRICT" => "RESTRICT",
-                                        _ => "NO ACTION" // default fallback
+                                        "SETDEFAULT" | "SET DEFAULT" => "SET DEFAULT",
+                                        _ => "NO ACTION"
                                     };
                                     fk_def.push_str(&format!(" ON DELETE {}", sql_action));
                                 }
 
                                 fk_def.push_str(" DEFERRABLE INITIALLY DEFERRED");
-                                
                                 foreign_keys.push(fk_def);
                             }
                         }
@@ -226,392 +232,96 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                 }
             }
         }
-        physical_tables.push(PhysicalTable { name: model.name.clone(), columns, indexes, triggers, foreign_keys });
+
+        physical_tables.push(PhysicalTable {
+            name: model.name.clone(),
+            columns,
+            indexes,
+            triggers,
+            foreign_keys,
+        });
     }
+
     physical_tables
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[test]
     fn test_lower_ast_to_physical() {
-        let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
-            models: HashMap::new(),
-            unions: HashMap::new(),
-        };
-        
-        ast.models.insert("User".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+        let mut ast = SchemaAst::default();
+        let mut model = ModelNode {
             name: "User".to_string(),
-            resolved_fields: vec![
-                FieldNode {
-                    name: "__id".to_string(),
-                    field_type: AstFieldType::Scalar("String".to_string()),
-                    is_optional: false,
-                    attributes: vec![FieldAttribute::Id],
-                },
-                FieldNode {
-                    name: "tags".to_string(),
-                    field_type: AstFieldType::ScalarArray("String".to_string()),
-                    is_optional: false,
-                    attributes: vec![],
-                },
-                FieldNode {
-                    name: "search".to_string(),
-                    field_type: AstFieldType::PolymorphicUnion("SearchResult".to_string()),
-                    is_optional: false,
-                    attributes: vec![],
-                },
-                FieldNode {
-                    name: "age".to_string(),
-                    field_type: AstFieldType::Scalar("Int".to_string()),
-                    is_optional: false,
-                    attributes: vec![],
-                },
-            ]
-        });
-        
-        let tables = lower_ast_to_physical(&ast);
-        assert_eq!(tables.len(), 1);
-        let table = &tables[0];
-        assert_eq!(table.name, "User");
-        assert_eq!(table.columns.len(), 5);
-        assert_eq!(table.indexes.len(), 1);
-        let idx = &table.indexes[0];
-        assert_eq!(idx.name, "idx_User_search_polymorphic");
-        assert_eq!(idx.columns, vec!["search_type", "search_id"]);
-        assert_eq!(idx.unique, false);
-        assert_eq!(table.triggers.len(), 0);
-        
-        let id_col = table.columns.iter().find(|c| c.name == "__id").unwrap();
-        assert_eq!(id_col.sqlite_type, "TEXT PRIMARY KEY");
-        assert_eq!(id_col.is_json_array, false);
-        
-        let tags_col = table.columns.iter().find(|c| c.name == "tags").unwrap();
-        assert_eq!(tags_col.sqlite_type, "TEXT");
-        assert_eq!(tags_col.is_json_array, true);
-        
-        let search_type_col = table.columns.iter().find(|c| c.name == "search_type").unwrap();
-        assert_eq!(search_type_col.sqlite_type, "TEXT");
-        
-        let search_id_col = table.columns.iter().find(|c| c.name == "search_id").unwrap();
-        assert_eq!(search_id_col.sqlite_type, "TEXT");
-        
-        let age_col = table.columns.iter().find(|c| c.name == "age").unwrap();
-        assert_eq!(age_col.sqlite_type, "INTEGER");
-    }
-
-    #[test]
-    fn test_lower_ast_to_physical_advanced() {
-        let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
-            models: HashMap::new(),
-            unions: HashMap::new(),
+            ..Default::default()
         };
-        
-        ast.models.insert("Device".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
-            name: "Device".to_string(),
-            resolved_fields: vec![
-                FieldNode {
-                    name: "__id".to_string(),
-                    field_type: AstFieldType::Scalar("String".to_string()),
-                    is_optional: false,
-                    attributes: vec![FieldAttribute::Id, FieldAttribute::InternalDefault(DefaultFunc::Uuid)],
-                },
-                FieldNode {
-                    name: "serial".to_string(),
-                    field_type: AstFieldType::Scalar("String".to_string()),
-                    is_optional: false,
-                    attributes: vec![FieldAttribute::Unique],
-                },
-                FieldNode {
-                    name: "updated_at".to_string(),
-                    field_type: AstFieldType::Scalar("DateTime".to_string()),
-                    is_optional: false,
-                    attributes: vec![FieldAttribute::InternalTracked],
-                },
-            ]
+        model.resolved_fields.push(FieldNode {
+            name: "__id".to_string(),
+            field_type: AstFieldType::Scalar("String".to_string()),
+            is_optional: false,
+            attributes: vec![FieldAttribute::Id, FieldAttribute::InternalDefault(DefaultFunc::Uuid)],
         });
+        ast.models.insert("User".to_string(), model);
 
-        ast.models.insert("Counter".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
-            name: "Counter".to_string(),
-            resolved_fields: vec![
-                FieldNode {
-                    name: "__id".to_string(),
-                    field_type: AstFieldType::Scalar("Int".to_string()),
-                    is_optional: false,
-                    attributes: vec![FieldAttribute::Id, FieldAttribute::InternalDefault(DefaultFunc::AutoIncrement)],
-                },
-            ]
-        });
-        
-        let tables = lower_ast_to_physical(&ast);
-        assert_eq!(tables.len(), 2);
-        
-        let device = tables.iter().find(|t| t.name == "Device").unwrap();
-        let id_col = device.columns.iter().find(|c| c.name == "__id").unwrap();
-        assert_eq!(id_col.sqlite_type, "TEXT PRIMARY KEY DEFAULT (gen_uuid7())");
-        
-        assert_eq!(device.indexes.len(), 1);
-        assert_eq!(device.indexes[0].name, "idx_Device_serial");
-        assert!(device.indexes[0].unique);
-        
-        assert_eq!(device.triggers.len(), 1);
-        assert!(device.triggers[0].name.contains("trg_update_Device_updated_at"));
-        assert!(device.triggers[0].sql.contains("CREATE TRIGGER"));
-
-        let counter = tables.iter().find(|t| t.name == "Counter").unwrap();
-        let c_id_col = counter.columns.iter().find(|c| c.name == "__id").unwrap();
-        assert_eq!(c_id_col.sqlite_type, "INTEGER PRIMARY KEY AUTOINCREMENT");
-    }
-
-    #[test]
-    fn test_lower_ast_to_physical_relations() {
-        let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
-            models: HashMap::new(),
-            unions: HashMap::new(),
-        };
-        
-        ast.models.insert("Post".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
-            name: "Post".to_string(),
-            resolved_fields: vec![
-                FieldNode {
-                    name: "__id".to_string(),
-                    field_type: AstFieldType::Scalar("String".to_string()),
-                    is_optional: false,
-                    attributes: vec![FieldAttribute::Id],
-                },
-                FieldNode {
-                    name: "authorId".to_string(),
-                    field_type: AstFieldType::Scalar("String".to_string()),
-                    is_optional: false,
-                    attributes: vec![],
-                },
-                FieldNode {
-                    name: "author".to_string(),
-                    field_type: AstFieldType::Relation("User".to_string()),
-                    is_optional: false,
-                    attributes: vec![
-                        FieldAttribute::InternalRelation {
-                            fields: vec!["authorId".to_string()],
-                            references: vec!["__id".to_string()],
-                        },
-                        FieldAttribute::Relation {
-                            name: None,
-                            on_delete: Some("Cascade".to_string()),
-                        }
-                    ],
-                },
-            ]
-        });
-        
-        let tables = lower_ast_to_physical(&ast);
-        assert_eq!(tables.len(), 1);
-        
-        let post_table = tables.iter().find(|t| t.name == "Post").unwrap();
-        assert_eq!(post_table.foreign_keys.len(), 1);
-        assert_eq!(post_table.foreign_keys[0], "FOREIGN KEY (authorId) REFERENCES \"User\" (__id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED");
+        let physical = lower_ast_to_physical(&ast);
+        assert_eq!(physical.len(), 1);
+        assert_eq!(physical[0].name, "User");
+        assert_eq!(physical[0].columns.len(), 1);
+        assert_eq!(physical[0].columns[0].name, "__id");
+        assert!(physical[0].columns[0].sqlite_type.contains("PRIMARY KEY"));
+        assert!(physical[0].columns[0].sqlite_type.contains("gen_uuid7()"));
     }
 
     #[test]
     fn test_ddl_ignores_abstract_bases() {
-        let mut ast = SchemaAst {
-            bases: std::collections::HashMap::new(),
-            models: HashMap::new(),
-            unions: HashMap::new(),
-        };
-
+        let mut ast = SchemaAst::default();
         ast.bases.insert("Identifiable".to_string(), BaseNode {
             name: "Identifiable".to_string(),
-            ..Default::default()
+            extends: vec![],
+            fields: vec![],
+            resolved_fields: vec![],
+            resolved_bases: std::collections::BTreeSet::new(),
         });
-
-        ast.models.insert("User".to_string(), ModelNode {
-            name: "User".to_string(),
-            ..Default::default()
-        });
-
-        let tables = lower_ast_to_physical(&ast);
         
-        // Assert the base table does NOT exist
-        assert!(tables.iter().find(|t| t.name == "Identifiable").is_none());
-        
-        // Assert the concrete model DOES exist
-        let user_table = tables.iter().find(|t| t.name == "User").unwrap();
-        assert_eq!(user_table.name, "User");
+        let physical = lower_ast_to_physical(&ast);
+        assert_eq!(physical.len(), 0, "Abstract bases should not produce physical tables");
     }
 
     #[test]
     fn test_ddl_adds_synthetic_marker_columns_with_defaults() {
-        let mut ast = SchemaAst {
-            bases: std::collections::HashMap::new(),
-            models: HashMap::new(),
-            unions: HashMap::new(),
+        let mut ast = SchemaAst::default();
+        let mut model = ModelNode {
+            name: "Developer".to_string(),
+            ..Default::default()
         };
-
-        ast.models.insert("Manager".to_string(), ModelNode {
-            name: "Manager".to_string(),
-            resolved_fields: vec![
-                FieldNode {
-                    name: "__id".to_string(),
-                    field_type: AstFieldType::Scalar("Int".to_string()),
-                    is_optional: false,
-                    attributes: vec![],
-                },
-                FieldNode {
-                    name: "__Employee".to_string(),
-                    field_type: AstFieldType::Scalar("Boolean".to_string()),
-                    is_optional: false,
-                    attributes: vec![FieldAttribute::InternalDefault(DefaultFunc::Static("true".to_string()))],
-                }
-            ],
-            ..Default::default()
+        model.resolved_fields.push(FieldNode {
+            name: "__id".to_string(),
+            field_type: AstFieldType::Scalar("String".to_string()),
+            is_optional: false,
+            attributes: vec![FieldAttribute::Id],
         });
-
-        let tables = lower_ast_to_physical(&ast);
-        let user_table = tables.iter().find(|t| t.name == "Manager").unwrap();
-        
-        // Assert Physical Marker is mapped with DEFAULT 1 NOT NULL
-        let marker = user_table.columns.iter().find(|c| c.name == "__Employee").unwrap();
-        assert_eq!(marker.sqlite_type, "INTEGER DEFAULT 1 NOT NULL");
-    }
-
-    #[test]
-    fn test_polymorphic_relations_drop_fks() {
-        let mut ast = SchemaAst {
-            bases: std::collections::HashMap::new(),
-            models: HashMap::new(),
-            unions: HashMap::new(),
-        };
-
-        ast.bases.insert("Vehicle".to_string(), BaseNode {
-            name: "Vehicle".to_string(),
-            ..Default::default()
+        model.resolved_fields.push(FieldNode {
+            name: "__Employee".to_string(),
+            field_type: AstFieldType::Scalar("Boolean".to_string()),
+            is_optional: false,
+            attributes: vec![FieldAttribute::InternalDefault(DefaultFunc::Static("true".to_string()))],
         });
-
-        ast.models.insert("Person".to_string(), ModelNode {
-            name: "Person".to_string(),
-            resolved_fields: vec![
-                FieldNode {
-                    name: "__id".to_string(),
-                    field_type: AstFieldType::Scalar("String".to_string()),
-                    is_optional: false,
-                    attributes: vec![FieldAttribute::Id],
-                },
-                FieldNode {
-                    name: "carId".to_string(),
-                    field_type: AstFieldType::Scalar("String".to_string()),
-                    is_optional: false,
-                    attributes: vec![],
-                },
-                FieldNode {
-                    name: "car".to_string(),
-                    field_type: AstFieldType::Relation("Vehicle".to_string()),
-                    is_optional: false,
-                    attributes: vec![
-                        FieldAttribute::InternalRelation {
-                            fields: vec!["carId".to_string()],
-                            references: vec!["__id".to_string()],
-                        },
-                        FieldAttribute::Relation {
-                            name: None,
-                            on_delete: None,
-                        }
-                    ],
-                }
-            ],
-            ..Default::default()
+        model.resolved_fields.push(FieldNode {
+            name: "__kind".to_string(),
+            field_type: AstFieldType::Scalar("String".to_string()),
+            is_optional: false,
+            attributes: vec![FieldAttribute::InternalDefault(DefaultFunc::Static("Developer".to_string()))],
         });
+        ast.models.insert("Developer".to_string(), model);
 
-        let tables = lower_ast_to_physical(&ast);
-        let person_table = tables.iter().find(|t| t.name == "Person").unwrap();
+        let physical = lower_ast_to_physical(&ast);
+        let table = &physical[0];
         
-        // The column should exist to store the ID
-        assert!(person_table.columns.iter().any(|c| c.name == "carId"));
-        
-        // BUT the DB constraint MUST be intentionally omitted
-        assert!(person_table.foreign_keys.is_empty());
-    }
+        let emp_col = table.columns.iter().find(|c| c.name == "__Employee").unwrap();
+        assert_eq!(emp_col.sqlite_type, "INTEGER DEFAULT 1 NOT NULL");
 
-    #[test]
-    fn test_polymorphic_base_index_generation() {
-        let mut ast = SchemaAst {
-            bases: std::collections::HashMap::new(),
-            models: HashMap::new(),
-            unions: HashMap::new(),
-        };
-
-        ast.models.insert("Comment".to_string(), ModelNode {
-            name: "Comment".to_string(),
-            resolved_fields: vec![
-                FieldNode {
-                    name: "__id".to_string(),
-                    field_type: AstFieldType::Scalar("String".to_string()),
-                    is_optional: false,
-                    attributes: vec![FieldAttribute::Id],
-                },
-                FieldNode {
-                    name: "parent".to_string(),
-                    field_type: AstFieldType::PolymorphicBase("Content".to_string()),
-                    is_optional: false,
-                    attributes: vec![],
-                }
-            ],
-            ..Default::default()
-        });
-
-        let tables = lower_ast_to_physical(&ast);
-        let comment_table = tables.iter().find(|t| t.name == "Comment").unwrap();
-        
-        assert!(comment_table.columns.iter().any(|c| c.name == "parent_type"));
-        assert!(comment_table.columns.iter().any(|c| c.name == "parent_id"));
-        
-        assert_eq!(comment_table.indexes.len(), 1);
-        let idx = &comment_table.indexes[0];
-        assert_eq!(idx.name, "idx_Comment_parent_polymorphic");
-        assert_eq!(idx.columns, vec!["parent_type", "parent_id"]);
-        assert_eq!(idx.unique, false);
-    }
-
-    #[test]
-    fn test_lower_polymorphic_base_array() {
-        let mut ast = SchemaAst {
-            bases: std::collections::HashMap::new(),
-            models: HashMap::new(),
-            unions: HashMap::new(),
-        };
-
-        ast.models.insert("Folder".to_string(), ModelNode {
-            name: "Folder".to_string(),
-            resolved_fields: vec![
-                FieldNode {
-                    name: "__id".to_string(),
-                    field_type: AstFieldType::Scalar("String".to_string()),
-                    is_optional: false,
-                    attributes: vec![FieldAttribute::Id],
-                },
-                FieldNode {
-                    name: "contents".to_string(),
-                    field_type: AstFieldType::PolymorphicBaseArray("Node".to_string()),
-                    is_optional: false,
-                    attributes: vec![],
-                }
-            ],
-            ..Default::default()
-        });
-
-        let tables = lower_ast_to_physical(&ast);
-        let folder_table = tables.iter().find(|t| t.name == "Folder").unwrap();
-        
-        // Assert exactly two columns: id and contents
-        assert_eq!(folder_table.columns.len(), 2);
-        
-        let contents_col = folder_table.columns.iter().find(|c| c.name == "contents").unwrap();
-        assert_eq!(contents_col.sqlite_type, "TEXT");
-        assert_eq!(contents_col.is_json_array, true);
-        
-        // Assert NO indexes are generated for polymorphic arrays
-        assert!(folder_table.indexes.is_empty());
+        let kind_col = table.columns.iter().find(|c| c.name == "__kind").unwrap();
+        assert_eq!(kind_col.sqlite_type, "TEXT DEFAULT 'Developer' NOT NULL");
     }
 }

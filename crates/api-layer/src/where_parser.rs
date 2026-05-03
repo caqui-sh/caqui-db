@@ -173,8 +173,10 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
                     for attr in &field_def.attributes {
                         if let FieldAttribute::InternalRelation { fields, .. } = attr {
                             if !fields.is_empty() {
-                                we_hold_fk = true;
-                                fk_column = fields[0].clone();
+                                if !matches!(field_def.field_type, AstFieldType::RelationArray(_)) && model_def.resolved_fields.iter().any(|f| &f.name == &fields[0]) {
+                                    we_hold_fk = true;
+                                    fk_column = fields[0].clone();
+                                }
                             }
                         }
                     }

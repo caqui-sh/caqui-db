@@ -88,13 +88,19 @@ pub fn hydrate_payload_to_ir(
                 // If we are on the child side (we own the foreign key), our own @relation holds the fields
                 if let Some(FieldAttribute::InternalRelation { fields, references, .. }) = field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
                     if !fields.is_empty() {
-                        let is_pk = model_def.resolved_fields.iter().any(|f| &f.name == &fields[0] && f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)));
-                        if is_pk {
+                        if matches!(field_def.field_type, AstFieldType::RelationArray(_)) {
+                            // 1:N array side is never forward (the OTHER side holds the FK)
                             is_forward = false;
-                            resolved_fk = if !references.is_empty() { references[0].clone() } else { format!("{}_id", model_name.to_lowercase()) };
-                        } else {
                             resolved_fk = fields[0].clone();
-                            is_forward = true;
+                        } else {
+                            // Singular relation: check if we actually own the column
+                            if model_def.resolved_fields.iter().any(|f| &f.name == &fields[0]) {
+                                is_forward = true;
+                                resolved_fk = fields[0].clone();
+                            } else {
+                                is_forward = false;
+                                resolved_fk = if !fields.is_empty() { fields[0].clone() } else { format!("{}_id", model_name.to_lowercase()) };
+                            }
                         }
                     }
                 }

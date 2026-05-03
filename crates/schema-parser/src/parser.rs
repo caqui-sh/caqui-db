@@ -65,6 +65,8 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> FieldNode {
                 "relation" => {
                     let mut name = None;
                     let mut on_delete = None;
+                    let mut fields = None;
+                    let mut references = None;
                     
                     if let Some(args_rule) = attr_inner.next() {
                         for param_rule in args_rule.into_inner() {
@@ -82,6 +84,28 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> FieldNode {
                                 } else if key == "onDelete" {
                                     let val_rule = val_pair.into_inner().next().unwrap();
                                     on_delete = Some(val_rule.as_str().to_string());
+                                } else if key == "fields" {
+                                    let val_rule = val_pair.into_inner().next().unwrap();
+                                    if val_rule.as_rule() == Rule::attr_array {
+                                        let mut f_names = Vec::new();
+                                        for id_rule in val_rule.into_inner() {
+                                            if id_rule.as_rule() == Rule::ident {
+                                                f_names.push(id_rule.as_str().to_string());
+                                            }
+                                        }
+                                        fields = Some(f_names);
+                                    }
+                                } else if key == "references" {
+                                    let val_rule = val_pair.into_inner().next().unwrap();
+                                    if val_rule.as_rule() == Rule::attr_array {
+                                        let mut r_names = Vec::new();
+                                        for id_rule in val_rule.into_inner() {
+                                            if id_rule.as_rule() == Rule::ident {
+                                                r_names.push(id_rule.as_str().to_string());
+                                            }
+                                        }
+                                        references = Some(r_names);
+                                    }
                                 }
                             } else if actual_param.as_rule() == Rule::attr_val {
                                 let val_rule = actual_param.into_inner().next().unwrap();
@@ -91,7 +115,7 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> FieldNode {
                             }
                         }
                     }
-                    attributes.push(FieldAttribute::Relation { name, on_delete });
+                    attributes.push(FieldAttribute::Relation { name, on_delete, fields, references });
                 },
                 _ => {}
             }
@@ -342,7 +366,12 @@ mod tests {
         
         // @relation
         let posts_field = user.fields.iter().find(|f| f.name == "posts").unwrap();
-        assert_eq!(posts_field.attributes, vec![FieldAttribute::Relation { name: None, on_delete: Some("Cascade".to_string()) }]);
+        assert_eq!(posts_field.attributes, vec![FieldAttribute::Relation { 
+            name: None, 
+            on_delete: Some("Cascade".to_string()), 
+            fields: Some(vec!["__id".to_string()]), 
+            references: Some(vec!["authorId".to_string()]) 
+        }]);
     }
 
     #[test]
@@ -366,10 +395,20 @@ mod tests {
         let post = ast.models.get("Post").unwrap();
         
         let author_field = post.fields.iter().find(|f| f.name == "author").unwrap();
-        assert_eq!(author_field.attributes, vec![FieldAttribute::Relation { name: Some("AuthorToPost".to_string()), on_delete: None }]);
+        assert_eq!(author_field.attributes, vec![FieldAttribute::Relation { 
+            name: Some("AuthorToPost".to_string()), 
+            on_delete: None, 
+            fields: Some(vec!["authorId".to_string()]), 
+            references: Some(vec!["__id".to_string()]) 
+        }]);
 
         let reviewer_field = post.fields.iter().find(|f| f.name == "reviewer").unwrap();
-        assert_eq!(reviewer_field.attributes, vec![FieldAttribute::Relation { name: Some("ReviewerToPost".to_string()), on_delete: None }]);
+        assert_eq!(reviewer_field.attributes, vec![FieldAttribute::Relation { 
+            name: Some("ReviewerToPost".to_string()), 
+            on_delete: None, 
+            fields: Some(vec!["reviewerId".to_string()]), 
+            references: Some(vec!["__id".to_string()]) 
+        }]);
     }
 
     #[test]

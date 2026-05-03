@@ -465,57 +465,168 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
         }
     }
 
-    for model in ast.models.values_mut() {
-        let mut added_fields = Vec::new();
-        let existing_names: std::collections::HashSet<String> = model.resolved_fields.iter().map(|f| f.name.clone()).collect();
-        
-        for field in &mut model.resolved_fields {
-            if let AstFieldType::Relation(target_name) = &field.field_type {
-                let mut relation_attr_idx = None;
-                let mut needs_injection = true; // Always inject unless physical field exists
-                let col_name = format!("{}Id", field.name);
-                
-
-                for (idx, attr) in field.attributes.iter().enumerate() {
-                    if let FieldAttribute::Relation { .. } = attr {
-                        relation_attr_idx = Some(idx);
-                        break;
-                    }
-                }
-                
-                if relation_attr_idx.is_none() {
-                    field.attributes.push(FieldAttribute::Relation {
-                        name: None,
-                        on_delete: None,
-                    });
-                }
-
-                // Check if the user manually created the foreign key field already
-                if existing_names.contains(&col_name) {
-                    needs_injection = false;
-                }
-
-                if let Some((target_id_name, target_id_type)) = model_id_info.get(target_name) {
-                    if needs_injection {
-                        added_fields.push(FieldNode {
-                            name: col_name.clone(),
-                            field_type: target_id_type.clone(),
-                            is_optional: field.is_optional,
-                            attributes: vec![],
-                        });
-                    }
-                    
-                    // Attach the InternalRelation to tell the mapper what to link
-                    field.attributes.push(FieldAttribute::InternalRelation {
-                        fields: vec![col_name.clone()],
-                        references: vec![target_id_name.clone()],
-                    });
-                } else {
-                    return Err(ValidationError(format!("Target model '{}' does not have an @id field.", target_name)));
+    // Map of (Model, FieldName) -> (fields, references) if explicit
+    let mut explicit_mappings = std::collections::HashSet::new();
+    for model in ast.models.values() {
+        for field in &model.resolved_fields {
+            if let Some(FieldAttribute::Relation { fields, references, .. }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                if fields.is_some() && references.is_some() {
+                    explicit_mappings.insert((model.name.clone(), field.name.clone()));
                 }
             }
         }
+    }
+
+    for model_name in ast.models.keys().cloned().collect::<Vec<_>>() {
+        let mut added_fields = Vec::new();
         
+        let (mut model_fields, model_name_str, model_field_names) = {
+            let m = ast.models.get(&model_name).unwrap();
+            (m.resolved_fields.clone(), m.name.clone(), m.resolved_fields.iter().map(|f| f.name.clone()).collect::<std::collections::HashSet<_>>())
+        };
+
+        for field in &mut model_fields {
+            match &field.field_type {
+                AstFieldType::Relation(target_name) => {
+                    let mut relation_attr_idx = None;
+                    for (idx, attr) in field.attributes.iter().enumerate() {
+                        if let FieldAttribute::Relation { .. } = attr {
+                            relation_attr_idx = Some(idx);
+                            break;
+                        }
+                    }
+                    
+                    if relation_attr_idx.is_none() {
+                        field.attributes.push(FieldAttribute::Relation {
+                            name: None,
+                            on_delete: None,
+                            fields: None,
+                            references: None,
+                        });
+                        relation_attr_idx = Some(field.attributes.len() - 1);
+                    }
+
+                    let (rel_name, rel_fields, rel_refs) = match &field.attributes[relation_attr_idx.unwrap()] {
+                        FieldAttribute::Relation { name, fields, references, .. } => (name.clone(), fields.clone(), references.clone()),
+                        _ => unreachable!(),
+                    };
+
+                    let mut is_owning = false;
+                    let mut fk_name = format!("{}Id", field.name);
+                    let mut pk_name = "__id".to_string();
+
+                    if let (Some(f), Some(r)) = (rel_fields, rel_refs) {
+                        if !f.is_empty() && !r.is_empty() {
+                            is_owning = true;
+                            fk_name = f[0].clone();
+                            pk_name = r[0].clone();
+                        }
+                    }
+
+                    if !is_owning {
+                        if let Some(target_model) = ast.models.get(target_name) {
+                            let mut found_reverse = false;
+                            for f in &target_model.resolved_fields {
+                                let (rev_is_match, rev_is_array) = match &f.field_type {
+                                    AstFieldType::Relation(rt) if rt == &model_name_str => (true, false),
+                                    AstFieldType::RelationArray(rt) if rt == &model_name_str => (true, true),
+                                    _ => (false, false),
+                                };
+
+                                if rev_is_match {
+                                    if let Some(FieldAttribute::Relation { name, fields, references, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                                        if name == &rel_name {
+                                            found_reverse = true;
+                                            if let (Some(ff), Some(rr)) = (fields, references) {
+                                                if !ff.is_empty() && !rr.is_empty() {
+                                                    fk_name = ff[0].clone();
+                                                    pk_name = rr[0].clone();
+                                                    is_owning = false;
+                                                    break;
+                                                }
+                                            }
+                                            
+                                            if rev_is_array {
+                                                is_owning = true; // 1:N. We are the 'N' side (singular field), so we own.
+                                            } else {
+                                                // 1:1 Tie-break
+                                                if model_name_str <= target_model.name {
+                                                    is_owning = true;
+                                                } else {
+                                                    // Target owns by tie-break
+                                                    fk_name = format!("{}Id", f.name);
+                                                    is_owning = false;
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            if !found_reverse {
+                                is_owning = true;
+                            }
+                        }
+                    }
+
+                    if is_owning {
+                        if !model_field_names.contains(&fk_name) {
+                            if let Some((_, target_id_type)) = model_id_info.get(target_name) {
+                                added_fields.push(FieldNode {
+                                    name: fk_name.clone(),
+                                    field_type: target_id_type.clone(),
+                                    is_optional: field.is_optional,
+                                    attributes: vec![],
+                                });
+                            }
+                        }
+                    }
+
+                    field.attributes.push(FieldAttribute::InternalRelation {
+                        fields: vec![fk_name],
+                        references: vec![pk_name],
+                    });
+                },
+                AstFieldType::RelationArray(target_name) => {
+                    if let Some(target_model) = ast.models.get(target_name) {
+                        let rel_attr = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. }));
+                        let rel_name = match rel_attr {
+                            Some(FieldAttribute::Relation { name, .. }) => name.clone(),
+                            _ => None,
+                        };
+
+                        for f in &target_model.resolved_fields {
+                            if let AstFieldType::Relation(rev_target) = &f.field_type {
+                                if rev_target == &model_name_str {
+                                    if let Some(FieldAttribute::Relation { name, fields, references, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                                        if name == &rel_name {
+                                            let mut fk = format!("{}Id", f.name);
+                                            let mut pk = "__id".to_string();
+                                            if let (Some(ff), Some(rr)) = (fields, references) {
+                                                if !ff.is_empty() && !rr.is_empty() {
+                                                    fk = ff[0].clone();
+                                                    pk = rr[0].clone();
+                                                }
+                                            }
+                                            field.attributes.push(FieldAttribute::InternalRelation {
+                                                fields: vec![fk],
+                                                references: vec![pk],
+                                            });
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                _ => {}
+            }
+        }
+        
+        let model = ast.models.get_mut(&model_name).unwrap();
+        model.resolved_fields = model_fields;
         for added_field in added_fields {
             if !model.resolved_fields.iter().any(|f| f.name == added_field.name) {
                 model.resolved_fields.push(added_field);
@@ -781,10 +892,10 @@ mod tests {
         assert_eq!(reviewer_id_field.field_type, AstFieldType::Scalar("String".to_string()));
         
         let author_rel = post.resolved_fields.iter().find(|f| f.name == "author").unwrap();
-        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: Some("AuthorToPost".to_string()), on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: Some("AuthorToPost".to_string()), on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
 
         let reviewer_rel = post.resolved_fields.iter().find(|f| f.name == "reviewer").unwrap();
-        assert_eq!(reviewer_rel.attributes, vec![FieldAttribute::Relation { name: Some("ReviewerToPost".to_string()), on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["reviewerId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(reviewer_rel.attributes, vec![FieldAttribute::Relation { name: Some("ReviewerToPost".to_string()), on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["reviewerId".to_string()], references: vec!["__id".to_string()] }]);
     }
 
     #[test]
@@ -806,7 +917,7 @@ mod tests {
         assert_eq!(post.resolved_fields.len(), 5);
         
         let author_rel = post.resolved_fields.iter().find(|f| f.name == "author").unwrap();
-        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: None, on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: None, on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
     }
 
     #[test]
@@ -859,7 +970,7 @@ mod tests {
         assert_eq!(manager_id_field.field_type, AstFieldType::Scalar("String".to_string()));
         
         let manager_rel = employee.resolved_fields.iter().find(|f| f.name == "manager").unwrap();
-        assert_eq!(manager_rel.attributes, vec![FieldAttribute::Relation { name: Some("Management".to_string()), on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["managerId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(manager_rel.attributes, vec![FieldAttribute::Relation { name: Some("Management".to_string()), on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["managerId".to_string()], references: vec!["__id".to_string()] }]);
     }
 #[test]
 fn test_explicit_at_id_rejected() {
@@ -1129,7 +1240,7 @@ fn test_explicit_at_id_rejected() {
         let user_model = validated_ast.models.get("User").unwrap();
         let primary_field = user_model.resolved_fields.iter().find(|f| f.name == "primary").unwrap();
         
-        assert!(primary_field.attributes.iter().any(|a| matches!(a, FieldAttribute::Relation { name: Some(n), on_delete: None } if n == "PrimaryContent")));
+        assert!(primary_field.attributes.iter().any(|a| matches!(a, FieldAttribute::Relation { name: Some(n), on_delete: None, .. } if n == "PrimaryContent")));
     }
 
     #[test]

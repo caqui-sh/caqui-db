@@ -189,38 +189,27 @@ fn translate_create_node(
             .unwrap_or("__id");
         let parent_field_def = parent_model_def.resolved_fields.iter().find(|f| f.name == rel.relation_field_name).unwrap();
         
-        let mut fk_column_name = None;
-        let mut is_our_fk = false;
+        let mut fk_col = None;
+        let mut target_pk = "__id".to_string();
 
-        for attr in &parent_field_def.attributes {
-            if let FieldAttribute::InternalRelation { fields, references, .. } = attr {
-                if fields.is_empty() && references.is_empty() {
-                    // Parent does not hold the FK. We must hold it.
-                    for our_field in &model_def.resolved_fields {
-                        if let AstFieldType::Relation(target) = &our_field.field_type {
-                            if target == &rel.parent_model {
-                                for our_attr in &our_field.attributes {
-                                    if let FieldAttribute::InternalRelation { fields: our_fields, .. } = our_attr {
-                                        if !our_fields.is_empty() {
-                                            fk_column_name = Some(our_fields[0].clone());
-                                            is_our_fk = true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+        if let Some(FieldAttribute::InternalRelation { fields, references }) = parent_field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+            if !fields.is_empty() && !references.is_empty() {
+                let pfk = &fields[0];
+                let rpk = &references[0];
+                
+                // Does THIS model (the child) hold the FK?
+                if model_def.resolved_fields.iter().any(|f| &f.name == pfk) {
+                    fk_col = Some(pfk.clone());
+                    target_pk = rpk.clone();
                 }
             }
         }
         
-        if is_our_fk {
-            if let Some(col) = fk_column_name {
-                columns.push(col.clone());
-                placeholders.push(format!("?{}", param_idx));
-                params.push(Parameter::Reference { step_id: rel.parent_step_id.clone(), column: parent_pk_col.to_string() });
-                param_idx += 1;
-            }
+        if let Some(col) = fk_col {
+            columns.push(col.clone());
+            placeholders.push(format!("?{}", param_idx));
+            params.push(Parameter::Reference { step_id: rel.parent_step_id.clone(), column: target_pk });
+            param_idx += 1;
         }
     }
     
@@ -252,8 +241,11 @@ fn translate_create_node(
                 for attr in &field_def.attributes {
                     if let FieldAttribute::InternalRelation { fields, .. } = attr {
                         if !fields.is_empty() {
-                            we_hold_fk = true;
-                            fk_column = Some(fields[0].clone());
+                            // Verify that we actually own the column physically AND it's not an array relation
+                            if !is_array && model_def.resolved_fields.iter().any(|f| &f.name == &fields[0]) {
+                                we_hold_fk = true;
+                                fk_column = Some(fields[0].clone());
+                            }
                         }
                     }
                 }
@@ -504,8 +496,11 @@ fn translate_update_node(
                 for attr in &field_def.attributes {
                     if let FieldAttribute::InternalRelation { fields, .. } = attr {
                         if !fields.is_empty() {
-                            we_hold_fk = true;
-                            fk_column = Some(fields[0].clone());
+                            // Verify that we actually own the column physically AND it's not an array relation
+                            if !is_array && model_def.resolved_fields.iter().any(|f| &f.name == &fields[0]) {
+                                we_hold_fk = true;
+                                fk_column = Some(fields[0].clone());
+                            }
                         }
                     }
                 }
@@ -692,34 +687,30 @@ fn translate_update_node(
             .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
             .map(|f| f.name.as_str())
             .unwrap_or("__id");
-        let mut fk_column_name = None;
-        let mut is_our_fk = false;
+        
+        let mut fk_col = None;
+        let mut target_pk = "__id".to_string();
 
-        for attr in parent_model_def.resolved_fields.iter().find(|f| f.name == rel.relation_field_name).unwrap().attributes.iter() {
-            if let FieldAttribute::InternalRelation { fields, references, .. } = attr {
-                if fields.is_empty() && references.is_empty() {
-                    for our_field in &model_def.resolved_fields {
-                        if let AstFieldType::Relation(target) = &our_field.field_type {
-                            if target == &rel.parent_model {
-                                for our_attr in &our_field.attributes {
-                                    if let FieldAttribute::InternalRelation { fields: our_fields, .. } = our_attr {
-                                        if !our_fields.is_empty() {
-                                            fk_column_name = Some(our_fields[0].clone());
-                                            is_our_fk = true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
+        // Find the relation definition on the parent side
+        if let Some(field) = parent_model_def.resolved_fields.iter().find(|f| f.name == rel.relation_field_name) {
+            if let Some(FieldAttribute::InternalRelation { fields, references }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+                if !fields.is_empty() && !references.is_empty() {
+                    let pfk = &fields[0];
+                    let rpk = &references[0];
+                    
+                    // Does THIS model (the child) hold the FK?
+                    if model_def.resolved_fields.iter().any(|f| &f.name == pfk) {
+                        fk_col = Some(pfk.clone());
+                        target_pk = rpk.clone();
                     }
                 }
             }
         }
-        if is_our_fk {
-            if let Some(col) = fk_column_name {
-                where_sql = format!("{} AND {}.{} = ?{}", where_sql, model_name, col, param_idx);
-                where_params.push(Parameter::Reference { step_id: rel.parent_step_id.clone(), column: parent_pk_col.to_string() });
-            }
+
+        if let Some(col) = fk_col {
+            where_sql = format!("({} AND {}.{} = ?{})", where_sql, model_name, col, param_idx);
+            where_params.push(Parameter::Reference { step_id: rel.parent_step_id.clone(), column: target_pk });
+            param_idx += 1;
         }
     }
     params.extend(where_params);
@@ -869,20 +860,38 @@ fn process_deferred_children(
         }
 
         let mut fk_column_name = None;
-        for our_field in &ast.models.get(&child.target_model).unwrap().resolved_fields {
-            if let AstFieldType::Relation(target) = &our_field.field_type {
-                if target == parent_model_name {
-                    for our_attr in &our_field.attributes {
-                        if let FieldAttribute::InternalRelation { fields: our_fields, .. } = our_attr {
-                            if !our_fields.is_empty() {
-                                fk_column_name = Some(our_fields[0].clone());
-                            }
-                        }
+        let mut target_pk = "__id".to_string();
+
+        // Find the field in the child model that points back to the parent
+        let rel_attr = parent_field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. }));
+        let rel_name = match rel_attr {
+            Some(FieldAttribute::Relation { name, .. }) => name.clone(),
+            _ => None,
+        };
+
+        let child_model_def = ast.models.get(&child.target_model).unwrap();
+        let reverse_field = child_model_def.resolved_fields.iter().find(|f| {
+            match &f.field_type {
+                AstFieldType::Relation(rt) if rt == parent_model_name => {
+                    if let Some(FieldAttribute::Relation { name, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                        if name == &rel_name { return true; }
                     }
+                    false
+                }
+                _ => false
+            }
+        });
+
+        if let Some(rev_f) = reverse_field {
+            if let Some(FieldAttribute::InternalRelation { fields, references }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+                if !fields.is_empty() && !references.is_empty() {
+                    fk_column_name = Some(fields[0].clone());
+                    target_pk = references[0].clone();
                 }
             }
         }
-        let fk_col = fk_column_name.clone().unwrap_or_default(); // Might be empty but some variants handle this
+
+        let fk_col = fk_column_name.unwrap_or_else(|| format!("{}Id", parent_model_name.to_lowercase()));
 
         match child.action {
             DeferredAction::Create(child_data) => {
@@ -942,8 +951,8 @@ fn process_deferred_children(
                 params.extend(where_params);
                 
                 // Add parent relation constraint
-                let combined_where_sql = format!("{} AND {}.{} = ?{}", where_sql, child.target_model, fk_col, param_idx);
-                params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() });
+                let combined_where_sql = format!("({} AND {}.{} = ?{})", where_sql, child.target_model, fk_col, param_idx);
+                params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() });
                 
                 let sql = format!(
                     "DELETE FROM {} WHERE {} RETURNING {};",
@@ -970,8 +979,8 @@ fn process_deferred_children(
                 let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &child.target_model, &mut param_idx);
                 params.extend(where_params);
                 
-                let combined_where_sql = format!("{} AND {}.{} = ?{}", where_sql, child.target_model, fk_col, param_idx);
-                params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() });
+                let combined_where_sql = format!("({} AND {}.{} = ?{})", where_sql, child.target_model, fk_col, param_idx);
+                params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() });
                 
                 let sql = format!(
                     "UPDATE {} SET {} = NULL WHERE {} RETURNING {};",
@@ -988,70 +997,65 @@ fn process_deferred_children(
                 });
             },
             DeferredAction::Upsert(create_data, update_data) => {
-                let mut parent_fk_col = None;
-                for attr in &ast.models.get(parent_model_name).unwrap().resolved_fields.iter().find(|f| f.name == child.relation_field_name).unwrap().attributes {
-                    if let FieldAttribute::InternalRelation { fields, references: _, .. } = attr {
-                        if !fields.is_empty() {
-                            parent_fk_col = Some(fields[0].clone());
-                        }
+                let mut pfk_col = None;
+                let mut rpk_col = None;
+                if let Some(FieldAttribute::InternalRelation { fields, references }) = ast.models.get(parent_model_name).unwrap().resolved_fields.iter().find(|f| f.name == child.relation_field_name).unwrap().attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+                    if !fields.is_empty() && !references.is_empty() {
+                        pfk_col = Some(fields[0].clone());
+                        rpk_col = Some(references[0].clone());
                     }
                 }
 
+                let pfk = pfk_col.unwrap_or_else(|| format!("{}Id", child.relation_field_name));
+                let rpk = rpk_col.unwrap_or_else(|| "__id".to_string());
+                
+                // Determine if parent owns the FK or child owns the FK
+                let parent_owns_fk = parent_model_def.resolved_fields.iter().any(|f| f.name == pfk);
+
                 let child_step_id = format!("step_{}_upsert_{}", child.target_model.to_lowercase(), *alias_counter);
                 *alias_counter += 1;
-                
-                let mut columns = Vec::new();
-                let mut placeholders = Vec::new();
-                let mut params = Vec::new();
-                let mut param_idx = 1;
-                
-                if let Some(ref pfk) = parent_fk_col {
+
+                if parent_owns_fk {
+                    // Forward Relation (e.g. User has profileId)
+                    let mut columns = Vec::new();
+                    let mut placeholders = Vec::new();
+                    let mut params = Vec::new();
+                    let mut param_idx = 1;
+                    
                     columns.push(child_pk_col.to_string());
                     placeholders.push(format!("COALESCE((SELECT {} FROM {} WHERE {} = ?{}), gen_uuid7())", pfk, parent_model_name, parent_pk_col, param_idx));
                     params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() });
                     param_idx += 1;
-                }
-                
-                for (key, val) in create_data {
-                    columns.push(key.clone());
-                    placeholders.push(format!("?{}", param_idx));
-                    params.push(Parameter::Literal(val.clone()));
-                    param_idx += 1;
-                }
-
-                let mut update_set_clauses = Vec::new();
-                if let Some(update_data_obj) = update_data.get("data").and_then(|v| v.as_object()).or(Some(&update_data)) {
-                    for (key, val) in update_data_obj {
-                        update_set_clauses.push(format!("{} = ?{}", key, param_idx));
+                    
+                    for (key, val) in create_data {
+                        columns.push(key.clone());
+                        placeholders.push(format!("?{}", param_idx));
                         params.push(Parameter::Literal(val.clone()));
                         param_idx += 1;
                     }
-                }
-                
-                if update_set_clauses.is_empty() {
-                    update_set_clauses.push(format!("{} = excluded.{}", child_pk_col, child_pk_col));
-                }
 
-                let sql = format!(
-                    "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT({}) DO UPDATE SET {} RETURNING {};",
-                    child.target_model,
-                    columns.join(", "),
-                    placeholders.join(", "),
-                    child_pk_col,
-                    update_set_clauses.join(", "),
-                    child_pk_col
-                );
-                
-                steps.push(ExecutionStep::Query {
-                    id: child_step_id.clone(),
-                    sql,
-                    params,
-                });
+                    let mut update_set_clauses = Vec::new();
+                    if let Some(update_data_obj) = update_data.get("data").and_then(|v| v.as_object()).or(Some(&update_data)) {
+                        for (key, val) in update_data_obj {
+                            update_set_clauses.push(format!("{} = ?{}", key, param_idx));
+                            params.push(Parameter::Literal(val.clone()));
+                            param_idx += 1;
+                        }
+                    }
+                    
+                    if update_set_clauses.is_empty() {
+                        update_set_clauses.push(format!("{} = excluded.{}", child_pk_col, child_pk_col));
+                    }
 
-                if let Some(ref pfk) = parent_fk_col {
+                    let sql = format!(
+                        "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT({}) DO UPDATE SET {} RETURNING {};",
+                        child.target_model, columns.join(", "), placeholders.join(", "), child_pk_col, update_set_clauses.join(", "), child_pk_col
+                    );
+                    
+                    steps.push(ExecutionStep::Query { id: child_step_id.clone(), sql, params });
+
                     let link_step_id = format!("step_{}_upsert_link_{}", parent_model_name.to_lowercase(), *alias_counter);
                     *alias_counter += 1;
-                    
                     let link_sql = format!("UPDATE {} SET {} = ?1 WHERE {} = ?2 RETURNING {};", parent_model_name, pfk, parent_pk_col, parent_pk_col);
                     steps.push(ExecutionStep::Query {
                         id: link_step_id,
@@ -1061,6 +1065,50 @@ fn process_deferred_children(
                             Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() },
                         ],
                     });
+                } else {
+                    // Reverse Relation (e.g. Profile has userId)
+                    let mut columns = Vec::new();
+                    let mut placeholders = Vec::new();
+                    let mut params = Vec::new();
+                    let mut param_idx = 1;
+                    
+                    // The FK to the parent is required for creation
+                    columns.push(pfk.clone());
+                    placeholders.push(format!("?{}", param_idx));
+                    params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: rpk.clone() });
+                    param_idx += 1;
+
+                    for (key, val) in create_data {
+                        if key != pfk {
+                            columns.push(key.clone());
+                            placeholders.push(format!("?{}", param_idx));
+                            params.push(Parameter::Literal(val.clone()));
+                            param_idx += 1;
+                        }
+                    }
+
+                    let mut update_set_clauses = Vec::new();
+                    if let Some(update_data_obj) = update_data.get("data").and_then(|v| v.as_object()).or(Some(&update_data)) {
+                        for (key, val) in update_data_obj {
+                            if *key != pfk {
+                                update_set_clauses.push(format!("{} = ?{}", key, param_idx));
+                                params.push(Parameter::Literal(val.clone()));
+                                param_idx += 1;
+                            }
+                        }
+                    }
+
+                    if update_set_clauses.is_empty() {
+                        update_set_clauses.push(format!("{} = excluded.{}", pfk, pfk));
+                    }
+
+                    // Conflict target for reverse 1:1 is the FK column itself!
+                    let sql = format!(
+                        "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT({}) DO UPDATE SET {} RETURNING {};",
+                        child.target_model, columns.join(", "), placeholders.join(", "), pfk, update_set_clauses.join(", "), child_pk_col
+                    );
+                    
+                    steps.push(ExecutionStep::Query { id: child_step_id.clone(), sql, params });
                 }
             },
             DeferredAction::Set(child_wheres) => {
@@ -1072,7 +1120,7 @@ fn process_deferred_children(
                 steps.push(ExecutionStep::Query {
                     id: disconnect_step_id,
                     sql,
-                    params: vec![Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() }],
+                    params: vec![Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() }],
                 });
                 
                 // Then connect each child
@@ -1084,7 +1132,7 @@ fn process_deferred_children(
                     let mut param_idx = 1;
                     
                     let set_clause = format!("{} = ?{}", fk_col, param_idx);
-                    params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() });
+                    params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() });
                     param_idx += 1;
                     
                     let child_model_def = ast.models.get(&child.target_model).unwrap();
