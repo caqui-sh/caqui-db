@@ -93,23 +93,20 @@ To maintain feature parity with modern DSLs (like Prisma or GraphQL), the follow
 ### 1. Advanced String Filtering & Full-Text Search
 - **Use Case:** Extending the `where` parser to support `contains`, `startsWith`, `endsWith`, and case-insensitive modifiers to allow for robust text search capabilities directly via the API.
 
-### 2. DateTime and Float Operations
-- **Use Case:** Providing native support and E2E verification for ISO-8601 string parsing, temporal sorting, and date-based range filtering (e.g., `createdAt: { gte: "2025-01-01T00:00:00Z" }`).
+### 2. Analytical Aggregation
+- **Use Case:** Supporting analytical endpoints like `count`, `aggregate`, `sum`, or `groupBy` to allow for data insights directly via the API.
 
-### 3. Deep Nested Pagination & Aggregation
-- **Use Case:** Supporting localized limits in nested relationships (e.g., "Fetch 10 Users, and for each user, fetch their 3 most recent Posts") and analytical endpoints like `count`, `aggregate`, `sum`, or `groupBy`.
-
-### 4. Compound Keys and Indices
+### 3. Compound Keys and Indices
 - **Syntax:** `@@unique([firstName, lastName])`, `@@id([authorId, postId])`, `@@index([email, status])`
 - **Why it is necessary:** Currently, the engine heavily relies on single-column UUID/CUID architectures. Compound keys are absolutely necessary for modeling natural "Join Tables" in many-to-many relationships without being forced to inject artificial, synthetic primary keys. It is also critical for supporting legacy database schemas and creating optimized, multi-column database indices for complex queries.
 
-### 5. Advanced AST Field Types
+### 4. Advanced AST Field Types
 - **Enums:** Native support for schema enumeration types (e.g., `enum Role { ADMIN, USER }`).
 - **JSON:** A dedicated JSON scalar for structured payloads, allowing for native database JSON operations and arbitrary nested object storage.
 - **Bytes / Binary Data:** A scalar type for `BLOB` / binary storage (e.g., images, file buffers).
 - **High-Precision Numerics:** Support for `Decimal` and `BigInt` for exact financial calculations or extremely large counters.
 - **Embedded Documents:** Native sub-object definitions common in NoSQL schemas, allowing nested structures without separate tables.
 
-### 6. Batch Operations
+### 5. Batch Operations
 - **Syntax:** `action: "createMany"`, `action: "updateMany"`, `action: "deleteMany"`
 - **Use Case:** High-performance bulk data modifications to insert or update thousands of records in a single SQLite transaction without materializing everything into memory.
