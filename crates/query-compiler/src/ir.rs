@@ -22,6 +22,7 @@ pub struct QueryNode {
     pub alias: String, // Crucial for preventing namespace collisions in self-joins (e.g., t0, t1)
     pub selections: Vec<SelectField>,
     pub filters: Option<WhereClause>,
+    pub search: Option<String>,
     pub order_by: Vec<(String, OrderDirection)>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,

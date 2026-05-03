@@ -394,3 +394,68 @@ async fn test_advanced_string_filtering() {
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn test_fulltext_search() {
+    let (app, _dir) = setup_app().await;
+
+    // The User model in setup_app() doesn't have @@fulltext yet, so we need a dedicated setup
+    let dir = tempdir().unwrap();
+    let workspace = dir.path();
+    let _ = engine_core::vfs::bootstrap_custom_vfs();
+    
+    let caqui_bin = std::env::var("CARGO_BIN_EXE_caqui").unwrap();
+    let mut cmd1 = Command::new("git");
+    cmd1.arg("init").current_dir(workspace);
+    run_cmd(cmd1);
+
+    let schema = r#"
+        model Document {
+            title: String
+            body: String
+            @@fulltext([title, body])
+            @@id(uuid)
+        }
+    "#;
+    std::fs::write(workspace.join("schema.cq"), schema).unwrap();
+    
+    let mut cmd3 = Command::new(&caqui_bin);
+    cmd3.arg("schema").arg("migrate").current_dir(workspace);
+    run_cmd(cmd3);
+
+    let schema_str = std::fs::read_to_string(workspace.join("schema.cq")).unwrap();
+    let ast = schema_parser::parse_schema(&schema_str).unwrap();
+    let ast = schema_parser::validate_schema(ast).unwrap();
+    let db_path = workspace.join("app.db");
+    let db_uri = format!("file:{}?vfs=git", db_path.display());
+    let pool = api_layer::db::create_pool(&db_uri);
+    let state = api_layer::state::EngineState { ast: Arc::new(ast), db_pool: pool };
+    let app_fts = api_layer::router::build_dynamic_router(state);
+
+    let docs = vec![
+        ("Rust Programming", "The quick brown fox"),
+        ("Python Guide", "The lazy dog"),
+    ];
+
+    for (title, body) in docs {
+        let payload = serde_json::json!({
+            "action": "create",
+            "model": "Document",
+            "data": { "title": title, "body": body },
+            "select": { "__id": true }
+        });
+        post_query(&app_fts, payload).await;
+    }
+
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "Document",
+        "search": "brown",
+        "select": { "title": true }
+    });
+    let response = post_query(&app_fts, payload).await;
+    let items = response["data"].as_array().unwrap();
+    
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["title"], "Rust Programming");
+}

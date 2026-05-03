@@ -113,7 +113,7 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>, ctx: &
                     where_conds.push(compile_where_clause(filters, &query.alias));
                 }
 
-                let base_source = match &query.source {
+                let mut base_source = match &query.source {
                     QueryIrSource::Table(t) => t.clone(),
                     QueryIrSource::Polymorphic { alias: _, branches } => {
                         let mut inner_branch_sqls = Vec::new();
@@ -135,6 +135,16 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>, ctx: &
                         format!("(\n{}\n)", inner_branch_sqls.join("\nUNION ALL\n"))
                     },
                 };
+                
+                if let Some(ref search_str) = query.search {
+                    let table_name = match &query.source {
+                        QueryIrSource::Table(t) => t.clone(),
+                        QueryIrSource::Polymorphic { alias, .. } => alias.clone(),
+                    };
+                    let fts_table = format!("{}_fts", table_name);
+                    let search_escaped = search_str.replace('\'', "''");
+                    base_source = format!("{} INNER JOIN {} ON {}.__id = {}.rowid WHERE {} MATCH '{}'", base_source, fts_table, table_name, fts_table, fts_table, search_escaped);
+                }
 
                 let mut actual_source_table = base_source.clone();
                 let mut limit_offset = String::new();
@@ -320,7 +330,7 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>, ctx: &
         }
 
         // Root query: Wrap execution in a final SELECT returning a JSON array
-            let source_table = match &node.source {
+            let mut source_table = match &node.source {
                 QueryIrSource::Table(t) => t.clone(),
                 QueryIrSource::Polymorphic { alias: _, branches } => {
                     let mut inner_branch_sqls = Vec::new();
@@ -340,6 +350,33 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>, ctx: &
                     format!("(\n{}\n)", inner_branch_sqls.join("\nUNION ALL\n"))
                 },
             };
+
+            if let Some(ref search_str) = node.search {
+                let table_name = match &node.source {
+                    QueryIrSource::Table(t) => t.clone(),
+                    QueryIrSource::Polymorphic { alias, .. } => alias.clone(),
+                };
+                let fts_table = format!("{}_fts", table_name);
+                let search_escaped = search_str.replace('\'', "''");
+                
+                // We append the alias right onto the primary table *before* the JOIN, 
+                // and then add the WHERE clause properly so `AS t0` doesn't end up at the very end.
+                let mut base_where = root_where;
+                if base_where.is_empty() {
+                    base_where = format!(" WHERE {} MATCH '{}'", fts_table, search_escaped);
+                } else {
+                    base_where = format!("{} AND {} MATCH '{}'", base_where, fts_table, search_escaped);
+                }
+                
+                let final_sql = format!("SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT {} AS root_payload FROM {} AS {} INNER JOIN {} ON {}.rowid = {}.rowid{}{}{}{});", 
+                    json_obj, table_name, node.alias, fts_table, node.alias, fts_table, base_where, order_by_clause, limit_clause, offset_clause);
+                
+                if !ctx.ctes.is_empty() {
+                    return format!("WITH {} {}", ctx.ctes.join(", "), final_sql);
+                }
+                return final_sql;
+            }
+
             let mut final_sql = format!("SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT {} AS root_payload FROM {} AS {}{}{}{}{});", json_obj, source_table, node.alias, root_where, order_by_clause, limit_clause, offset_clause);
             if !ctx.ctes.is_empty() {
                 final_sql = format!("WITH {} {}", ctx.ctes.join(", "), final_sql);

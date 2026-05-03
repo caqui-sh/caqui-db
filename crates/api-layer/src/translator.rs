@@ -194,6 +194,8 @@ pub fn hydrate_payload_to_ir(
         .map(|f| f.name.clone())
         .unwrap_or_else(|| "__id".to_string());
 
+    let search = payload.get("search").and_then(|s| s.as_str()).map(|s| s.to_string());
+
     let mut order_by = Vec::new();
     if let Some(order_obj) = payload.get("orderBy").and_then(|v| v.as_object()) {
         for (field, dir) in order_obj {
@@ -212,6 +214,7 @@ pub fn hydrate_payload_to_ir(
         alias: current_alias,
         selections,
         filters,
+        search,
         order_by,
         limit: payload.get("limit").and_then(|l| l.as_u64()).map(|l| l as usize),
         offset: payload.get("skip").and_then(|l| l.as_u64()).map(|l| l as usize),
@@ -288,6 +291,7 @@ fn compile_union_read(
             alias: current_alias,
             selections: inner_selections,
             filters: branch_payload.and_then(|p| p.get("where")).and_then(|v| v.as_object()).map(|obj| parse_where_clause(ast, obj, model_def)).transpose()?,
+            search: None,
             order_by: vec![],
             limit: None,
             offset: None,
@@ -311,6 +315,7 @@ fn compile_union_read(
         alias: current_alias,
         selections: outer_selections,
         filters: None,
+        search: None,
         order_by: vec![],
         limit: payload.get("limit").and_then(|l| l.as_u64()).map(|l| l as usize),
         offset: payload.get("skip").and_then(|l| l.as_u64()).map(|l| l as usize),
@@ -393,6 +398,7 @@ fn compile_polymorphic_read(
             alias: current_alias,
             selections: inner_selections,
             filters: inner_filters,
+            search: None,
             order_by: vec![],
             limit: None,
             offset: None,
@@ -532,6 +538,7 @@ fn compile_polymorphic_read(
         alias: current_alias,
         selections: outer_selections,
         filters: None,
+        search: None,
         order_by: vec![],
         limit: payload.get("limit").and_then(|l| l.as_u64()).map(|l| l as usize),
         offset: payload.get("skip").and_then(|l| l.as_u64()).map(|l| l as usize),
