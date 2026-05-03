@@ -1166,4 +1166,22 @@ mod tests {
         let sql_ends = compile_where_clause(&c_ends, "t0");
         assert_eq!(sql_ends, "t0.name LIKE '%100\\%\\_juice\\\\''s' ESCAPE '\\'");
     }
+
+    #[test]
+    fn test_compile_select_fts_search() {
+        let query = QueryNode {
+            search: Some("quick OR lazy".to_string()),
+            primary_key: "__id".to_string(),
+            source: QueryIrSource::Table("Document".to_string()),
+            alias: "t0".to_string(),
+            order_by: vec![],
+            selections: vec![SelectField::Scalar("title".to_string())],
+            filters: None,
+            limit: None,
+            offset: None,
+        };
+        let sql = compile_select(&query, None, &mut CTEContext::new());
+        assert!(sql.contains("INNER JOIN Document_fts ON t0.rowid = Document_fts.rowid"));
+        assert!(sql.contains("WHERE Document_fts MATCH 'quick OR lazy'"));
+    }
 }

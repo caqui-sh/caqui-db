@@ -422,4 +422,46 @@ mod tests {
         assert_eq!(roles_col.sqlite_type, "TEXT");
         assert!(roles_col.is_json_array);
     }
+
+    #[test]
+    fn test_ddl_mapping_fulltext() {
+        let mut ast = SchemaAst::default();
+        let mut model = ModelNode {
+            name: "Document".to_string(),
+            block_attributes: vec![ModelAttribute::FullText(vec!["title".to_string(), "body".to_string()])],
+            ..Default::default()
+        };
+        model.resolved_fields.push(FieldNode {
+            name: "__id".to_string(),
+            field_type: AstFieldType::Scalar("String".to_string()),
+            is_optional: false,
+            attributes: vec![FieldAttribute::Id],
+        });
+        model.resolved_fields.push(FieldNode {
+            name: "title".to_string(),
+            field_type: AstFieldType::Scalar("String".to_string()),
+            is_optional: false,
+            attributes: vec![],
+        });
+        model.resolved_fields.push(FieldNode {
+            name: "body".to_string(),
+            field_type: AstFieldType::Scalar("String".to_string()),
+            is_optional: false,
+            attributes: vec![],
+        });
+        ast.models.insert("Document".to_string(), model);
+
+        let physical = lower_ast_to_physical(&ast);
+        let table = &physical[0];
+        
+        assert_eq!(table.fts_fields, Some(vec!["title".to_string(), "body".to_string()]));
+        assert_eq!(table.triggers.len(), 3);
+        
+        let ai = table.triggers.iter().find(|t| t.name == "Document_fts_ai").unwrap();
+        assert!(ai.sql.contains("INSERT INTO Document_fts(rowid, title, body) VALUES (new.rowid, new.title, new.body)"));
+        
+        let au = table.triggers.iter().find(|t| t.name == "Document_fts_au").unwrap();
+        assert!(au.sql.contains("VALUES('delete', old.rowid, old.title, old.body)"));
+        assert!(au.sql.contains("VALUES (new.rowid, new.title, new.body)"));
+    }
 }

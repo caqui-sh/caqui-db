@@ -165,4 +165,46 @@ mod tests {
         let sql = generate_sql(&op);
         assert_eq!(sql, "DROP INDEX idx_User_email;\n");
     }
+
+    #[test]
+    fn test_generate_create_table_sql_with_fts() {
+        let table = PhysicalTable {
+            name: "Document".to_string(),
+            columns: vec![
+                PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
+                PhysicalColumn { name: "title".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
+            ],
+            indexes: vec![],
+            triggers: vec![],
+            foreign_keys: vec![],
+            fts_fields: Some(vec!["title".to_string(), "body".to_string()]),
+        };
+        let op = MigrationOp::CreateTable { table };
+        let sql = generate_sql(&op);
+        println!("GENERATED SQL:\n{}", sql);
+        assert!(sql.contains("CREATE TABLE Document"));
+        assert!(sql.contains("CREATE VIRTUAL TABLE IF NOT EXISTS Document_fts USING fts5(title, body, content='Document', content_rowid='rowid');\n"));
+    }
+
+    #[test]
+    fn test_generate_rebuild_table_sql_with_fts() {
+        let table = PhysicalTable {
+            name: "Document".to_string(),
+            columns: vec![
+                PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT PRIMARY KEY".to_string(), is_json_array: false },
+                PhysicalColumn { name: "title".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
+            ],
+            indexes: vec![],
+            triggers: vec![],
+            foreign_keys: vec![],
+            fts_fields: Some(vec!["title".to_string(), "body".to_string()]),
+        };
+        let live_cols = vec!["__id".to_string(), "title".to_string()];
+        let op = MigrationOp::RebuildTable { table, live_cols };
+        let sql = generate_sql(&op);
+        println!("REBUILD SQL:\n{}", sql);
+        assert!(sql.contains("DROP TABLE IF EXISTS Document_fts;\n"));
+        assert!(sql.contains("CREATE VIRTUAL TABLE IF NOT EXISTS Document_fts USING fts5(__id UNINDEXED, title, body, content='Document');\n"));
+        assert!(sql.contains("INSERT INTO Document_fts(Document_fts) VALUES('rebuild');\n"));
+    }
 }
