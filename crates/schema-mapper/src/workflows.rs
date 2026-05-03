@@ -99,6 +99,7 @@ mod tests {
                 indexes: vec![],
                 triggers: vec![],
                 foreign_keys: vec![],
+                fts_fields: None,
             }
         ];
         db_push(&conn, &desired).unwrap();
@@ -120,6 +121,7 @@ mod tests {
                 indexes: vec![],
                 triggers: vec![],
                 foreign_keys: vec![],
+                fts_fields: None,
             }
         ];
         migrate_dev(&desired, db_path.to_str().unwrap(), migrations_dir.to_str().unwrap()).unwrap();
@@ -142,6 +144,7 @@ mod tests {
                 indexes: vec![],
                 triggers: vec![],
                 foreign_keys: vec![],
+                fts_fields: None,
             }
         ];
         migrate_dev(&desired, db_path.to_str().unwrap(), migrations_dir.to_str().unwrap()).unwrap();

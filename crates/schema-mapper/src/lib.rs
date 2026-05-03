@@ -32,6 +32,7 @@ pub struct PhysicalTable {
     pub indexes: Vec<PhysicalIndex>,
     pub triggers: Vec<PhysicalTrigger>,
     pub foreign_keys: Vec<String>,
+    pub fts_fields: Option<Vec<String>>,
 }
 
 pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
@@ -234,12 +235,39 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
             }
         }
 
+        let mut fts_fields = None;
+        for attr in &model.block_attributes {
+            if let ModelAttribute::FullText(fields) = attr {
+                fts_fields = Some(fields.clone());
+            }
+        }
+
+        if let Some(ref fields) = fts_fields {
+            let fields_csv = fields.join(", ");
+            let old_fields = fields.iter().map(|f| format!("old.{}", f)).collect::<Vec<_>>().join(", ");
+            let new_fields = fields.iter().map(|f| format!("new.{}", f)).collect::<Vec<_>>().join(", ");
+            
+            triggers.push(PhysicalTrigger {
+                name: format!("{}_fts_ai", model.name),
+                sql: format!("CREATE TRIGGER IF NOT EXISTS {0}_fts_ai AFTER INSERT ON {0} BEGIN\n  INSERT INTO {0}_fts(rowid, {1}) VALUES (new.__id, {2});\nEND;", model.name, fields_csv, new_fields),
+            });
+            triggers.push(PhysicalTrigger {
+                name: format!("{}_fts_ad", model.name),
+                sql: format!("CREATE TRIGGER IF NOT EXISTS {0}_fts_ad AFTER DELETE ON {0} BEGIN\n  INSERT INTO {0}_fts({0}_fts, rowid, {1}) VALUES('delete', old.__id, {2});\nEND;", model.name, fields_csv, old_fields),
+            });
+            triggers.push(PhysicalTrigger {
+                name: format!("{}_fts_au", model.name),
+                sql: format!("CREATE TRIGGER IF NOT EXISTS {0}_fts_au AFTER UPDATE ON {0} BEGIN\n  INSERT INTO {0}_fts({0}_fts, rowid, {1}) VALUES('delete', old.__id, {2});\n  INSERT INTO {0}_fts(rowid, {1}) VALUES (new.__id, {3});\nEND;", model.name, fields_csv, old_fields, new_fields),
+            });
+        }
+
         physical_tables.push(PhysicalTable {
             name: model.name.clone(),
             columns,
             indexes,
             triggers,
             foreign_keys,
+            fts_fields,
         });
     }
 

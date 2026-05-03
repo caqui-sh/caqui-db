@@ -140,6 +140,7 @@ mod tests {
                 indexes: vec![],
                 triggers: vec![],
                 foreign_keys: vec![],
+                fts_fields: None,
             }
         ];
         
@@ -162,6 +163,7 @@ mod tests {
                 indexes: vec![],
                 triggers: vec![],
                 foreign_keys: vec![],
+                fts_fields: None,
             }
         ];
         

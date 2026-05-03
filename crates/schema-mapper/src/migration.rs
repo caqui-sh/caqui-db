@@ -17,18 +17,29 @@ pub fn generate_sql(op: &MigrationOp) -> String {
             let create_temp = generate_create_table_sql(&temp_name, table);
             let cols_csv = live_cols.join(", ");
             
-            format!(
+            let mut sql = format!(
                 "PRAGMA foreign_keys=OFF;\n\
                  BEGIN TRANSACTION;\n\
                  {};\n\
                  INSERT INTO {} ({}) SELECT {} FROM {};\n\
                  DROP TABLE {};\n\
-                 ALTER TABLE {} RENAME TO {};\n\
-                 PRAGMA foreign_key_check;\n\
-                 COMMIT;\n\
-                 PRAGMA foreign_keys=ON;\n",
+                 ALTER TABLE {} RENAME TO {};\n",
                 create_temp, temp_name, cols_csv, cols_csv, table.name, table.name, temp_name, table.name
-            )
+            );
+
+            if let Some(ref fields) = table.fts_fields {
+                sql.push_str(&format!("DROP TABLE IF EXISTS {}_fts;\n", table.name));
+                sql.push_str(&format!("CREATE VIRTUAL TABLE IF NOT EXISTS {}_fts USING fts5({}, content='{}', content_rowid='__id');\n", table.name, fields.join(", "), table.name));
+                sql.push_str(&format!("INSERT INTO {}_fts({}_fts) VALUES('rebuild');\n", table.name, table.name));
+            }
+
+            sql.push_str(
+                "PRAGMA foreign_key_check;\n\
+                 COMMIT;\n\
+                 PRAGMA foreign_keys=ON;\n"
+            );
+            
+            sql
         },
         MigrationOp::CreateIndex { table, columns, unique } => {
             let unique_str = if *unique { "UNIQUE " } else { "" };
@@ -75,6 +86,7 @@ mod tests {
             indexes: vec![],
             triggers: vec![],
             foreign_keys: vec![],
+            fts_fields: None,
         };
         let sql = generate_create_table_sql("User", &table);
         assert_eq!(sql, "CREATE TABLE User (\n    __id TEXT PRIMARY KEY,\n    name TEXT\n)");
@@ -101,6 +113,7 @@ mod tests {
             indexes: vec![],
             triggers: vec![],
             foreign_keys: vec![],
+            fts_fields: None,
         };
         let live_cols = vec!["__id".to_string(), "age".to_string()];
         let op = MigrationOp::RebuildTable { table, live_cols };
