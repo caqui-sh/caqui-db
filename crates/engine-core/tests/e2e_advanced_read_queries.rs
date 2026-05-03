@@ -467,6 +467,7 @@ async fn test_fulltext_search() {
         ("Python Guide", "The lazy dog"),
     ];
 
+    let mut doc_ids = std::collections::HashMap::new();
     for (title, body) in docs {
         let payload = serde_json::json!({
             "action": "create",
@@ -474,7 +475,9 @@ async fn test_fulltext_search() {
             "data": { "title": title, "body": body },
             "select": { "__id": true }
         });
-        post_query(&app_fts, payload).await;
+        let resp = post_query(&app_fts, payload).await;
+        let id = resp["data"]["__id"].as_str().unwrap().to_string();
+        doc_ids.insert(title.to_string(), id);
     }
 
     let payload = serde_json::json!({
@@ -520,6 +523,85 @@ async fn test_fulltext_search() {
         "action": "findMany",
         "model": "Document",
         "search": "missing_word",
+        "select": { "title": true }
+    });
+    let response = post_query(&app_fts, payload).await;
+    let items = response["data"].as_array().unwrap();
+    assert_eq!(items.len(), 0);
+
+    // 5. Prefix Matching
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "Document",
+        "search": "prog*",
+        "select": { "title": true }
+    });
+    let response = post_query(&app_fts, payload).await;
+    let items = response["data"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["title"], "Rust Programming");
+
+    // 6. Phrase Matching
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "Document",
+        "search": "\"brown fox\"",
+        "select": { "title": true }
+    });
+    let response = post_query(&app_fts, payload).await;
+    let items = response["data"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["title"], "Rust Programming");
+
+    // 7. Update Synchronization (_fts_au trigger)
+    let rust_id = doc_ids.get("Rust Programming").unwrap();
+    let payload = serde_json::json!({
+        "action": "update",
+        "model": "Document",
+        "where": { "__id": rust_id },
+        "data": { "body": "The slow black cat" },
+        "select": { "__id": true }
+    });
+    post_query(&app_fts, payload).await;
+
+    // Verify old term is gone
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "Document",
+        "search": "brown",
+        "select": { "title": true }
+    });
+    let response = post_query(&app_fts, payload).await;
+    let items = response["data"].as_array().unwrap();
+    assert_eq!(items.len(), 0);
+
+    // Verify new term is present
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "Document",
+        "search": "black",
+        "select": { "title": true }
+    });
+    let response = post_query(&app_fts, payload).await;
+    let items = response["data"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["title"], "Rust Programming");
+
+    // 8. Delete Synchronization (_fts_ad trigger)
+    let python_id = doc_ids.get("Python Guide").unwrap();
+    let payload = serde_json::json!({
+        "action": "delete",
+        "model": "Document",
+        "where": { "__id": python_id },
+        "select": { "__id": true }
+    });
+    post_query(&app_fts, payload).await;
+
+    // Verify deleted document is removed from FTS index
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "Document",
+        "search": "Python",
         "select": { "title": true }
     });
     let response = post_query(&app_fts, payload).await;
