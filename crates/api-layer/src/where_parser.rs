@@ -2,62 +2,74 @@ use serde_json::Value;
 use query_compiler::ir::{WhereClause, WhereCondition, RelationFilter};
 use schema_parser::ast::{ModelNode, FieldAttribute, AstFieldType, SchemaAst};
 
-pub fn val_to_string(val: &Value) -> String {
-    if let Some(s) = val.as_str() {
-        s.to_string()
-    } else if let Some(n) = val.as_number() {
-        n.to_string()
-    } else if let Some(b) = val.as_bool() {
-        if b { "1".to_string() } else { "0".to_string() }
-    } else {
-        "".to_string()
+pub fn val_to_string(val: &Value, type_name: Option<&str>) -> Result<String, String> {
+    match type_name {
+        Some("Float") => {
+            if let Some(n) = val.as_f64() {
+                Ok(n.to_string())
+            } else {
+                Err("Validation Error: Expected a Float in filter.".to_string())
+            }
+        },
+        Some("DateTime") => {
+            let str_val = val.as_str().ok_or_else(|| "Validation Error: Invalid ISO-8601 DateTime format in filter.".to_string())?;
+            let date = chrono::DateTime::parse_from_rfc3339(str_val)
+                .map_err(|_| "Validation Error: Invalid ISO-8601 DateTime format in filter.".to_string())?;
+            let normalized = date.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            Ok(normalized)
+        },
+        _ => {
+            if let Some(s) = val.as_str() {
+                Ok(s.to_string())
+            } else if let Some(n) = val.as_number() {
+                Ok(n.to_string())
+            } else if let Some(b) = val.as_bool() {
+                if b { Ok("1".to_string()) } else { Ok("0".to_string()) }
+            } else {
+                Ok("".to_string())
+            }
+        }
     }
 }
 
-pub fn parse_where_condition(val: &Value) -> Result<WhereCondition, String> {
+pub fn parse_where_condition(val: &Value, type_name: Option<&str>) -> Result<WhereCondition, String> {
     if val.is_null() {
         return Ok(WhereCondition::IsNull);
     }
-    if let Some(s) = val.as_str() {
-        return Ok(WhereCondition::Eq(s.to_string()));
-    }
-    if let Some(n) = val.as_number() {
-        return Ok(WhereCondition::Eq(n.to_string()));
-    }
-    if let Some(b) = val.as_bool() {
-        return Ok(WhereCondition::Eq(if b { "1".to_string() } else { "0".to_string() }));
+    if val.as_str().is_some() || val.as_number().is_some() || val.as_bool().is_some() {
+        return Ok(WhereCondition::Eq(val_to_string(val, type_name)?));
     }
     if let Some(obj) = val.as_object() {
         if let Some(eq) = obj.get("eq") {
             if eq.is_null() {
                 return Ok(WhereCondition::IsNull);
             }
-            return Ok(WhereCondition::Eq(val_to_string(eq)));
+            return Ok(WhereCondition::Eq(val_to_string(eq, type_name)?));
         }
         if let Some(neq) = obj.get("notEq") {
             if neq.is_null() {
                 return Ok(WhereCondition::IsNotNull);
             }
-            return Ok(WhereCondition::NotEq(val_to_string(neq)));
+            return Ok(WhereCondition::NotEq(val_to_string(neq, type_name)?));
         }
         if let Some(gt) = obj.get("gt") {
-            return Ok(WhereCondition::Gt(val_to_string(gt)));
+            return Ok(WhereCondition::Gt(val_to_string(gt, type_name)?));
         }
         if let Some(gte) = obj.get("gte") {
-            return Ok(WhereCondition::Gte(val_to_string(gte)));
+            return Ok(WhereCondition::Gte(val_to_string(gte, type_name)?));
         }
         if let Some(lt) = obj.get("lt") {
-            return Ok(WhereCondition::Lt(val_to_string(lt)));
+            return Ok(WhereCondition::Lt(val_to_string(lt, type_name)?));
         }
         if let Some(lte) = obj.get("lte") {
-            return Ok(WhereCondition::Lte(val_to_string(lte)));
+            return Ok(WhereCondition::Lte(val_to_string(lte, type_name)?));
         }
         if let Some(in_vals) = obj.get("in").and_then(|v| v.as_array()) {
-            let vals: Vec<String> = in_vals.iter()
+            let vals: Result<Vec<String>, String> = in_vals.iter()
                 .filter(|v| !v.is_null())
-                .map(|v| val_to_string(v))
+                .map(|v| val_to_string(v, type_name))
                 .collect();
-            return Ok(WhereCondition::In(vals));
+            return Ok(WhereCondition::In(vals?));
         }
         if let Some(is_null) = obj.get("isNull") {
             if is_null.as_bool().unwrap_or(false) {
@@ -104,13 +116,19 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
             None => {
                 if k.starts_with("__") {
                     // Synthetic markers injected by polymorphism are implicitly booleans
-                    let cond = parse_where_condition(v)?;
+                    let cond = parse_where_condition(v, None)?;
                     clauses.push(WhereClause::Field(k.clone(), cond));
                     continue;
                 } else {
                     return Err(format!("Invalid field '{}' in where clause for model '{}'.", k, model_def.name));
                 }
             }
+        };
+
+        let type_name = match &field_def.field_type {
+            AstFieldType::Scalar(t) => Some(t.as_str()),
+            AstFieldType::ScalarArray(t) => Some(t.as_str()),
+            _ => None,
         };
 
         match &field_def.field_type {
@@ -122,15 +140,15 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
                     let mut operators_found = false;
                     for (op, op_val) in obj {
                         let cond = match op.as_str() {
-                            "eq" => if op_val.is_null() { Some(WhereCondition::IsNull) } else { Some(WhereCondition::Eq(val_to_string(op_val))) },
-                            "notEq" => if op_val.is_null() { Some(WhereCondition::IsNotNull) } else { Some(WhereCondition::NotEq(val_to_string(op_val))) },
-                            "gt" => Some(WhereCondition::Gt(val_to_string(op_val))),
-                            "gte" => Some(WhereCondition::Gte(val_to_string(op_val))),
-                            "lt" => Some(WhereCondition::Lt(val_to_string(op_val))),
-                            "lte" => Some(WhereCondition::Lte(val_to_string(op_val))),
+                            "eq" => if op_val.is_null() { Some(WhereCondition::IsNull) } else { Some(WhereCondition::Eq(val_to_string(op_val, type_name)?)) },
+                            "notEq" => if op_val.is_null() { Some(WhereCondition::IsNotNull) } else { Some(WhereCondition::NotEq(val_to_string(op_val, type_name)?)) },
+                            "gt" => Some(WhereCondition::Gt(val_to_string(op_val, type_name)?)),
+                            "gte" => Some(WhereCondition::Gte(val_to_string(op_val, type_name)?)),
+                            "lt" => Some(WhereCondition::Lt(val_to_string(op_val, type_name)?)),
+                            "lte" => Some(WhereCondition::Lte(val_to_string(op_val, type_name)?)),
                             "in" => {
                                 let vals = op_val.as_array().ok_or("Operator 'in' expects an array")?
-                                    .iter().filter(|v| !v.is_null()).map(|v| val_to_string(v)).collect();
+                                    .iter().filter(|v| !v.is_null()).map(|v| val_to_string(v, type_name)).collect::<Result<Vec<String>, String>>()?;
                                 Some(WhereCondition::In(vals))
                             },
                             "isNull" => if op_val.as_bool().unwrap_or(false) { Some(WhereCondition::IsNull) } else { Some(WhereCondition::IsNotNull) },
@@ -142,11 +160,11 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
                         }
                     }
                     if !operators_found {
-                         let cond = parse_where_condition(v)?;
+                         let cond = parse_where_condition(v, type_name)?;
                          clauses.push(WhereClause::Field(k.clone(), cond));
                     }
                 } else {
-                    let cond = parse_where_condition(v)?;
+                    let cond = parse_where_condition(v, type_name)?;
                     clauses.push(WhereClause::Field(k.clone(), cond));
                 }
             }
@@ -191,7 +209,7 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
                     }
                 }
                 
-                let cond = parse_where_condition(v)?;
+                let cond = parse_where_condition(v, None)?;
                 clauses.push(WhereClause::Field(k.clone(), cond));
             }
             AstFieldType::Relation(target_model_name) | AstFieldType::RelationArray(target_model_name) => {
@@ -202,7 +220,7 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
                 };
 
                 if v.is_null() || !is_relational_op {
-                    let cond = parse_where_condition(v)?;
+                    let cond = parse_where_condition(v, None)?;
                     clauses.push(WhereClause::Field(k.clone(), cond));
                 } else if let Some(obj) = v.as_object() {
                     // Parse Relation Filter

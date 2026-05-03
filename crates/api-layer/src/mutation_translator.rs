@@ -3,6 +3,26 @@ use query_compiler::mutation_ir::{ExecutionPlan, ExecutionStep, Parameter};
 use schema_parser::ast::{SchemaAst, AstFieldType, FieldAttribute};
 use crate::where_parser::parse_where_clause;
 
+fn validate_and_normalize_scalar(field_name: &str, type_name: &str, val: &Value) -> Result<Value, String> {
+    match type_name {
+        "Float" => {
+            if val.as_f64().is_some() {
+                Ok(val.clone())
+            } else {
+                Err(format!("Validation Error: Field '{}' expects a Float.", field_name))
+            }
+        },
+        "DateTime" => {
+            let str_val = val.as_str().ok_or_else(|| format!("Validation Error: Invalid ISO-8601 DateTime format for field '{}'.", field_name))?;
+            let date = chrono::DateTime::parse_from_rfc3339(str_val)
+                .map_err(|_| format!("Validation Error: Invalid ISO-8601 DateTime format for field '{}'.", field_name))?;
+            let normalized = date.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            Ok(Value::String(normalized))
+        },
+        _ => Ok(val.clone()),
+    }
+}
+
 pub fn hydrate_mutation_to_plan(
     ast: &SchemaAst,
     model_name: &str,
@@ -220,10 +240,11 @@ fn translate_create_node(
             .ok_or_else(|| format!("Invalid field '{}' for model '{}'.", key, model_name))?;
 
         match &field_def.field_type {
-            AstFieldType::Scalar(_) => {
+            AstFieldType::Scalar(type_name) => {
+                let normalized_val = validate_and_normalize_scalar(key, type_name, val)?;
                 columns.push(key.clone());
                 placeholders.push(format!("?{}", param_idx));
-                params.push(Parameter::Literal(val.clone()));
+                params.push(Parameter::Literal(normalized_val));
                 param_idx += 1;
             },
             AstFieldType::ScalarArray(_) => {
@@ -464,9 +485,10 @@ fn translate_update_node(
             .ok_or_else(|| format!("Invalid field '{}' for model '{}'.", key, model_name))?;
 
         match &field_def.field_type {
-            AstFieldType::Scalar(_) => {
+            AstFieldType::Scalar(type_name) => {
+                let normalized_val = validate_and_normalize_scalar(key, type_name, val)?;
                 set_clauses.push(format!("{} = ?{}", key, param_idx));
-                params.push(Parameter::Literal(val.clone()));
+                params.push(Parameter::Literal(normalized_val));
                 param_idx += 1;
             },
             AstFieldType::ScalarArray(_) => {

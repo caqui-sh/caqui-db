@@ -151,6 +151,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                     let mut sql_type = match t.as_str() {
                         "Int" => "INTEGER",
                         "Float" => "REAL",
+                        "DateTime" => "DATETIME",
                         "Boolean" => "INTEGER",
                         _ => "TEXT",
                     }.to_string();
@@ -323,5 +324,42 @@ mod tests {
 
         let kind_col = table.columns.iter().find(|c| c.name == "__kind").unwrap();
         assert_eq!(kind_col.sqlite_type, "TEXT DEFAULT 'Developer' NOT NULL");
+    }
+
+    #[test]
+    fn test_ddl_mapping_float_and_datetime() {
+        let mut ast = SchemaAst::default();
+        let mut model = ModelNode {
+            name: "Reading".to_string(),
+            ..Default::default()
+        };
+        model.resolved_fields.push(FieldNode {
+            name: "__id".to_string(),
+            field_type: AstFieldType::Scalar("String".to_string()),
+            is_optional: false,
+            attributes: vec![FieldAttribute::Id],
+        });
+        model.resolved_fields.push(FieldNode {
+            name: "value".to_string(),
+            field_type: AstFieldType::Scalar("Float".to_string()),
+            is_optional: false,
+            attributes: vec![],
+        });
+        model.resolved_fields.push(FieldNode {
+            name: "recordedAt".to_string(),
+            field_type: AstFieldType::Scalar("DateTime".to_string()),
+            is_optional: false,
+            attributes: vec![],
+        });
+        ast.models.insert("Reading".to_string(), model);
+
+        let physical = lower_ast_to_physical(&ast);
+        let table = &physical[0];
+        
+        let val_col = table.columns.iter().find(|c| c.name == "value").unwrap();
+        assert_eq!(val_col.sqlite_type, "REAL");
+
+        let date_col = table.columns.iter().find(|c| c.name == "recordedAt").unwrap();
+        assert_eq!(date_col.sqlite_type, "DATETIME");
     }
 }
