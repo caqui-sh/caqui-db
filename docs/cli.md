@@ -1,40 +1,58 @@
 # CLI Commands Reference
 
-The `caqui` engine is packaged as a single executable binary that provides several commands to manage your database lifecycle, run the API server, and interact with version control.
+`caqui` is packaged as a unified, zero-dependency executable. It provides a cohesive toolset to manage your database lifecycle, run the dynamic API server, and safely interact with version control in a decentralized environment.
 
 ## Project Initialization
 
 ### `caqui init`
-Generates a starter `schema.cq` file in the current directory if one does not already exist. This file is the declarative source of truth for your database schema and API structure.
+Generates a starter `schema.cq` file in the current directory if one does not already exist. This file acts as the declarative source of truth for both your database structure and API schema.
 
 ## Schema Management
 
+`caqui` provides two primary strategies for synchronizing your database state with your `schema.cq`.
+
 ### `caqui schema push`
-Quickly syncs your `schema.cq` to your local database. This instantly calculates and applies structural differences to the database. This command is best used for rapid local prototyping and does not generate migration history.
+The rapid-prototyping workflow. 
+
+This command parses the AST, calculates the structural differences, and applies them **directly** to `app.db`. 
+- **Use Case**: High-velocity local iteration.
+- **Limitation**: It does not maintain a migration history.
 
 ### `caqui schema migrate`
-The safe, historical deployment workflow. This command:
-1. Determines the structural changes needed for your `schema.cq`.
-2. Generates a new timestamped SQL migration script in the `migrations/` directory.
-3. Safely applies the new script to your live database.
-This maintains a clean history of your database evolution.
+The safe, production-grade deployment workflow. 
+
+This command:
+1. Spawns a temporary "shadow" database.
+2. Introspects the differences between the current schema and the shadow state.
+3. Generates a new, timestamped `.sql` migration script in the `migrations/` directory.
+4. Safely applies the new script to your live database.
+- **Use Case**: Safe evolution and CI/CD pipelines.
 
 ## API Server
 
 ### `caqui api start`
-Starts the database connection pool and mounts the universal dynamic execution router.
-- By default, it binds to `http://0.0.0.0:4000`.
-- You can override the port by setting the `PORT` environment variable.
+Starts the database connection pool using the Custom SQLite VFS and mounts the universal dynamic execution router.
 
-## Git Proxy & Specialized Behaviors
+- **Prerequisite**: The `app.db` file must exist (created via `schema push` or `schema migrate`) before the server can start.
+- **Binding**: Binds to `0.0.0.0` by default.
+- **Port**: Listens on port `4000`. You can override this using the `PORT` environment variable.
 
-Because `caqui` utilizes a decentralized concurrency model based on Git, it provides a proxy command (`caqui git`) that intercepts and modifies certain Git operations to ensure database integrity across distributed instances.
+```bash
+PORT=8080 caqui api start
+```
 
-### `caqui git <args>`
-Passes commands directly to the underlying `git` executable, but intercepts specific subcommands to enforce the custom `sqlitevfs` merge driver.
+## Git Proxy & Specialized Behaviors (`caqui git`)
 
-#### Specialized `merge` Behavior
-`caqui git merge` (and related commands) automatically resolve database conflicts safely at the data level without binary file corruption.
+Because `caqui` utilizes a decentralized concurrency model based on Git, it provides a specialized proxy command: `caqui git`. 
 
-#### Specialized `diff` Behavior
-When you run `caqui git diff`, the CLI intercepts the command and runs a custom internal diffing engine tailored for comparing schemas and states, rather than showing a binary diff of the database file.
+This proxy passes arguments directly to the underlying `git` executable but intercepts specific subcommands to ensure database integrity across distributed instances. Internally, the CLI automatically configures and injects the `git-merge-sqlitevfs` driver into your `PATH`.
+
+### Specialized `merge` Behavior
+When you run `caqui git merge`, the CLI intercepts the command and automatically enforces the custom `-s sqlitevfs` merge strategy. 
+
+**Expert Note**: Attempts to manually override this strategy (e.g., `caqui git merge -s recursive`) will be actively rejected by the CLI with an error. This strict enforcement prevents binary corruption of the `app.db` file.
+
+### Specialized `diff` Behavior
+When you run `caqui git diff [old_ref]`, the CLI completely bypasses the standard Git diff output. 
+
+Instead, it invokes a custom internal diffing engine that compares the raw `schema.cq` files and outputs a human-readable structural diff of the schema changes and potential state conflicts, rather than useless binary blob diffs.

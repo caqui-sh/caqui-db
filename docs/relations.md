@@ -1,82 +1,128 @@
-# Advanced Relational Rules
+# Advanced Relationship Rules
 
-`caqui` supports complex data modeling requirements, including ambiguous relationships, self-referential hierarchies, and fine-grained referential integrity.
+Relationships are first-class citizens in the `caqui` data graph. The engine handles foreign key generation, referential integrity, and polymorphic links with a "Zero-Overhead" philosophy.
 
-## Named Relations (Disambiguation)
+## Implicit Foreign Keys (The Expert Default)
 
-When you have multiple relationships between the same two models, you must name them to tell `caqui` which fields belong to which relation.
+The idiomatic way to define relationships in `caqui` is to omit the `@relation` attribute. The engine uses a strict set of deterministic rules to decide which table "owns" the foreign key (FK).
 
-```
+### Ownership Rules
+
+1.  **1:N Relations**: The FK is always placed on the table corresponding to the **singular field** (the "Many" side).
+2.  **1:1 Relations**: If both sides are singular, ownership is decided by a **Lexicographical Tie-break** (the model whose name comes first alphabetically owns the FK).
+3.  **Naming Convention**: The generated FK column is named `[fieldName]Id` (e.g., `authorId`).
+
+```prisma
 model User {
-  id:            String @id
-  authoredPosts: Post[] @relation("AuthorToPost")
-  reviewedPosts: Post[] @relation("ReviewerToPost")
-}
-
-model Post {
-  id:       String @id
-  author:   User   @relation("AuthorToPost")
-  reviewer: User   @relation("ReviewerToPost", column: "reviewerId")
-}
-```
-
-## Self-Referential Relations
-
-You can model hierarchies where a model points back to itself.
-
-```
-model Employee {
-  id:              String     @id
-  name:            String
-  managerId:       String?
-  manager:         Employee?  @relation("Management", fields: [managerId], references: [id])
-  directReports:   Employee[] @relation("Management")
-}
-```
-
-## Cascading Deletes (`onDelete`)
-
-You can control what happens to related records when a parent record is deleted using the `onDelete` attribute in the `@relation`.
-
-| Option | Behavior |
-| :--- | :--- |
-| `Cascade` | Automatically deletes child records when the parent is deleted. |
-| `SetNull` | Sets the foreign key in child records to `NULL` (requires the field to be optional). |
-| `Restrict` | Prevents the parent from being deleted if child records exist. |
-
-```
-model User {
-  id:    String @id
-  posts: Post[]
-}
-
-model Post {
-  id:       String @id
-  userId:   String
-  user:     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-```
-
-## Deferrable Constraints
-
-By default, SQLite enforces foreign key constraints immediately. However, complex operations (like cyclic inserts or swapping records) can temporarily violate these constraints.
-
-Using `deferrable: true` tells `caqui` to wait until the end of a transaction to verify the constraint.
-
-```
-model User {
-  id:      String  @id
-  profile: Profile @relation(deferrable: true)
+  profile: Profile? // User comes before Profile (U > P), so Profile owns the FK
+  @@id(uuid)
 }
 
 model Profile {
-  id:   String @id
-  user: User   @relation(deferrable: true)
+  user:    User
+  @@id(uuid)
 }
 ```
 
-This allows you to perform "circular" inserts:
-1. `BEGIN TRANSACTION;`
-2. Insert `User` (pointing to a profile that doesn't exist yet).
-3. Insert `Profile` (pointing to the user).
-4. `COMMIT;` (The engine verifies both exist now).
+## Named Relations (Disambiguation)
+
+When a model has multiple fields pointing to the same target model, you **must** provide a unique name to each relation to tell `caqui` which fields are pairs.
+
+```prisma
+model User {
+  authoredPosts: Post[] @relation("Author")
+  reviewedPosts: Post[] @relation("Reviewer")
+  @@id(uuid)
+}
+
+model Post {
+  title:    String
+  author:   User   @relation("Author")
+  reviewer: User   @relation("Reviewer")
+  @@id(uuid)
+}
+```
+
+## Self-Referential Hierarchies
+
+You can model recursive structures where a model points back to itself.
+
+```prisma
+model Employee {
+  name:          String
+  manager:       Employee?  @relation("Management")
+  directReports: Employee[] @relation("Management")
+  @@id(uuid)
+}
+```
+
+## Many-to-Many (N:M) Relations
+
+`caqui` enforces a strict, predictable data graph. As such, implicit N:M relationships are not supported. You must define an explicit join table model to manage N:M relationships. This approach gives you full control over the join table and allows you to add additional metadata fields to the relationship.
+
+```prisma
+model User {
+  roles: UserRole[]
+  @@id(uuid)
+}
+
+model Role {
+  users: UserRole[]
+  @@id(uuid)
+}
+
+// Explicit Join Table
+model UserRole {
+  user: User
+  role: Role
+  @@id(uuid)
+}
+```
+
+## Referential Integrity (`onDelete`)
+
+Control how the system behaves when a related record is deleted.
+
+| Option | Behavior |
+| :--- | :--- |
+| `CASCADE` | Automatically deletes child records when the parent is deleted. |
+| `SET NULL` | Sets the FK in child records to `NULL` (requires the field to be optional). |
+| `RESTRICT` | Prevents the parent from being deleted if child records exist. |
+| `SET DEFAULT` | Sets the FK to its default value (if defined). |
+| `NO ACTION` | (Default) Verified at the end of the transaction. |
+
+```prisma
+model Post {
+  author: User @relation(onDelete: CASCADE)
+  @@id(uuid)
+}
+```
+
+
+## Expert: Polymorphic Relations
+
+When a relationship points to an abstract `base`, `caqui` implements a dynamic link.
+
+### Physical Storage
+
+Polymorphic links are stored as a **dual-column pair** in the owning table:
+1.  `[fieldName]_type`: A string containing the concrete model name.
+2.  `[fieldName]_id`: The identifier of the record.
+
+**Technical Detail**: Because these links can point to multiple tables, they **do not** have physical SQLite `FOREIGN KEY` constraints. Instead, the `caqui` engine enforces referential integrity at the application layer during mutations.
+
+
+## Expert: Transactional Safety & Deferrability
+
+Every physical foreign key generated by `caqui` is automatically configured with:
+`DEFERRABLE INITIALLY DEFERRED`.
+
+This is a critical architectural choice that allows you to perform complex graph mutations that temporarily violate constraints within a single transaction.
+
+### Example: Circular Insets
+
+You can insert two records that point to each other in a single request:
+
+1.  **Operation A**: Insert `User` (pointing to a profile ID that doesn't exist yet).
+2.  **Operation B**: Insert `Profile` (pointing to the user).
+3.  **COMMIT**: The database verifies that both records exist *at the end* of the transaction.

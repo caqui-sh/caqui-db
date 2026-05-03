@@ -98,9 +98,17 @@ To maintain feature parity with modern DSLs (like Prisma or GraphQL), the follow
 - **Why it is necessary:** Currently, the engine heavily relies on single-column UUID/CUID architectures. Compound keys are absolutely necessary for modeling natural "Join Tables" in many-to-many relationships without being forced to inject artificial, synthetic primary keys. It is also critical for supporting legacy database schemas and creating optimized, multi-column database indices for complex queries.
 
 ### 3. Advanced AST Field Types
-- **JSON:** A dedicated JSON scalar for structured payloads, allowing for native database JSON operations and arbitrary nested object storage.
+- **Native JSON Scalars:** Support for a dedicated `Json` scalar type, allowing for arbitrary nested object storage. Future implementation should include deep nested mutators (e.g., `update: { "config": { "path": "nested.key", "set": "new_value" } }`) utilizing SQLite's native `json_set` and `json_replace` path operators.
 - **High-Precision Numerics:** Support for `Decimal` and `BigInt` for exact financial calculations or extremely large counters.
 
 ### 4. Batch Operations
 - **Syntax:** `action: "createMany"`, `action: "updateMany"`, `action: "deleteMany"`
-- **Use Case:** High-performance bulk data modifications to insert or update thousands of records in a single SQLite transaction without materializing everything into memory.
+- **Use Case:** High-performance bulk data modifications. `createMany` should implement an optimized `INSERT` sequence for thousands of records in a single transaction, while `updateMany` will support mass-updates using complex `where` filters.
+
+### 5. Polymorphic Update & Delete
+Currently, polymorphic fields only support `create`, `connect`, and `disconnect`. Implementing `update` and `delete` involves a significant architectural decision between two paths:
+
+| Path | Technical Approach | Trade-offs |
+| :--- | :--- | :--- |
+| **User-Asserted Types** | The client provides the target model (e.g., `"User": { "update": { ... } }`). The engine generates a single SQL statement with a subquery validating the row discriminator. | **Pros**: Statically verifiable, zero-latency execution, maintains the Linear Execution Plan. <br> **Cons**: Slight increase in client-side responsibility. |
+| **Dynamic Runtime Dispatch** | The engine queries the row's `_type` column at runtime and dynamically branches the execution plan. | **Pros**: Maximum client-side ergonomics. <br> **Cons**: Requires a "Look-before-write" (LBW) cycle, breaking the current high-performance linear model and increasing executor complexity. |

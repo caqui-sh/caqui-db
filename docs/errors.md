@@ -1,65 +1,64 @@
-# Error Handling & API Responses
+# Error Handling & Diagnostics
 
-`caqui` uses standard HTTP status codes and descriptive plain-text error messages to communicate failures.
+`caqui` communicates failures through distinct channels depending on the context: CLI output for startup and tooling errors, and standard HTTP status codes with plain-text messages for API failures.
 
-## Success Responses
+## System & CLI Errors
 
-A successful request always returns an HTTP `200 OK` status with a JSON object containing the requested data under a `data` key.
+These errors occur before the API server can successfully mount or during developer tooling operations.
 
-```json
-{
-  "data": {
-    "id": "u1",
-    "name": "Alice"
-  }
-}
-```
+### `Syntax Error in DSL`
+Emitted during `caqui api start`, `push`, or `migrate` when the `schema.cq` file violates the core `pest` grammar rules (e.g., missing brackets, invalid keywords).
+- **Resolution:** Correct the syntax in `schema.cq` according to the schema DSL documentation.
 
-## Error Status Codes
+### `Semantic Error in DSL`
+Emitted by the internal AST validator after successful parsing. This indicates a logical flaw in the schema design.
+- **Examples:** Mismatched relation types, invalid shadowing in inheritance, or `@@fulltext` referencing non-existent fields.
+- **Resolution:** Review the specific error string provided in the CLI output to locate and resolve the semantic violation in `schema.cq`.
 
-When a request fails, `caqui` returns one of the following status codes:
+### `Error: 'app.db' not found`
+Emitted by `caqui api start`. The engine requires a physical SQLite database file to mount the router.
+- **Resolution:** Run `caqui schema push` or `caqui schema migrate` to initialize the database from your schema before starting the API.
 
-### 400 Bad Request
-The request was malformed or violated schema rules.
+### `Git Proxy Enforcement`
+Emitted when attempting to override the custom `-s sqlitevfs` strategy during a `caqui git merge` operation.
+- **Message:** `Error: caqui enforces the 'sqlitevfs' merge driver for database integrity. You cannot override it with a custom strategy.`
+- **Resolution:** Do not pass the `-s` or `--strategy` flags when using the `caqui git merge` proxy.
+
+## API Error Responses
+
+When a request fails, the API returns one of the following HTTP status codes alongside a plain-text message describing the failure.
+
+*(Note: Future versions of the engine will migrate to structured JSON error objects).*
+
+### 400 Bad Request (Validation)
+The request payload was malformed, contained invalid types, or violated schema rules.
 - **Examples:**
-  - `Invalid field 'unknown_field' for model 'User'`: You requested a field that doesn't exist in your `schema.cq`.
-    - **Actionable Resolution:** Check your `schema.cq` file to ensure the field is defined exactly as requested.
-  - `Missing 'select' projection block`: All `findMany` and mutation actions require a `select` block.
-    - **Actionable Resolution:** Add a `select` block to your query payload to specify the fields you want returned.
-  - `Security Exception: Model 'Ghost' undefined`: You requested a model not found in the schema.
-    - **Actionable Resolution:** Verify the model name in your query matches a defined model in `schema.cq`.
-  - `Arrays cannot be optional`: You defined an array field in a way that allows it to be null, which is not supported.
-    - **Actionable Resolution:** Update your `schema.cq` to ensure array fields are always required (e.g., `[String]` instead of `[String]?`).
-  - `Primary keys cannot be optional`: A primary key field was marked as optional.
-    - **Actionable Resolution:** Update your `schema.cq` to make the primary key field required.
-  - `Security Exception: Maximum query depth exceeded.`: The requested query is too deeply nested.
-    - **Actionable Resolution:** Reduce the nesting depth of your JSON query to remain within the allowed limits.
+  - `Invalid field '...' for model '...'`: A requested field does not exist in the schema.
+  - `Missing 'select' projection block`: All top-level actions (including mutations) require a `select` block to define the return shape.
+  - `Security Exception: Model '...' undefined`: The requested model does not exist.
+  - `Arrays cannot be optional` / `Primary keys cannot be optional`: These constraints are strictly enforced at the API layer.
+  - `Security Exception: Maximum query depth exceeded.`: The nested graph traversal exceeds the configured engine limits (default 10 levels).
+  - `Validation Error: Value '...' is not a valid variant for enum '...'`: You attempted to insert or update an enum field with an undefined string.
+  - `Security Exception: Upsert target '...' is not marked as @id or @unique`: Nested and root upserts require the `where` block to target a strictly unique identifier.
+  - `Unsupported action for polymorphic field '...'. Only 'connect' and 'create' are supported.`: You cannot perform an `update` or `delete` directly through a polymorphic relation; these must be done via root mutations.
 
-### 500 Internal Server Error
-The request was valid, but an error occurred during execution in the database layer.
-- **Examples:**
-  - `Database Error: UNIQUE constraint failed: User.email`: An attempt to insert or update a value that conflicts with a unique constraint.
-    - **Actionable Resolution:** Ensure the value you are providing for the unique field does not already exist in the system.
-  - `Record not found`: You attempted to `update` or `delete` a record that does not exist in the database.
-    - **Actionable Resolution:** Verify that the ID or lookup condition matches an existing record before attempting the operation.
-  - `Mutation Execution Error: FOREIGN KEY constraint failed`: A nested mutation violated referential integrity.
-    - **Actionable Resolution:** Ensure that any referenced related records exist before creating or updating the relationship.
+### 405 Method Not Allowed (Security)
+The requested action violates an internal security or architectural constraint.
+- **Example:**
+  - `Security Exception: Cannot mutate abstract bases directly.`: You attempted a root-level `create`, `update`, or `delete` on an abstract `base`. 
+  - **Resolution:** Polymorphic bases cannot be instantiated directly. You must perform root mutations on the concrete models that `extend` the base.
+
+### 500 Internal Server Error (Execution)
+The request passed all semantic validation but failed during transactional execution against the SQLite database.
+
+**1. Database Constraints:**
+- `Database Error: UNIQUE constraint failed: ...`: Attempted to insert or update a value that conflicts with an `@unique` field constraint.
+- `Mutation Execution Error: FOREIGN KEY constraint failed`: A nested mutation or connection violated referential integrity (e.g., attempting to connect to an ID that does not exist).
+
+**2. Strict Execution Failures:**
+- `Execution Error: Record not found`: Triggered by strict root-level `update` or `delete` actions where the provided `where` clause matches zero rows. The engine strictly requires these actions to target an existing record.
 
 ### 501 Not Implemented
-The requested action is recognized by the engine but is either not supported for that model or not yet implemented.
+The requested action is recognized by the AST but is not yet supported by the `api-layer`.
 - **Example:**
-  - `Mutation logic`: Returned when an action like `createMany` is sent but not yet supported by the current engine version.
-    - **Actionable Resolution:** Use an alternative approach, such as issuing multiple individual `create` requests, or wait for a future update.
-
-## Error Payload Shape
-
-Currently, `caqui` returns error messages as a **plain text string** in the response body.
-
-```bash
-HTTP/1.1 400 Bad Request
-Content-Type: text/plain
-
-Invalid field 'unknown_field' for model 'User'.
-```
-
-Future versions of the engine will migrate to structured JSON error objects (e.g., `{ "errors": [{ "message": "...", "code": "..." }] }`).
+  - `Mutation logic`: Returned when attempting bulk operations (e.g., `createMany`, `updateMany`) which are currently slated for future roadmap releases.
