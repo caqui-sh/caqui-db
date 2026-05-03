@@ -36,4 +36,7 @@ model_def  = { "model" ~ ident ~ extends_clause? ~ "{" ~ (field_def | block_attr
 // Capture explicit Polymorphic Unions (e.g., union SearchResult = Article | User)
 union_def  = { "union" ~ ident ~ "=" ~ ident ~ ("|" ~ ident)* }
 
-schema     = { SOI ~ (model_def | base_def | union_def)* ~ EOI }
+// Capture explicit Enums (e.g., enum Role { ADMIN USER })
+enum_def   = { "enum" ~ ident ~ "{" ~ ident* ~ "}" }
+
+schema     = { SOI ~ (model_def | base_def | union_def | enum_def)* ~ EOI }

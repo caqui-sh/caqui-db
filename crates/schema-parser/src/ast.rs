@@ -5,6 +5,7 @@ pub struct SchemaAst {
     pub models: HashMap<String, ModelNode>,
     pub bases: HashMap<String, BaseNode>,
     pub unions: HashMap<String, Vec<String>>,
+    pub enums: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -45,6 +46,8 @@ pub enum AstFieldType {
     PolymorphicBaseArray(String),  // Array of defined Base
     // Extension for custom arrays, though not explicitly in the snippet
     RelationArray(String),
+    Enum(String),
+    EnumArray(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

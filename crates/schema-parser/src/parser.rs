@@ -135,6 +135,7 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
         models: HashMap::new(),
         bases: HashMap::new(),
         unions: HashMap::new(),
+        enums: HashMap::new(),
     };
 
     let mut schema_pairs = SchemaParser::parse(Rule::schema, input)?;
@@ -142,6 +143,17 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
 
     for pair in schema_pair.into_inner() {
         match pair.as_rule() {
+            Rule::enum_def => {
+                let mut inner_rules = pair.into_inner();
+                let name = inner_rules.next().unwrap().as_str().to_string();
+                let mut variants = Vec::new();
+                for inner in inner_rules {
+                    if inner.as_rule() == Rule::ident {
+                        variants.push(inner.as_str().to_string());
+                    }
+                }
+                ast.enums.insert(name, variants);
+            }
             Rule::base_def => {
                 let mut inner_rules = pair.into_inner();
                 let name = inner_rules.next().unwrap().as_str().to_string();
@@ -281,6 +293,7 @@ mod tests {
             models: HashMap::new(),
             bases: HashMap::new(),
             unions: HashMap::new(),
+            enums: HashMap::new(),
         };
         
         expected_ast.models.insert("User".to_string(), ModelNode {

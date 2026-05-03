@@ -21,6 +21,11 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
         union_symbols.insert(union_name.clone());
     }
 
+    let mut enum_symbols = std::collections::HashSet::new();
+    for enum_name in ast.enums.keys() {
+        enum_symbols.insert(enum_name.clone());
+    }
+
     // --- PHASE 2: Semantic Validation & Crystallization ---
 
     // Step 2.1: Pre-Validation & Lookup Indexing
@@ -331,7 +336,9 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
             // Fix up Relation to PolymorphicUnion or PolymorphicBase
             match &field.field_type {
                 AstFieldType::Relation(target_name) => {
-                    if union_symbols.contains(target_name) {
+                    if enum_symbols.contains(target_name) {
+                        field.field_type = AstFieldType::Enum(target_name.clone());
+                    } else if union_symbols.contains(target_name) {
                         field.field_type = AstFieldType::PolymorphicUnion(target_name.clone());
                     } else if ast.bases.contains_key(target_name) {
                         if implementor_registry.get(target_name).map_or(0, |v| v.len()) == 0 {
@@ -359,7 +366,9 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                     }
                 },
                 AstFieldType::RelationArray(target_name) => {
-                    if union_symbols.contains(target_name) {
+                    if enum_symbols.contains(target_name) {
+                        field.field_type = AstFieldType::EnumArray(target_name.clone());
+                    } else if union_symbols.contains(target_name) {
                         field.field_type = AstFieldType::PolymorphicUnionArray(target_name.clone());
                     } else if ast.bases.contains_key(target_name) {
                         if implementor_registry.get(target_name).map_or(0, |v| v.len()) == 0 {
@@ -647,6 +656,7 @@ mod tests {
         let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
+            enums: HashMap::new(),
         };
         
         ast.models.insert("User".to_string(), ModelNode { block_attributes: vec![], extends: vec![], resolved_fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
@@ -662,6 +672,7 @@ mod tests {
         let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
+            enums: HashMap::new(),
         };
         
         ast.models.insert("User".to_string(), ModelNode { block_attributes: vec![], extends: vec![], resolved_fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
@@ -689,6 +700,7 @@ mod tests {
         let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
+            enums: HashMap::new(),
         };
         
         ast.models.insert("User".to_string(), ModelNode { block_attributes: vec![], extends: vec![], resolved_fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
@@ -708,6 +720,7 @@ mod tests {
         let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
+            enums: HashMap::new(),
         };
         
         ast.models.insert("User".to_string(), ModelNode { block_attributes: vec![], extends: vec![], resolved_fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
@@ -732,6 +745,7 @@ mod tests {
         let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
+            enums: HashMap::new(),
         };
         
         ast.models.insert("Post".to_string(), ModelNode { block_attributes: vec![], extends: vec![], resolved_fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
@@ -757,6 +771,7 @@ mod tests {
         let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
+            enums: HashMap::new(),
         };
 
         ast.models.insert("Query".to_string(), ModelNode { block_attributes: vec![], extends: vec![], resolved_fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
@@ -784,6 +799,7 @@ mod tests {
         let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
+            enums: HashMap::new(),
         };
         
         ast.models.insert("Post".to_string(), ModelNode { block_attributes: vec![], extends: vec![], resolved_fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
@@ -977,6 +993,7 @@ fn test_explicit_at_id_rejected() {
     let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
         models: std::collections::HashMap::new(),
         unions: std::collections::HashMap::new(),
+        enums: std::collections::HashMap::new(),
     };
 
     ast.models.insert("User".to_string(), ModelNode { extends: vec![], resolved_fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
@@ -1120,6 +1137,7 @@ fn test_explicit_at_id_rejected() {
             bases: std::collections::HashMap::new(),
             models: std::collections::HashMap::new(),
             unions: std::collections::HashMap::new(),
+            enums: std::collections::HashMap::new(),
         };
 
         ast.bases.insert("Timestamped".to_string(), BaseNode {
@@ -1257,5 +1275,28 @@ fn test_explicit_at_id_rejected() {
         let ast = crate::parser::parse_schema(input).unwrap();
         let err = validate_schema(ast).unwrap_err();
         assert!(err.0.contains("Ambiguous relations: Model 'User' has multiple relations to 'Content'"));
+    }
+
+    #[test]
+    fn test_parse_and_resolve_enums() {
+        let input = "
+            enum Role { ADMIN USER }
+            model User {
+                role: Role
+                roles: Role[]
+                @@id(uuid)
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        assert_eq!(ast.enums.get("Role").unwrap(), &vec!["ADMIN".to_string(), "USER".to_string()]);
+
+        let validated_ast = validate_schema(ast).unwrap();
+        let user_model = validated_ast.models.get("User").unwrap();
+        
+        let role_field = user_model.resolved_fields.iter().find(|f| f.name == "role").unwrap();
+        assert_eq!(role_field.field_type, AstFieldType::Enum("Role".to_string()));
+
+        let roles_field = user_model.resolved_fields.iter().find(|f| f.name == "roles").unwrap();
+        assert_eq!(roles_field.field_type, AstFieldType::EnumArray("Role".to_string()));
     }
 }
