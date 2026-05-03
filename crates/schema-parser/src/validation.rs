@@ -44,6 +44,18 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
         }
     }
 
+    for union_name in ast.unions.keys() {
+        if model_index.contains_key(union_name.as_str()) || base_index.contains_key(union_name.as_str()) {
+            return Err(ValidationError(format!("Duplicate identifier '{}' found.", union_name)));
+        }
+    }
+
+    for enum_name in ast.enums.keys() {
+        if model_index.contains_key(enum_name.as_str()) || base_index.contains_key(enum_name.as_str()) || ast.unions.contains_key(enum_name) {
+            return Err(ValidationError(format!("Duplicate identifier '{}' found.", enum_name)));
+        }
+    }
+
     let check_targets = |name: &str, extends: &Vec<String>| -> Result<(), ValidationError> {
         for target in extends {
             if model_index.contains_key(target.as_str()) {
@@ -1298,5 +1310,16 @@ fn test_explicit_at_id_rejected() {
 
         let roles_field = user_model.resolved_fields.iter().find(|f| f.name == "roles").unwrap();
         assert_eq!(roles_field.field_type, AstFieldType::EnumArray("Role".to_string()));
+    }
+
+    #[test]
+    fn test_enum_duplicate_identifier_model() {
+        let input = "
+            model Role { @@id(uuid) }
+            enum Role { ADMIN USER }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let err = validate_schema(ast).unwrap_err();
+        assert!(err.0.contains("Duplicate identifier 'Role' found."));
     }
 }

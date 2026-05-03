@@ -1419,6 +1419,19 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_and_normalize_scalar_enum() {
+        let mut ast = mock_ast();
+        ast.enums.insert("Role".to_string(), vec!["ADMIN".to_string(), "USER".to_string()]);
+        
+        assert_eq!(
+            validate_and_normalize_scalar(&ast, "role", "Role", true, &json!("ADMIN")).unwrap(),
+            json!("ADMIN")
+        );
+        assert!(validate_and_normalize_scalar(&ast, "role", "Role", true, &json!("SUPERADMIN")).is_err());
+        assert!(validate_and_normalize_scalar(&ast, "role", "Role", true, &json!(123)).is_err());
+    }
+
+    #[test]
     fn test_hydrate_create() {
         let ast = mock_ast();
         let payload = json!({
