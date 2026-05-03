@@ -112,7 +112,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
             }
 
             match &field.field_type {
-                AstFieldType::ScalarArray(_) | AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {
+                AstFieldType::ScalarArray(_) | AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) | AstFieldType::EnumArray(_) => {
                     columns.push(PhysicalColumn {
                         name: field.name.clone(),
                         sqlite_type: "TEXT".to_string(), // Tagged internally for JSON1
@@ -141,7 +141,7 @@ pub fn lower_ast_to_physical(ast: &SchemaAst) -> Vec<PhysicalTable> {
                         unique: false,
                     });
                 },
-                AstFieldType::Scalar(t) => {
+                AstFieldType::Scalar(t) | AstFieldType::Enum(t) => {
                     let is_id = field.attributes.iter().any(|a| matches!(a, FieldAttribute::Id));
                     let is_autoincrement = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalDefault(DefaultFunc::AutoIncrement)));
                     let is_uuid = field.attributes.iter().any(|a| matches!(a, FieldAttribute::InternalDefault(DefaultFunc::Uuid)));
@@ -361,5 +361,37 @@ mod tests {
 
         let date_col = table.columns.iter().find(|c| c.name == "recordedAt").unwrap();
         assert_eq!(date_col.sqlite_type, "DATETIME");
+    }
+
+    #[test]
+    fn test_ddl_mapping_enums() {
+        let mut ast = SchemaAst::default();
+        let mut model = ModelNode {
+            name: "User".to_string(),
+            ..Default::default()
+        };
+        model.resolved_fields.push(FieldNode {
+            name: "role".to_string(),
+            field_type: AstFieldType::Enum("Role".to_string()),
+            is_optional: false,
+            attributes: vec![],
+        });
+        model.resolved_fields.push(FieldNode {
+            name: "roles".to_string(),
+            field_type: AstFieldType::EnumArray("Role".to_string()),
+            is_optional: false,
+            attributes: vec![],
+        });
+        ast.models.insert("User".to_string(), model);
+
+        let physical = lower_ast_to_physical(&ast);
+        let table = &physical[0];
+        
+        let role_col = table.columns.iter().find(|c| c.name == "role").unwrap();
+        assert_eq!(role_col.sqlite_type, "TEXT");
+
+        let roles_col = table.columns.iter().find(|c| c.name == "roles").unwrap();
+        assert_eq!(roles_col.sqlite_type, "TEXT");
+        assert!(roles_col.is_json_array);
     }
 }
