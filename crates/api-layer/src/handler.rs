@@ -162,6 +162,7 @@ mod tests {
         let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
+            enums: HashMap::new(),
         };
 
         ast.models.insert("User".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
@@ -2217,6 +2218,7 @@ mod tests {
         let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: HashMap::new(),
             unions: HashMap::new(),
+            enums: HashMap::new(),
         };
 
         ast.models.insert("Config".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),

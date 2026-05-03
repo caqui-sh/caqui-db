@@ -30,6 +30,7 @@ mod tests {
             ast: Arc::new(SchemaAst { bases: std::collections::HashMap::new(),
                 models: HashMap::new(),
                 unions: HashMap::new(),
+                enums: HashMap::new(),
             }),
             db_pool: pool,
         }

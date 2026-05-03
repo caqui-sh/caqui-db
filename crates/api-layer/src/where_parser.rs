@@ -2,7 +2,17 @@ use serde_json::Value;
 use query_compiler::ir::{WhereClause, WhereCondition, RelationFilter};
 use schema_parser::ast::{ModelNode, FieldAttribute, AstFieldType, SchemaAst};
 
-pub fn val_to_string(val: &Value, type_name: Option<&str>) -> Result<String, String> {
+pub fn val_to_string(ast: &SchemaAst, val: &Value, type_name: Option<&str>, is_enum: bool) -> Result<String, String> {
+    if is_enum {
+        let type_name_str = type_name.ok_or_else(|| "Internal Error: type_name missing for enum".to_string())?;
+        let variants = ast.enums.get(type_name_str).ok_or_else(|| format!("Security Exception: Enum '{}' undefined.", type_name_str))?;
+        let str_val = val.as_str().ok_or_else(|| format!("Validation Error: Expected a String for enum '{}'.", type_name_str))?;
+        if variants.contains(&str_val.to_string()) {
+            return Ok(str_val.to_string());
+        } else {
+            return Err(format!("Validation Error: Value '{}' is not a valid variant for enum '{}'.", str_val, type_name_str));
+        }
+    }
     match type_name {
         Some("Float") => {
             if let Some(n) = val.as_f64() {
@@ -32,42 +42,42 @@ pub fn val_to_string(val: &Value, type_name: Option<&str>) -> Result<String, Str
     }
 }
 
-pub fn parse_where_condition(val: &Value, type_name: Option<&str>) -> Result<WhereCondition, String> {
+pub fn parse_where_condition(ast: &SchemaAst, val: &Value, type_name: Option<&str>, is_enum: bool) -> Result<WhereCondition, String> {
     if val.is_null() {
         return Ok(WhereCondition::IsNull);
     }
     if val.as_str().is_some() || val.as_number().is_some() || val.as_bool().is_some() {
-        return Ok(WhereCondition::Eq(val_to_string(val, type_name)?));
+        return Ok(WhereCondition::Eq(val_to_string(ast, val, type_name, is_enum)?));
     }
     if let Some(obj) = val.as_object() {
         if let Some(eq) = obj.get("eq") {
             if eq.is_null() {
                 return Ok(WhereCondition::IsNull);
             }
-            return Ok(WhereCondition::Eq(val_to_string(eq, type_name)?));
+            return Ok(WhereCondition::Eq(val_to_string(ast, eq, type_name, is_enum)?));
         }
         if let Some(neq) = obj.get("notEq") {
             if neq.is_null() {
                 return Ok(WhereCondition::IsNotNull);
             }
-            return Ok(WhereCondition::NotEq(val_to_string(neq, type_name)?));
+            return Ok(WhereCondition::NotEq(val_to_string(ast, neq, type_name, is_enum)?));
         }
         if let Some(gt) = obj.get("gt") {
-            return Ok(WhereCondition::Gt(val_to_string(gt, type_name)?));
+            return Ok(WhereCondition::Gt(val_to_string(ast, gt, type_name, is_enum)?));
         }
         if let Some(gte) = obj.get("gte") {
-            return Ok(WhereCondition::Gte(val_to_string(gte, type_name)?));
+            return Ok(WhereCondition::Gte(val_to_string(ast, gte, type_name, is_enum)?));
         }
         if let Some(lt) = obj.get("lt") {
-            return Ok(WhereCondition::Lt(val_to_string(lt, type_name)?));
+            return Ok(WhereCondition::Lt(val_to_string(ast, lt, type_name, is_enum)?));
         }
         if let Some(lte) = obj.get("lte") {
-            return Ok(WhereCondition::Lte(val_to_string(lte, type_name)?));
+            return Ok(WhereCondition::Lte(val_to_string(ast, lte, type_name, is_enum)?));
         }
         if let Some(in_vals) = obj.get("in").and_then(|v| v.as_array()) {
             let vals: Result<Vec<String>, String> = in_vals.iter()
                 .filter(|v| !v.is_null())
-                .map(|v| val_to_string(v, type_name))
+                .map(|v| val_to_string(ast, v, type_name, is_enum))
                 .collect();
             return Ok(WhereCondition::In(vals?));
         }
@@ -116,7 +126,7 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
             None => {
                 if k.starts_with("__") {
                     // Synthetic markers injected by polymorphism are implicitly booleans
-                    let cond = parse_where_condition(v, None)?;
+                    let cond = parse_where_condition(ast, v, None, false)?;
                     clauses.push(WhereClause::Field(k.clone(), cond));
                     continue;
                 } else {
@@ -125,14 +135,16 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
             }
         };
 
-        let type_name = match &field_def.field_type {
-            AstFieldType::Scalar(t) => Some(t.as_str()),
-            AstFieldType::ScalarArray(t) => Some(t.as_str()),
-            _ => None,
+        let (type_name, is_enum) = match &field_def.field_type {
+            AstFieldType::Scalar(t) => (Some(t.as_str()), false),
+            AstFieldType::ScalarArray(t) => (Some(t.as_str()), false),
+            AstFieldType::Enum(t) => (Some(t.as_str()), true),
+            AstFieldType::EnumArray(t) => (Some(t.as_str()), true),
+            _ => (None, false),
         };
 
         match &field_def.field_type {
-            AstFieldType::Scalar(_) | AstFieldType::ScalarArray(_) | AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {
+            AstFieldType::Scalar(_) | AstFieldType::ScalarArray(_) | AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) | AstFieldType::Enum(_) | AstFieldType::EnumArray(_) => {
                 if let Some(obj) = v.as_object() {
                     // If it's an object, it might contain multiple operators like { gte: 20, lt: 30 }
                     // We only treat it as operators if it's NOT a complex relational filter object (some/every/etc)
@@ -140,15 +152,15 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
                     let mut operators_found = false;
                     for (op, op_val) in obj {
                         let cond = match op.as_str() {
-                            "eq" => if op_val.is_null() { Some(WhereCondition::IsNull) } else { Some(WhereCondition::Eq(val_to_string(op_val, type_name)?)) },
-                            "notEq" => if op_val.is_null() { Some(WhereCondition::IsNotNull) } else { Some(WhereCondition::NotEq(val_to_string(op_val, type_name)?)) },
-                            "gt" => Some(WhereCondition::Gt(val_to_string(op_val, type_name)?)),
-                            "gte" => Some(WhereCondition::Gte(val_to_string(op_val, type_name)?)),
-                            "lt" => Some(WhereCondition::Lt(val_to_string(op_val, type_name)?)),
-                            "lte" => Some(WhereCondition::Lte(val_to_string(op_val, type_name)?)),
+                            "eq" => if op_val.is_null() { Some(WhereCondition::IsNull) } else { Some(WhereCondition::Eq(val_to_string(ast, op_val, type_name, is_enum)?)) },
+                            "notEq" => if op_val.is_null() { Some(WhereCondition::IsNotNull) } else { Some(WhereCondition::NotEq(val_to_string(ast, op_val, type_name, is_enum)?)) },
+                            "gt" => Some(WhereCondition::Gt(val_to_string(ast, op_val, type_name, is_enum)?)),
+                            "gte" => Some(WhereCondition::Gte(val_to_string(ast, op_val, type_name, is_enum)?)),
+                            "lt" => Some(WhereCondition::Lt(val_to_string(ast, op_val, type_name, is_enum)?)),
+                            "lte" => Some(WhereCondition::Lte(val_to_string(ast, op_val, type_name, is_enum)?)),
                             "in" => {
                                 let vals = op_val.as_array().ok_or("Operator 'in' expects an array")?
-                                    .iter().filter(|v| !v.is_null()).map(|v| val_to_string(v, type_name)).collect::<Result<Vec<String>, String>>()?;
+                                    .iter().filter(|v| !v.is_null()).map(|v| val_to_string(ast, v, type_name, is_enum)).collect::<Result<Vec<String>, String>>()?;
                                 Some(WhereCondition::In(vals))
                             },
                             "isNull" => if op_val.as_bool().unwrap_or(false) { Some(WhereCondition::IsNull) } else { Some(WhereCondition::IsNotNull) },
@@ -160,11 +172,11 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
                         }
                     }
                     if !operators_found {
-                         let cond = parse_where_condition(v, type_name)?;
+                         let cond = parse_where_condition(ast, v, type_name, is_enum)?;
                          clauses.push(WhereClause::Field(k.clone(), cond));
                     }
                 } else {
-                    let cond = parse_where_condition(v, type_name)?;
+                    let cond = parse_where_condition(ast, v, type_name, is_enum)?;
                     clauses.push(WhereClause::Field(k.clone(), cond));
                 }
             }
@@ -209,7 +221,7 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
                     }
                 }
                 
-                let cond = parse_where_condition(v, None)?;
+                let cond = parse_where_condition(ast, v, None, false)?;
                 clauses.push(WhereClause::Field(k.clone(), cond));
             }
             AstFieldType::Relation(target_model_name) | AstFieldType::RelationArray(target_model_name) => {
@@ -220,7 +232,7 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
                 };
 
                 if v.is_null() || !is_relational_op {
-                    let cond = parse_where_condition(v, None)?;
+                    let cond = parse_where_condition(ast, v, None, false)?;
                     clauses.push(WhereClause::Field(k.clone(), cond));
                 } else if let Some(obj) = v.as_object() {
                     // Parse Relation Filter
@@ -339,35 +351,58 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn mock_ast() -> SchemaAst {
+        let mut ast = SchemaAst {
+            models: std::collections::HashMap::new(),
+            bases: std::collections::HashMap::new(),
+            unions: std::collections::HashMap::new(),
+            enums: std::collections::HashMap::new(),
+        };
+        ast.enums.insert("Role".to_string(), vec!["ADMIN".to_string(), "USER".to_string()]);
+        ast
+    }
+
     #[test]
     fn test_val_to_string_float() {
-        assert_eq!(val_to_string(&json!(10.5), Some("Float")).unwrap(), "10.5");
-        assert_eq!(val_to_string(&json!(10), Some("Float")).unwrap(), "10");
-        assert!(val_to_string(&json!("10.5"), Some("Float")).is_err());
+        let ast = mock_ast();
+        assert_eq!(val_to_string(&ast, &json!(10.5), Some("Float"), false).unwrap(), "10.5");
+        assert_eq!(val_to_string(&ast, &json!(10), Some("Float"), false).unwrap(), "10");
+        assert!(val_to_string(&ast, &json!("10.5"), Some("Float"), false).is_err());
     }
 
     #[test]
     fn test_val_to_string_datetime() {
+        let ast = mock_ast();
         assert_eq!(
-            val_to_string(&json!("2025-10-10T12:00:00-04:00"), Some("DateTime")).unwrap(),
+            val_to_string(&ast, &json!("2025-10-10T12:00:00-04:00"), Some("DateTime"), false).unwrap(),
             "2025-10-10T16:00:00.000Z"
         );
-        assert!(val_to_string(&json!("Next Tuesday"), Some("DateTime")).is_err());
+        assert!(val_to_string(&ast, &json!("Next Tuesday"), Some("DateTime"), false).is_err());
+    }
+
+    #[test]
+    fn test_val_to_string_enum() {
+        let ast = mock_ast();
+        assert_eq!(val_to_string(&ast, &json!("ADMIN"), Some("Role"), true).unwrap(), "ADMIN");
+        assert!(val_to_string(&ast, &json!("SUPERADMIN"), Some("Role"), true).is_err());
+        assert!(val_to_string(&ast, &json!(10), Some("Role"), true).is_err());
     }
 
     #[test]
     fn test_parse_where_condition_datetime() {
-        let condition = parse_where_condition(&json!({ "gte": "2025-10-10T12:00:00-04:00" }), Some("DateTime")).unwrap();
+        let ast = mock_ast();
+        let condition = parse_where_condition(&ast, &json!({ "gte": "2025-10-10T12:00:00-04:00" }), Some("DateTime"), false).unwrap();
         assert_eq!(condition, WhereCondition::Gte("2025-10-10T16:00:00.000Z".to_string()));
 
-        let err = parse_where_condition(&json!({ "gte": "Next Tuesday" }), Some("DateTime"));
+        let err = parse_where_condition(&ast, &json!({ "gte": "Next Tuesday" }), Some("DateTime"), false);
         assert!(err.is_err());
     }
 
     #[test]
     fn test_val_to_string_fallback() {
-        assert_eq!(val_to_string(&json!("Alice"), None).unwrap(), "Alice");
-        assert_eq!(val_to_string(&json!(true), None).unwrap(), "1");
-        assert_eq!(val_to_string(&json!(null), None).unwrap(), "");
+        let ast = mock_ast();
+        assert_eq!(val_to_string(&ast, &json!("Alice"), None, false).unwrap(), "Alice");
+        assert_eq!(val_to_string(&ast, &json!(true), None, false).unwrap(), "1");
+        assert_eq!(val_to_string(&ast, &json!(null), None, false).unwrap(), "");
     }
 }

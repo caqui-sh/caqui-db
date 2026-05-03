@@ -48,7 +48,8 @@ pub fn hydrate_payload_to_ir(
                     selections.push(SelectField::Scalar(field_name.clone()));
                 }
             },
-            AstFieldType::ScalarArray(_) => selections.push(SelectField::ScalarArray(field_name.clone())),
+            AstFieldType::ScalarArray(_) | AstFieldType::EnumArray(_) => selections.push(SelectField::ScalarArray(field_name.clone())),
+            AstFieldType::Enum(_) => selections.push(SelectField::Scalar(field_name.clone())),
             
             AstFieldType::Relation(target_model) | AstFieldType::RelationArray(target_model) => {
                 // 3. Recursive Graph Traversal for nested relational queries
@@ -547,6 +548,7 @@ mod tests {
         let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: std::collections::HashMap::new(),
             unions: std::collections::HashMap::new(),
+            enums: std::collections::HashMap::new(),
         };
 
         ast.models.insert("User".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),

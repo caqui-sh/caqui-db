@@ -3,9 +3,18 @@ use query_compiler::mutation_ir::{ExecutionPlan, ExecutionStep, Parameter};
 use schema_parser::ast::{SchemaAst, AstFieldType, FieldAttribute};
 use crate::where_parser::parse_where_clause;
 
-fn validate_and_normalize_scalar(field_name: &str, type_name: &str, val: &Value) -> Result<Value, String> {
+fn validate_and_normalize_scalar(ast: &SchemaAst, field_name: &str, type_name: &str, is_enum: bool, val: &Value) -> Result<Value, String> {
     if val.is_null() {
         return Ok(Value::Null);
+    }
+    if is_enum {
+        let variants = ast.enums.get(type_name).ok_or_else(|| format!("Security Exception: Enum '{}' undefined.", type_name))?;
+        let str_val = val.as_str().ok_or_else(|| format!("Validation Error: Field '{}' expects a String for enum '{}'.", field_name, type_name))?;
+        if variants.contains(&str_val.to_string()) {
+            return Ok(val.clone());
+        } else {
+            return Err(format!("Validation Error: Value '{}' is not a valid variant for enum '{}'.", str_val, type_name));
+        }
     }
     match type_name {
         "Float" => {
@@ -244,13 +253,30 @@ fn translate_create_node(
 
         match &field_def.field_type {
             AstFieldType::Scalar(type_name) => {
-                let normalized_val = validate_and_normalize_scalar(key, type_name, val)?;
+                let normalized_val = validate_and_normalize_scalar(ast, key, type_name, false, val)?;
                 columns.push(key.clone());
                 placeholders.push(format!("?{}", param_idx));
                 params.push(Parameter::Literal(normalized_val));
                 param_idx += 1;
             },
-            AstFieldType::ScalarArray(_) => {
+            AstFieldType::Enum(type_name) => {
+                let normalized_val = validate_and_normalize_scalar(ast, key, type_name, true, val)?;
+                columns.push(key.clone());
+                placeholders.push(format!("?{}", param_idx));
+                params.push(Parameter::Literal(normalized_val));
+                param_idx += 1;
+            },
+            AstFieldType::ScalarArray(_) | AstFieldType::EnumArray(_) => {
+                let is_enum = matches!(&field_def.field_type, AstFieldType::EnumArray(_));
+                if is_enum {
+                    if let AstFieldType::EnumArray(type_name) = &field_def.field_type {
+                        if let Some(arr) = val.as_array() {
+                            for item in arr {
+                                validate_and_normalize_scalar(ast, key, type_name, true, item)?;
+                            }
+                        }
+                    }
+                }
                 columns.push(key.clone());
                 placeholders.push(format!("?{}", param_idx));
                 let json_val = serde_json::to_string(&val).unwrap_or_else(|_| "[]".to_string());
@@ -489,14 +515,26 @@ fn translate_update_node(
 
         match &field_def.field_type {
             AstFieldType::Scalar(type_name) => {
-                let normalized_val = validate_and_normalize_scalar(key, type_name, val)?;
+                let normalized_val = validate_and_normalize_scalar(ast, key, type_name, false, val)?;
                 set_clauses.push(format!("{} = ?{}", key, param_idx));
                 params.push(Parameter::Literal(normalized_val));
                 param_idx += 1;
             },
-            AstFieldType::ScalarArray(_) => {
+            AstFieldType::Enum(type_name) => {
+                let normalized_val = validate_and_normalize_scalar(ast, key, type_name, true, val)?;
+                set_clauses.push(format!("{} = ?{}", key, param_idx));
+                params.push(Parameter::Literal(normalized_val));
+                param_idx += 1;
+            },
+            AstFieldType::ScalarArray(_) | AstFieldType::EnumArray(_) => {
+                let is_enum = matches!(&field_def.field_type, AstFieldType::EnumArray(_));
                 if let Some(obj) = val.as_object() {
                     if let Some(push_val) = obj.get("push") {
+                        if is_enum {
+                            if let AstFieldType::EnumArray(type_name) = &field_def.field_type {
+                                validate_and_normalize_scalar(ast, key, type_name, true, push_val)?;
+                            }
+                        }
                         set_clauses.push(format!("{} = json_insert(COALESCE({}, '[]'), '$[#]', ?{})", key, key, param_idx));
                         let push_str = if push_val.is_string() {
                             push_val.as_str().unwrap().to_string()
@@ -507,6 +545,13 @@ fn translate_update_node(
                         param_idx += 1;
                     }
                 } else if let Some(arr) = val.as_array() {
+                    if is_enum {
+                        if let AstFieldType::EnumArray(type_name) = &field_def.field_type {
+                            for item in arr {
+                                validate_and_normalize_scalar(ast, key, type_name, true, item)?;
+                            }
+                        }
+                    }
                     set_clauses.push(format!("{} = ?{}", key, param_idx));
                     let json_val = serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string());
                     params.push(Parameter::Literal(serde_json::Value::String(json_val)));
@@ -1320,6 +1365,7 @@ mod tests {
         let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
             models: std::collections::HashMap::new(),
             unions: std::collections::HashMap::new(),
+            enums: std::collections::HashMap::new(),
         };
 
         ast.models.insert("User".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
@@ -1337,34 +1383,37 @@ mod tests {
 
     #[test]
     fn test_validate_and_normalize_scalar_float() {
+        let ast = mock_ast();
         assert_eq!(
-            validate_and_normalize_scalar("val", "Float", &json!(10.5)).unwrap(),
+            validate_and_normalize_scalar(&ast, "val", "Float", false, &json!(10.5)).unwrap(),
             json!(10.5)
         );
         assert_eq!(
-            validate_and_normalize_scalar("val", "Float", &json!(10)).unwrap(),
+            validate_and_normalize_scalar(&ast, "val", "Float", false, &json!(10)).unwrap(),
             json!(10)
         );
-        assert!(validate_and_normalize_scalar("val", "Float", &json!("10.5")).is_err());
+        assert!(validate_and_normalize_scalar(&ast, "val", "Float", false, &json!("10.5")).is_err());
     }
 
     #[test]
     fn test_validate_and_normalize_scalar_datetime() {
+        let ast = mock_ast();
         assert_eq!(
-            validate_and_normalize_scalar("date", "DateTime", &json!("2025-01-01T00:00:00Z")).unwrap(),
+            validate_and_normalize_scalar(&ast, "date", "DateTime", false, &json!("2025-01-01T00:00:00Z")).unwrap(),
             json!("2025-01-01T00:00:00.000Z")
         );
         assert_eq!(
-            validate_and_normalize_scalar("date", "DateTime", &json!("2025-10-10T12:00:00-04:00")).unwrap(),
+            validate_and_normalize_scalar(&ast, "date", "DateTime", false, &json!("2025-10-10T12:00:00-04:00")).unwrap(),
             json!("2025-10-10T16:00:00.000Z")
         );
-        assert!(validate_and_normalize_scalar("date", "DateTime", &json!("Next Tuesday")).is_err());
+        assert!(validate_and_normalize_scalar(&ast, "date", "DateTime", false, &json!("Next Tuesday")).is_err());
     }
 
     #[test]
     fn test_validate_and_normalize_scalar_fallback() {
+        let ast = mock_ast();
         assert_eq!(
-            validate_and_normalize_scalar("name", "String", &json!("Alice")).unwrap(),
+            validate_and_normalize_scalar(&ast, "name", "String", false, &json!("Alice")).unwrap(),
             json!("Alice")
         );
     }
