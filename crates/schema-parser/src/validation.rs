@@ -323,6 +323,21 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
 
     // Check models
     for model in ast.models.values_mut() {
+        for attr in &model.block_attributes {
+            if let ModelAttribute::FullText(fields) = attr {
+                if fields.is_empty() {
+                    return Err(ValidationError(format!("@@fulltext attribute on model '{}' must specify at least one field.", model.name)));
+                }
+                for field_name in fields {
+                    let field = model.resolved_fields.iter().find(|f| &f.name == field_name)
+                        .ok_or_else(|| ValidationError(format!("@@fulltext attribute on model '{}' references unknown field '{}'.", model.name, field_name)))?;
+                    
+                    if field.field_type != AstFieldType::Scalar("String".to_string()) {
+                        return Err(ValidationError(format!("@@fulltext attribute on model '{}' references field '{}' which is not a String.", model.name, field_name)));
+                    }
+                }
+            }
+        }
         
         for field in &mut model.resolved_fields {
             // Check for @id attribute
@@ -1321,5 +1336,34 @@ fn test_explicit_at_id_rejected() {
         let ast = crate::parser::parse_schema(input).unwrap();
         let err = validate_schema(ast).unwrap_err();
         assert!(err.0.contains("Duplicate identifier 'Role' found."));
+    }
+
+    #[test]
+    fn test_parse_fulltext_attribute_invalid_field() {
+        let input = "
+            model User {
+                title: String
+                @@fulltext([title, body])
+                @@id(uuid)
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let err = validate_schema(ast).unwrap_err();
+        assert!(err.0.contains("@@fulltext attribute on model 'User' references unknown field 'body'."));
+    }
+
+    #[test]
+    fn test_parse_fulltext_attribute_non_string() {
+        let input = "
+            model User {
+                title: String
+                age: Int
+                @@fulltext([title, age])
+                @@id(uuid)
+            }
+        ";
+        let ast = crate::parser::parse_schema(input).unwrap();
+        let err = validate_schema(ast).unwrap_err();
+        assert!(err.0.contains("@@fulltext attribute on model 'User' references field 'age' which is not a String."));
     }
 }

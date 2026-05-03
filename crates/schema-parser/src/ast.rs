@@ -33,6 +33,7 @@ pub struct ModelNode {
 pub enum ModelAttribute {
     Id(DefaultFunc),
     Track,
+    FullText(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

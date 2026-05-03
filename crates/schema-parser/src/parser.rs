@@ -231,6 +231,21 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                                 block_attributes.push(ModelAttribute::Id(default_func));
                             } else if attr_name == "track" {
                                 block_attributes.push(ModelAttribute::Track);
+                            } else if attr_name == "fulltext" {
+                                if let Some(args_pair) = attr_inner.next() {
+                                    if args_pair.as_rule() == Rule::attr_args {
+                                        if let Some(param) = args_pair.into_inner().next() {
+                                            if let Some(attr_val) = param.into_inner().next() {
+                                                if let Some(array_pair) = attr_val.into_inner().next() {
+                                                    if array_pair.as_rule() == Rule::attr_array {
+                                                        let fields = array_pair.into_inner().map(|p| p.as_str().to_string()).collect();
+                                                        block_attributes.push(ModelAttribute::FullText(fields));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                         _ => {}
@@ -385,6 +400,28 @@ mod tests {
             fields: Some(vec!["__id".to_string()]), 
             references: Some(vec!["authorId".to_string()]) 
         }]);
+    }
+
+    #[test]
+    fn test_parse_fulltext_attribute() {
+        let input = "
+            model User {
+                title: String
+                body: String
+                @@fulltext([title, body])
+                @@id(uuid)
+            }
+        ";
+
+        let ast = parse_schema(input).unwrap();
+        let user = ast.models.get("User").unwrap();
+
+        let ft = user.block_attributes.iter().find(|a| matches!(a, ModelAttribute::FullText(_))).unwrap();
+        if let ModelAttribute::FullText(fields) = ft {
+            assert_eq!(fields, &vec!["title".to_string(), "body".to_string()]);
+        } else {
+            panic!("Expected FullText attribute");
+        }
     }
 
     #[test]
