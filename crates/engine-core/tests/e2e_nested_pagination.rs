@@ -40,6 +40,8 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir) {
             deletedAt: String?
             posts: Post[]
             profile: Profile?
+            contents: Content[]
+            videos: Video[]
             @@id(uuid)
         }
         model Profile {
@@ -54,14 +56,29 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir) {
             authorId: String
             author: User @relation(fields: [authorId], references: [__id])
             comments: Comment[]
+            tag_ids: String[]
+            tags: Tag[] @relation(fields: [tag_ids], references: [__id])
             @@id(uuid)
         }
         model Comment {
             text: String
             postId: String
             post: Post @relation(fields: [postId], references: [__id])
+            score: Int
             @@id(uuid)
         }
+        model Video {
+            title: String
+            authorId: String
+            author: User @relation(fields: [authorId], references: [__id])
+            @@id(uuid)
+        }
+        model Tag {
+            name: String
+            post: Post
+            @@id(uuid)
+        }
+        union Content = Post | Video
         union SearchResult = User | Post
     "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
@@ -77,18 +94,36 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir) {
     let conn = pool.get().await.unwrap();
     conn.interact(|db| {
         // Users
-        db.execute("INSERT INTO User (__id, name, age, status, deletedAt) VALUES ('u1', 'User 1', 25, 'active', NULL)", []).unwrap();
-        db.execute("INSERT INTO User (__id, name, age, status, deletedAt) VALUES ('u2', 'User 2', 30, 'active', NULL)", []).unwrap();
+        let u1_contents = r#"[
+            {"type":"Post","__id":"p1_1"}, {"type":"Post","__id":"p1_2"},
+            {"type":"Post","__id":"p1_3"}, {"type":"Post","__id":"p1_4"},
+            {"type":"Video","__id":"v1_1"}, {"type":"Video","__id":"v1_2"},
+            {"type":"Video","__id":"v1_3"}, {"type":"Video","__id":"v1_4"}
+        ]"#;
+        db.execute("INSERT INTO User (__id, name, age, status, deletedAt, contents) VALUES ('u1', 'User 1', 25, 'active', NULL, ?)", [u1_contents]).unwrap();
+        db.execute("INSERT INTO User (__id, name, age, status, deletedAt, contents) VALUES ('u2', 'User 2', 30, 'active', NULL, '[]')", []).unwrap();
+
+        // Tags
+        db.execute("INSERT INTO Tag (__id, name) VALUES ('t1', 'rust')", []).unwrap();
+        db.execute("INSERT INTO Tag (__id, name) VALUES ('t2', 'graphql')", []).unwrap();
 
         // 5 Posts per user
         for i in 1..=5 {
-            db.execute("INSERT INTO Post (__id, title, published, authorId) VALUES (?, ?, 1, 'u1')", [format!("p1_{}", i), format!("Post 1-{}", i)]).unwrap();
-            db.execute("INSERT INTO Post (__id, title, published, authorId) VALUES (?, ?, 1, 'u2')", [format!("p2_{}", i), format!("Post 2-{}", i)]).unwrap();
+            let tags = if i % 2 == 0 { "[\"t1\"]" } else { "[\"t1\", \"t2\"]" };
+            db.execute("INSERT INTO Post (__id, title, published, authorId, tag_ids) VALUES (?, ?, 1, 'u1', ?)", [format!("p1_{}", i), format!("Post 1-{}", i), tags.to_string()]).unwrap();
+            db.execute("INSERT INTO Post (__id, title, published, authorId, tag_ids) VALUES (?, ?, 1, 'u2', ?)", [format!("p2_{}", i), format!("Post 2-{}", i), "[]".to_string()]).unwrap();
+        }
+
+        // 5 Videos for User 1
+        for i in 1..=5 {
+            db.execute("INSERT INTO Video (__id, title, authorId) VALUES (?, ?, 'u1')", [format!("v1_{}", i), format!("Video 1-{}", i)]).unwrap();
         }
 
         // 5 Comments on Post 1 (p1_1)
         for i in 1..=5 {
-            db.execute("INSERT INTO Comment (__id, text, postId) VALUES (?, ?, 'p1_1')", [format!("c1_{}", i), format!("Comment {}", i)]).unwrap();
+            let score = (10 - i).to_string(); // 9, 8, 7, 6, 5
+            let text = format!("Comment {}", i);
+            db.execute("INSERT INTO Comment (__id, text, postId, score) VALUES (?, ?, 'p1_1', ?)", [format!("c1_{}", i), text, score]).unwrap();
         }
     }).await.unwrap();
 
@@ -263,4 +298,159 @@ async fn test_deeply_nested_pagination_level_3() {
     assert_eq!(c1["__id"], "c1_1");
     assert_eq!(c1["post"]["__id"], "p1_1");
     assert_eq!(c1["post"]["author"]["__id"], "u1");
+}
+
+
+#[tokio::test]
+async fn test_polymorphic_array_pagination() {
+    let (app, _dir) = setup_app().await;
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "select": {
+            "__id": true,
+            "contents": {
+                "Post": {
+                    "limit": 4,
+                    "orderBy": { "__id": "asc" },
+                    "select": {
+                        "__id": true,
+                        "title": true
+                    }
+                },
+                "Video": {
+                    "limit": 4,
+                    "orderBy": { "__id": "asc" },
+                    "select": {
+                        "__id": true,
+                        "title": true
+                    }
+                }
+            }
+        }
+    });
+    let response = post_query(&app, payload).await;
+    println!("POLYMORPHIC RESPONSE: {}", response);
+    let data = response["data"].as_array().unwrap();
+    let contents = data[0]["contents"].as_array().unwrap();
+    assert_eq!(contents.len(), 8); // 4 posts + 4 videos (if they are just concatenated or mixed)
+    // We will just print them and exit to see what is generated, or just check the length
+
+}
+
+#[tokio::test]
+async fn test_filtered_pagination() {
+    let (app, _dir) = setup_app().await;
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "select": {
+            "__id": true,
+            "posts": {
+                "where": { "title": "Post 1-1" },
+                "limit": 1,
+                "orderBy": { "__id": "asc" },
+                "select": {
+                    "__id": true,
+                    "title": true
+                }
+            }
+        }
+    });
+    let response = post_query(&app, payload).await;
+    println!("FILTERED RESPONSE: {}", response);
+    let data = response["data"].as_array().unwrap();
+    let posts = data[0]["posts"].as_array().unwrap();
+    assert_eq!(posts.len(), 1);
+    assert_eq!(posts[0]["__id"], "p1_1");
+}
+
+#[tokio::test]
+async fn test_sibling_relation_pagination() {
+    let (app, _dir) = setup_app().await;
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "select": {
+            "__id": true,
+            "posts": {
+                "limit": 2,
+                "orderBy": { "__id": "asc" },
+                "select": { "__id": true }
+            },
+            "videos": {
+                "limit": 2,
+                "orderBy": { "__id": "asc" },
+                "select": { "__id": true }
+            }
+        }
+    });
+    let response = post_query(&app, payload).await;
+    let data = response["data"].as_array().unwrap();
+    let posts = data[0]["posts"].as_array().unwrap();
+    let videos = data[0]["videos"].as_array().unwrap();
+    assert_eq!(posts.len(), 2);
+    assert_eq!(videos.len(), 2);
+    assert_eq!(posts[0]["__id"], "p1_1");
+    assert_eq!(videos[0]["__id"], "v1_1");
+}
+
+#[tokio::test]
+async fn test_inverse_relation_pagination() {
+    let (app, _dir) = setup_app().await;
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "Post",
+        "where": { "__id": "p1_1" },
+        "select": {
+            "__id": true,
+            "comments": {
+                "limit": 2,
+                "orderBy": { "__id": "asc" },
+                "select": { "__id": true }
+            }
+        }
+    });
+    let response = post_query(&app, payload).await;
+    let data = response["data"].as_array().unwrap();
+    let comments = data[0]["comments"].as_array().unwrap();
+    assert_eq!(comments.len(), 2);
+    assert_eq!(comments[0]["__id"], "c1_1");
+    assert_eq!(comments[1]["__id"], "c1_2");
+}
+
+#[tokio::test]
+async fn test_deterministic_secondary_sorting() {
+    let (app, _dir) = setup_app().await;
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "Post",
+        "where": { "__id": "p1_1" },
+        "select": {
+            "__id": true,
+            "comments": {
+                "limit": 3,
+                "orderBy": {
+                    "score": "asc",
+                    "__id": "asc"
+                },
+                "select": {
+                    "__id": true,
+                    "score": true
+                }
+            }
+        }
+    });
+    let response = post_query(&app, payload).await;
+    let data = response["data"].as_array().unwrap();
+    let comments = data[0]["comments"].as_array().unwrap();
+    assert_eq!(comments.len(), 3);
+    assert_eq!(comments[0]["score"], 9); 
+    assert_eq!(comments[0]["__id"], "c1_1");
+    assert_eq!(comments[1]["score"], 8);
+    assert_eq!(comments[1]["__id"], "c1_2");
+    assert_eq!(comments[2]["score"], 7);
 }
