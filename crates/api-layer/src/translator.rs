@@ -536,3 +536,61 @@ fn compile_polymorphic_read(
         offset: payload.get("skip").and_then(|l| l.as_u64()).map(|l| l as usize),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use schema_parser::ast::{ModelNode, FieldNode};
+    use serde_json::json;
+
+    fn mock_ast() -> SchemaAst {
+        let mut ast = SchemaAst { bases: std::collections::HashMap::new(),
+            models: std::collections::HashMap::new(),
+            unions: std::collections::HashMap::new(),
+        };
+
+        ast.models.insert("User".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+            name: "User".to_string(),
+            resolved_fields: vec![
+                FieldNode { name: "__id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "posts".to_string(), field_type: AstFieldType::RelationArray("Post".to_string()), is_optional: false, attributes: vec![] },
+            ]
+        });
+
+        ast.models.insert("Post".to_string(), ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+            name: "Post".to_string(),
+            resolved_fields: vec![
+                FieldNode { name: "__id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "title".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+            ]
+        });
+
+        ast
+    }
+
+    #[test]
+    fn test_hydrate_nested_pagination_arguments() {
+        let ast = mock_ast();
+        let payload = json!({
+            "select": {
+                "posts": {
+                    "select": { "title": true },
+                    "limit": 10,
+                    "skip": 5
+                }
+            }
+        });
+        
+        let mut alias_counter = 0;
+        let ir = hydrate_payload_to_ir(&ast, "User", &payload, &mut alias_counter, 0).unwrap();
+        
+        let relation = ir.selections.first().unwrap();
+        if let SelectField::Relation { query, .. } = relation {
+            assert_eq!(query.limit, Some(10));
+            assert_eq!(query.offset, Some(5));
+        } else {
+            panic!("Expected Relation");
+        }
+    }
+}
+

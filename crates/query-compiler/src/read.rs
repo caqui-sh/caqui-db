@@ -883,4 +883,193 @@ mod tests {
             "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'contents', (SELECT json_group_array(json(CASE j_t0_contents.value->>'type' WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.__id = j_t0_contents.value->>'__id' AND t1.status = 'published') ELSE NULL END)) FROM (SELECT value, key FROM json_each(t0.contents) ORDER BY key ASC) AS j_t0_contents)) AS root_payload FROM User AS t0);"
         );
     }
+
+    #[test]
+    fn test_compile_multiple_cte_accumulation() {
+        let post_query = QueryNode {
+            primary_key: "__id".to_string(),
+            source: QueryIrSource::Table("Post".to_string()),
+            alias: "t1".to_string(),
+            order_by: vec![],
+            selections: vec![SelectField::Scalar("title".to_string())],
+            filters: None,
+            limit: Some(2),
+            offset: None,
+        };
+
+        let video_query = QueryNode {
+            primary_key: "__id".to_string(),
+            source: QueryIrSource::Table("Video".to_string()),
+            alias: "t2".to_string(),
+            order_by: vec![],
+            selections: vec![SelectField::Scalar("url".to_string())],
+            filters: None,
+            limit: Some(3),
+            offset: None,
+        };
+
+        let query = QueryNode {
+            primary_key: "__id".to_string(),
+            source: QueryIrSource::Table("User".to_string()),
+            alias: "t0".to_string(),
+            order_by: vec![],
+            selections: vec![
+                SelectField::Scalar("__id".to_string()),
+                SelectField::Relation {
+                    field_name: "posts".to_string(),
+                    foreign_key: "author_id".to_string(),
+                    is_list: true,
+                    is_forward: false,
+                    query: Box::new(post_query),
+                },
+                SelectField::Relation {
+                    field_name: "videos".to_string(),
+                    foreign_key: "author_id".to_string(),
+                    is_list: true,
+                    is_forward: false,
+                    query: Box::new(video_query),
+                }
+            ],
+            filters: None,
+            limit: None,
+            offset: None,
+        };
+
+        let sql = compile_select(&query, None, &mut CTEContext::new());
+        assert!(sql.contains("WITH cte_t1 AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY author_id) AS caqui_rn FROM Post), cte_t2 AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY author_id) AS caqui_rn FROM Video)"));
+        assert!(sql.contains("FROM cte_t1 AS t1"));
+        assert!(sql.contains("FROM cte_t2 AS t2"));
+        assert!(sql.contains("t1.caqui_rn <= 2"));
+        assert!(sql.contains("t2.caqui_rn <= 3"));
+    }
+
+    #[test]
+    fn test_compile_polymorphic_array_pagination() {
+        let mut branches = Vec::new();
+        branches.push(QueryNode {
+            primary_key: "__id".to_string(),
+            source: QueryIrSource::Table("Post".to_string()),
+            alias: "t1".to_string(),
+            order_by: vec![],
+            selections: vec![SelectField::Scalar("title".to_string())],
+            filters: None, limit: None, offset: None,
+        });
+        branches.push(QueryNode {
+            primary_key: "__id".to_string(),
+            source: QueryIrSource::Table("Video".to_string()),
+            alias: "t2".to_string(),
+            order_by: vec![],
+            selections: vec![SelectField::Scalar("url".to_string())],
+            filters: None, limit: None, offset: None,
+        });
+
+        let child_query = QueryNode {
+            primary_key: "__id".to_string(),
+            source: QueryIrSource::Polymorphic {
+                alias: "poly".to_string(),
+                branches,
+            },
+            alias: "t_poly".to_string(),
+            order_by: vec![],
+            selections: vec![SelectField::Scalar("__id".to_string())],
+            filters: None,
+            limit: Some(5),
+            offset: None,
+        };
+
+        let query = QueryNode {
+            primary_key: "__id".to_string(),
+            source: QueryIrSource::Table("User".to_string()),
+            alias: "t0".to_string(),
+            order_by: vec![],
+            selections: vec![
+                SelectField::Relation {
+                    field_name: "contents".to_string(),
+                    foreign_key: "author_id".to_string(),
+                    is_list: true,
+                    is_forward: false,
+                    query: Box::new(child_query),
+                }
+            ],
+            filters: None,
+            limit: None,
+            offset: None,
+        };
+
+        let sql = compile_select(&query, None, &mut CTEContext::new());
+        assert!(sql.contains("WITH cte_t_poly AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY author_id) AS caqui_rn FROM (\nSELECT t1.title FROM Post AS t1\nUNION ALL\nSELECT t2.url FROM Video AS t2\n))"));
+        assert!(sql.contains("t_poly.caqui_rn <= 5"));
+    }
+
+    #[test]
+    fn test_compile_window_function_order_by() {
+        let child_query = QueryNode {
+            primary_key: "__id".to_string(),
+            source: QueryIrSource::Table("Post".to_string()),
+            alias: "t1".to_string(),
+            order_by: vec![("createdAt".to_string(), crate::ir::OrderDirection::Desc)],
+            selections: vec![SelectField::Scalar("title".to_string())],
+            filters: None,
+            limit: Some(5),
+            offset: None,
+        };
+
+        let query = QueryNode {
+            primary_key: "__id".to_string(),
+            source: QueryIrSource::Table("User".to_string()),
+            alias: "t0".to_string(),
+            order_by: vec![],
+            selections: vec![
+                SelectField::Relation {
+                    field_name: "posts".to_string(),
+                    foreign_key: "author_id".to_string(),
+                    is_list: true,
+                    is_forward: false,
+                    query: Box::new(child_query),
+                }
+            ],
+            filters: None,
+            limit: None,
+            offset: None,
+        };
+
+        let sql = compile_select(&query, None, &mut CTEContext::new());
+        assert!(sql.contains("ROW_NUMBER() OVER (PARTITION BY author_id ORDER BY createdAt DESC) AS caqui_rn"));
+    }
+
+    #[test]
+    fn test_compile_inverse_partition_key() {
+        let child_query = QueryNode {
+            primary_key: "__id".to_string(),
+            source: QueryIrSource::Table("Tag".to_string()),
+            alias: "t1".to_string(),
+            order_by: vec![],
+            selections: vec![SelectField::Scalar("name".to_string())],
+            filters: None,
+            limit: Some(3),
+            offset: None,
+        };
+
+        let query = QueryNode {
+            primary_key: "__id".to_string(),
+            source: QueryIrSource::Table("Post".to_string()),
+            alias: "t0".to_string(),
+            order_by: vec![],
+            selections: vec![
+                SelectField::Relation {
+                    field_name: "tags".to_string(),
+                    foreign_key: "tag_ids".to_string(),
+                    is_list: true,
+                    is_forward: true,
+                    query: Box::new(child_query),
+                }
+            ],
+            filters: None,
+            limit: None,
+            offset: None,
+        };
+
+        let sql = compile_select(&query, None, &mut CTEContext::new());
+        assert!(sql.contains("ROW_NUMBER() OVER (PARTITION BY __id) AS caqui_rn"));
+    }
 }
