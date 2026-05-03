@@ -39,6 +39,9 @@ pub fn compile_where_clause(clause: &WhereClause, alias: &str) -> String {
                 },
                 WhereCondition::IsNull => format!("{} IS NULL", col),
                 WhereCondition::IsNotNull => format!("{} IS NOT NULL", col),
+                WhereCondition::Contains(v) => format!("{} LIKE '%{}%' ESCAPE '\\'", col, v.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_").replace('\'', "''")),
+                WhereCondition::StartsWith(v) => format!("{} LIKE '{}%' ESCAPE '\\'", col, v.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_").replace('\'', "''")),
+                WhereCondition::EndsWith(v) => format!("{} LIKE '%{}' ESCAPE '\\'", col, v.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_").replace('\'', "''")),
             }
         }
         WhereClause::Relation { target_model, fk_column, is_forward, filter, .. } => {

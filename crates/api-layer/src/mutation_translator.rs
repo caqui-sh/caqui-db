@@ -1310,6 +1310,27 @@ fn compile_parameterized_where(
                 },
                 WhereCondition::IsNull => (format!("{} IS NULL", col), params),
                 WhereCondition::IsNotNull => (format!("{} IS NOT NULL", col), params),
+                WhereCondition::Contains(v) => {
+                    let s = format!("{} LIKE ?{} ESCAPE '\\'", col, *param_idx);
+                    *param_idx += 1;
+                    let escaped = v.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+                    params.push(Parameter::Literal(serde_json::Value::String(format!("%{}%", escaped))));
+                    (s, params)
+                },
+                WhereCondition::StartsWith(v) => {
+                    let s = format!("{} LIKE ?{} ESCAPE '\\'", col, *param_idx);
+                    *param_idx += 1;
+                    let escaped = v.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+                    params.push(Parameter::Literal(serde_json::Value::String(format!("{}%", escaped))));
+                    (s, params)
+                },
+                WhereCondition::EndsWith(v) => {
+                    let s = format!("{} LIKE ?{} ESCAPE '\\'", col, *param_idx);
+                    *param_idx += 1;
+                    let escaped = v.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+                    params.push(Parameter::Literal(serde_json::Value::String(format!("%{}", escaped))));
+                    (s, params)
+                },
             }
         }
         WhereClause::Relation { target_model, fk_column, is_forward, filter, .. } => {

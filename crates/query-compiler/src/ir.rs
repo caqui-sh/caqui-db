@@ -63,6 +63,9 @@ pub enum WhereCondition {
     In(Vec<String>),
     IsNull,
     IsNotNull,
+    Contains(String),
+    StartsWith(String),
+    EndsWith(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -277,3 +277,120 @@ async fn test_polymorphic_union_http_reads() {
     let post1 = items.iter().find(|i| i["title"] == "Alice Post 1").unwrap();
     assert_eq!(post1["__kind"], "Post");
 }
+
+#[tokio::test]
+async fn test_advanced_string_filtering() {
+    let (app, _dir) = setup_app().await;
+
+    let names = vec![
+        "Apple",
+        "Application",
+        "Snapple",
+        "Banana",
+        "100% Juice",
+        "Apple_Pie",
+        "Back\\Slash",
+    ];
+
+    for name in names {
+        let payload = serde_json::json!({
+            "action": "create",
+            "model": "User",
+            "data": {
+                "name": name,
+                "age": 25,
+                "status": "active"
+            },
+            "select": { "__id": true }
+        });
+        post_query(&app, payload).await;
+    }
+
+    // 1. startsWith
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "User",
+        "where": { "name": { "startsWith": "App" } },
+        "select": { "name": true }
+    });
+    let response = post_query(&app, payload).await;
+    let items = response["data"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+
+    // 2. contains
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "User",
+        "where": { "name": { "contains": "ppl" } },
+        "select": { "name": true }
+    });
+    let response = post_query(&app, payload).await;
+    let items = response["data"].as_array().unwrap();
+    assert_eq!(items.len(), 4);
+
+    // 3. endsWith
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "User",
+        "where": { "name": { "endsWith": "le" } },
+        "select": { "name": true }
+    });
+    let response = post_query(&app, payload).await;
+    let items = response["data"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+
+    // 4. Escape %
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "User",
+        "where": { "name": { "contains": "100%" } },
+        "select": { "name": true }
+    });
+    let response = post_query(&app, payload).await;
+    let items = response["data"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["name"], "100% Juice");
+
+    // 5. Escape _
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "User",
+        "where": { "name": { "contains": "e_P" } },
+        "select": { "name": true }
+    });
+    let response = post_query(&app, payload).await;
+    let items = response["data"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["name"], "Apple_Pie");
+
+    // 6. Escape \
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "User",
+        "where": { "name": { "contains": "k\\S" } },
+        "select": { "name": true }
+    });
+    let response = post_query(&app, payload).await;
+    let items = response["data"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["name"], "Back\\Slash");
+
+    // 7. Validation Rejection (contains on Int)
+    let payload = serde_json::json!({
+        "action": "findMany",
+        "model": "User",
+        "where": { "age": { "contains": "2" } },
+        "select": { "name": true }
+    });
+    
+    // We can't use post_query directly because it asserts StatusCode::OK
+    let req = Request::builder()
+        .method(http::Method::POST)
+        .uri("/api/v1/query")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(payload.to_string()))
+        .unwrap();
+    
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}

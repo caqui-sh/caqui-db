@@ -158,6 +158,18 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
                             "gte" => Some(WhereCondition::Gte(val_to_string(ast, op_val, type_name, is_enum)?)),
                             "lt" => Some(WhereCondition::Lt(val_to_string(ast, op_val, type_name, is_enum)?)),
                             "lte" => Some(WhereCondition::Lte(val_to_string(ast, op_val, type_name, is_enum)?)),
+                            "contains" => {
+                                if type_name != Some("String") { return Err("Validation Error: 'contains' operator is only valid on String fields.".to_string()); }
+                                Some(WhereCondition::Contains(val_to_string(ast, op_val, type_name, is_enum)?))
+                            },
+                            "startsWith" => {
+                                if type_name != Some("String") { return Err("Validation Error: 'startsWith' operator is only valid on String fields.".to_string()); }
+                                Some(WhereCondition::StartsWith(val_to_string(ast, op_val, type_name, is_enum)?))
+                            },
+                            "endsWith" => {
+                                if type_name != Some("String") { return Err("Validation Error: 'endsWith' operator is only valid on String fields.".to_string()); }
+                                Some(WhereCondition::EndsWith(val_to_string(ast, op_val, type_name, is_enum)?))
+                            },
                             "in" => {
                                 let vals = op_val.as_array().ok_or("Operator 'in' expects an array")?
                                     .iter().filter(|v| !v.is_null()).map(|v| val_to_string(ast, v, type_name, is_enum)).collect::<Result<Vec<String>, String>>()?;
