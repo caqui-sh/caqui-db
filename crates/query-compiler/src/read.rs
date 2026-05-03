@@ -291,6 +291,7 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                         for sel in &branch.selections {
                             match sel {
                                 SelectField::Scalar(name) | SelectField::ScalarArray(name) | SelectField::ScalarBoolean(name) => branch_selects.push(format!("{}.{}", branch.alias, name)),
+                                SelectField::SyntheticNull(expr) => branch_selects.push(expr.clone()),
                                 _ => {}
                             }
                         }

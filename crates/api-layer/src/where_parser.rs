@@ -59,6 +59,13 @@ pub fn parse_where_condition(val: &Value) -> Result<WhereCondition, String> {
                 .collect();
             return Ok(WhereCondition::In(vals));
         }
+        if let Some(is_null) = obj.get("isNull") {
+            if is_null.as_bool().unwrap_or(false) {
+                return Ok(WhereCondition::IsNull);
+            } else {
+                return Ok(WhereCondition::IsNotNull);
+            }
+        }
     }
     Err("Invalid where condition format".to_string())
 }
@@ -92,7 +99,6 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
             continue;
         }
 
-        let field_def_opt = model_def.resolved_fields.iter().find(|f| &f.name == k);
         let field_def = match model_def.resolved_fields.iter().find(|f| &f.name == k) {
             Some(f) => f,
             None => {
@@ -109,48 +115,84 @@ pub fn parse_where_clause(ast: &SchemaAst, where_obj: &serde_json::Map<String, V
 
         match &field_def.field_type {
             AstFieldType::Scalar(_) | AstFieldType::ScalarArray(_) | AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {
-                let cond = parse_where_condition(v)?;
-                clauses.push(WhereClause::Field(k.clone(), cond));
-            }
-            AstFieldType::PolymorphicUnion(target_name) | AstFieldType::PolymorphicBase(target_name) => {
                 if let Some(obj) = v.as_object() {
-                    if obj.len() != 1 {
-                        return Err(format!("Polymorphic where filter on '{}' requires exactly one target model key.", k));
+                    // If it's an object, it might contain multiple operators like { gte: 20, lt: 30 }
+                    // We only treat it as operators if it's NOT a complex relational filter object (some/every/etc)
+                    // though for scalars it wouldn't be.
+                    let mut operators_found = false;
+                    for (op, op_val) in obj {
+                        let cond = match op.as_str() {
+                            "eq" => if op_val.is_null() { Some(WhereCondition::IsNull) } else { Some(WhereCondition::Eq(val_to_string(op_val))) },
+                            "notEq" => if op_val.is_null() { Some(WhereCondition::IsNotNull) } else { Some(WhereCondition::NotEq(val_to_string(op_val))) },
+                            "gt" => Some(WhereCondition::Gt(val_to_string(op_val))),
+                            "gte" => Some(WhereCondition::Gte(val_to_string(op_val))),
+                            "lt" => Some(WhereCondition::Lt(val_to_string(op_val))),
+                            "lte" => Some(WhereCondition::Lte(val_to_string(op_val))),
+                            "in" => {
+                                let vals = op_val.as_array().ok_or("Operator 'in' expects an array")?
+                                    .iter().filter(|v| !v.is_null()).map(|v| val_to_string(v)).collect();
+                                Some(WhereCondition::In(vals))
+                            },
+                            "isNull" => if op_val.as_bool().unwrap_or(false) { Some(WhereCondition::IsNull) } else { Some(WhereCondition::IsNotNull) },
+                            _ => None
+                        };
+                        if let Some(c) = cond {
+                            clauses.push(WhereClause::Field(k.clone(), c));
+                            operators_found = true;
+                        }
                     }
-                    let (specific_target, inner_where) = obj.iter().next().unwrap();
-                    
-                    let target_model_def = ast.models.get(specific_target)
-                        .ok_or_else(|| format!("Undefined target model '{}' in polymorphic filter", specific_target))?;
-                        
-                    let mut is_valid_target = false;
-                    if let Some(union_targets) = ast.unions.get(target_name) {
-                        is_valid_target = union_targets.contains(specific_target);
-                    } else if let Some(_target_base) = target_model_def.resolved_bases.iter().find(|b| *b == target_name) {
-                        is_valid_target = true;
+                    if !operators_found {
+                         let cond = parse_where_condition(v)?;
+                         clauses.push(WhereClause::Field(k.clone(), cond));
                     }
-                    
-                    if !is_valid_target {
-                        return Err(format!("Model '{}' is not a valid target for polymorphic field '{}'", specific_target, k));
-                    }
-                    
-                    let sub_clause = parse_where_clause(ast, inner_where.as_object().unwrap_or(obj), target_model_def)?;
-                    
-                    // Enforce the specific target type
-                    // The query compiler automatically wraps WhereCondition values in single quotes and escapes them
-                    clauses.push(WhereClause::Field(format!("{}_type", k), query_compiler::ir::WhereCondition::Eq(specific_target.clone())));
-                    
-                    // Generate the EXISTS query joining on the id
-                    clauses.push(WhereClause::Relation {
-                        field_name: k.clone(),
-                        target_model: specific_target.clone(),
-                        fk_column: format!("{}_id", k),
-                        is_forward: true,
-                        filter: query_compiler::ir::RelationFilter::Is(Box::new(sub_clause)),
-                    });
                 } else {
                     let cond = parse_where_condition(v)?;
                     clauses.push(WhereClause::Field(k.clone(), cond));
                 }
+            }
+            AstFieldType::PolymorphicUnion(target_name) | AstFieldType::PolymorphicBase(target_name) => {
+                if let Some(obj) = v.as_object() {
+                    let is_relational_op = obj.keys().any(|key| ["some", "every", "none", "is", "isNot"].contains(&key.as_str()));
+                    
+                    if is_relational_op {
+                         // Parse Relation Filter for Polymorphic Union/Base
+                         // (Logic similar to Relation below but with specific target handling if needed)
+                         // For now we only handled 'is' in translator.rs or similar? 
+                         // Actually the current code handles 'is' via the next block if it's not a relational op.
+                    }
+
+                    if obj.len() == 1 && !is_relational_op {
+                        let (specific_target, inner_where) = obj.iter().next().unwrap();
+                        
+                        let target_model_def = ast.models.get(specific_target)
+                            .ok_or_else(|| format!("Undefined target model '{}' in polymorphic filter", specific_target))?;
+                            
+                        let mut is_valid_target = false;
+                        if let Some(union_targets) = ast.unions.get(target_name) {
+                            is_valid_target = union_targets.contains(specific_target);
+                        } else if let Some(_target_base) = target_model_def.resolved_bases.iter().find(|b| *b == target_name) {
+                            is_valid_target = true;
+                        }
+                        
+                        if is_valid_target {
+                            let sub_clause = parse_where_clause(ast, inner_where.as_object().unwrap_or(obj), target_model_def)?;
+                            
+                            clauses.push(WhereClause::Field(format!("{}_type", k), query_compiler::ir::WhereCondition::Eq(specific_target.clone())));
+                            
+                            clauses.push(WhereClause::Relation {
+                                field_name: k.clone(),
+                                target_model: specific_target.clone(),
+                                fk_column: format!("{}_id", k),
+                                is_forward: true,
+                                filter: query_compiler::ir::RelationFilter::Is(Box::new(sub_clause)),
+                            });
+                            continue;
+                        }
+                    }
+                }
+                
+                let cond = parse_where_condition(v)?;
+                clauses.push(WhereClause::Field(k.clone(), cond));
             }
             AstFieldType::Relation(target_model_name) | AstFieldType::RelationArray(target_model_name) => {
                 let is_relational_op = if let Some(obj) = v.as_object() {
