@@ -42,6 +42,7 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir) {
         model Account {
             role: Role
             roles: Role[]
+            optionalRole: Role?
             @@id(uuid)
         }
     "#;
@@ -242,4 +243,114 @@ async fn test_enum_filtering() {
         .unwrap();
     let res_invalid = app.clone().oneshot(query_invalid).await.unwrap();
     assert_eq!(res_invalid.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_enum_nullability_and_omission() {
+    let (app, _dir) = setup_app().await;
+
+    // 1. Create with null
+    let req1 = Request::builder()
+        .method(http::Method::POST)
+        .uri("/api/v1/query")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({
+            "model": "Account",
+            "action": "create",
+            "data": {
+                "role": "USER",
+                "optionalRole": null
+            },
+            "select": { "optionalRole": true }
+        }).to_string()))
+        .unwrap();
+    let res1 = app.clone().oneshot(req1).await.unwrap();
+    assert_eq!(res1.status(), StatusCode::OK);
+    let body1 = axum::body::to_bytes(res1.into_body(), 1024 * 1024).await.unwrap();
+    let json1: Value = serde_json::from_slice(&body1).unwrap();
+    assert!(json1["data"]["optionalRole"].is_null());
+
+    // 2. Filter by isNull
+    let query_req = Request::builder()
+        .method(http::Method::POST)
+        .uri("/api/v1/query")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({
+            "model": "Account",
+            "action": "findMany",
+            "where": { "optionalRole": { "isNull": true } },
+            "select": { "role": true }
+        }).to_string()))
+        .unwrap();
+    let res_q = app.clone().oneshot(query_req).await.unwrap();
+    assert_eq!(res_q.status(), StatusCode::OK);
+    let body_q = axum::body::to_bytes(res_q.into_body(), 1024 * 1024).await.unwrap();
+    let json_q: Value = serde_json::from_slice(&body_q).unwrap();
+    assert_eq!(json_q["data"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn test_enum_empty_arrays() {
+    let (app, _dir) = setup_app().await;
+
+    let req = Request::builder()
+        .method(http::Method::POST)
+        .uri("/api/v1/query")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({
+            "model": "Account",
+            "action": "create",
+            "data": {
+                "role": "GUEST",
+                "roles": []
+            },
+            "select": { "roles": true }
+        }).to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["data"]["roles"], json!([]));
+}
+
+#[tokio::test]
+async fn test_enum_not_eq_filter() {
+    let (app, _dir) = setup_app().await;
+
+    let roles = vec!["ADMIN", "USER", "GUEST"];
+    for r in roles {
+        let req = Request::builder()
+            .method(http::Method::POST)
+            .uri("/api/v1/query")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({
+                "model": "Account",
+                "action": "create",
+                "data": { "role": r },
+                "select": { "__id": true }
+            }).to_string()))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap();
+    }
+
+    let query_req = Request::builder()
+        .method(http::Method::POST)
+        .uri("/api/v1/query")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({
+            "model": "Account",
+            "action": "findMany",
+            "where": { "role": { "notEq": "ADMIN" } },
+            "select": { "role": true }
+        }).to_string()))
+        .unwrap();
+    let res = app.clone().oneshot(query_req).await.unwrap();
+    let body = axum::body::to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    let records = json["data"].as_array().unwrap();
+    assert_eq!(records.len(), 2);
+    for r in records {
+        assert_ne!(r["role"], "ADMIN");
+    }
 }
