@@ -1,4 +1,15 @@
 use crate::ir::{QueryNode, SelectField, WhereClause, WhereCondition, RelationFilter, QueryIrSource};
+
+pub struct CTEContext {
+    pub ctes: Vec<String>,
+}
+
+impl CTEContext {
+    pub fn new() -> Self {
+        Self { ctes: Vec::new() }
+    }
+}
+
 pub fn compile_where_clause(clause: &WhereClause, alias: &str) -> String {
     match clause {
         WhereClause::And(clauses) => {
@@ -68,7 +79,7 @@ pub fn compile_where_clause(clause: &WhereClause, alias: &str) -> String {
     }
 }
 
-pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> String {
+pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>, ctx: &mut CTEContext) -> String {
     let mut json_pairs = Vec::new();
 
     for selection in &node.selections {
@@ -88,7 +99,7 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
             },
             SelectField::Relation { field_name, foreign_key, is_list, is_forward, query } => {
                 // The Recursive N+1 Neutralizer: Correlated Subquery with JSON aggregation
-                let child_json_obj = compile_select(query, Some((&node.alias, foreign_key)));
+                let child_json_obj = compile_select(query, Some((&node.alias, foreign_key)), ctx);
                 
                 let mut where_conds = if *is_forward {
                     vec![format!("{}.{} = {}.{}", query.alias, query.primary_key, node.alias, foreign_key)]
@@ -98,82 +109,106 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                 if let Some(filters) = &query.filters {
                     where_conds.push(compile_where_clause(filters, &query.alias));
                 }
-                let where_str = where_conds.join(" AND ");
 
-                let mut order_by_sql = String::new();
-                if !query.order_by.is_empty() {
-                    let orders: Vec<_> = query.order_by.iter().map(|(field, dir)| {
-                        let dir_str = match dir {
-                            crate::ir::OrderDirection::Asc => "ASC",
-                            crate::ir::OrderDirection::Desc => "DESC",
-                        };
-                        format!("{}.{} {}", query.alias, field, dir_str)
-                    }).collect();
-                    order_by_sql = format!(" ORDER BY {}", orders.join(", "));
-                }
+                let base_source = match &query.source {
+                    QueryIrSource::Table(t) => t.clone(),
+                    QueryIrSource::Polymorphic { alias: _, branches } => {
+                        let mut inner_branch_sqls = Vec::new();
+                        for branch in branches {
+                            let mut branch_selects = Vec::new();
+                            for sel in &branch.selections {
+                                match sel {
+                                    SelectField::Scalar(name) | SelectField::ScalarArray(name) | SelectField::ScalarBoolean(name) => {
+                                        branch_selects.push(format!("{}.{}", branch.alias, name))
+                                    },
+                                    SelectField::SyntheticNull(name) => branch_selects.push(name.clone()),
+                                    _ => {}
+                                }
+                            }
+                            let b_where = branch.filters.as_ref().map(|w| format!(" WHERE {}", compile_where_clause(w, &branch.alias))).unwrap_or_default();
+                            let b_table = match &branch.source { QueryIrSource::Table(t) => t.clone(), _ => panic!() };
+                            inner_branch_sqls.push(format!("SELECT {} FROM {} AS {}{}", branch_selects.join(", "), b_table, branch.alias, b_where));
+                        }
+                        format!("(\n{}\n)", inner_branch_sqls.join("\nUNION ALL\n"))
+                    },
+                };
 
+                let mut actual_source_table = base_source.clone();
                 let mut limit_offset = String::new();
-                if *is_list {
+                let is_paginated = *is_list && (query.limit.is_some() || query.offset.is_some());
+
+                if is_paginated {
+                    let cte_alias = format!("cte_{}", query.alias);
+                    
+                    let partition_col = if *is_forward {
+                        &query.primary_key
+                    } else {
+                        foreign_key
+                    };
+                    
+                    let mut order_by_sql_cte = String::new();
+                    if !query.order_by.is_empty() {
+                        let orders: Vec<_> = query.order_by.iter().map(|(field, dir)| {
+                            let dir_str = match dir {
+                                crate::ir::OrderDirection::Asc => "ASC",
+                                crate::ir::OrderDirection::Desc => "DESC",
+                            };
+                            format!("{} {}", field, dir_str)
+                        }).collect();
+                        order_by_sql_cte = format!(" ORDER BY {}", orders.join(", "));
+                    }
+                    
+                    let cte_sql = format!("{} AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY {}{}) AS caqui_rn FROM {})", 
+                        cte_alias, partition_col, order_by_sql_cte, base_source);
+                    
+                    ctx.ctes.push(cte_sql);
+                    
+                    actual_source_table = cte_alias;
+                    
                     if let Some(l) = query.limit {
-                        limit_offset.push_str(&format!(" LIMIT {}", l));
+                        if let Some(o) = query.offset {
+                            where_conds.push(format!("{}.caqui_rn > {}", query.alias, o));
+                            where_conds.push(format!("{}.caqui_rn <= {}", query.alias, o + l));
+                        } else {
+                            where_conds.push(format!("{}.caqui_rn <= {}", query.alias, l));
+                        }
+                    } else if let Some(o) = query.offset {
+                        where_conds.push(format!("{}.caqui_rn > {}", query.alias, o));
                     }
                 } else {
-                    limit_offset.push_str(" LIMIT 1");
+                    let mut order_by_sql = String::new();
+                    if !query.order_by.is_empty() {
+                        let orders: Vec<_> = query.order_by.iter().map(|(field, dir)| {
+                            let dir_str = match dir {
+                                crate::ir::OrderDirection::Asc => "ASC",
+                                crate::ir::OrderDirection::Desc => "DESC",
+                            };
+                            format!("{}.{} {}", query.alias, field, dir_str)
+                        }).collect();
+                        order_by_sql = format!(" ORDER BY {}", orders.join(", "));
+                    }
+                    
+                    if *is_list {
+                        if let Some(l) = query.limit {
+                            limit_offset.push_str(&format!(" LIMIT {}", l));
+                        }
+                        if let Some(o) = query.offset {
+                            limit_offset.push_str(&format!(" OFFSET {}", o));
+                        }
+                        limit_offset = format!("{}{}", order_by_sql, limit_offset);
+                    } else {
+                        limit_offset.push_str(" LIMIT 1");
+                    }
                 }
-                if let Some(o) = query.offset {
-                    limit_offset.push_str(&format!(" OFFSET {}", o));
-                }
+
+                let where_str = where_conds.join(" AND ");
                 
                 let subquery = if *is_list {
-                    let source_table = match &query.source {
-                        QueryIrSource::Table(t) => t.clone(),
-                        QueryIrSource::Polymorphic { alias: _, branches } => {
-                            let mut inner_branch_sqls = Vec::new();
-                            for branch in branches {
-                                let mut branch_selects = Vec::new();
-                                for sel in &branch.selections {
-                                    match sel {
-                                        SelectField::Scalar(name) | SelectField::ScalarArray(name) | SelectField::ScalarBoolean(name) => {
-                                            branch_selects.push(format!("{}.{}", branch.alias, name))
-                                        },
-                                        SelectField::SyntheticNull(name) => branch_selects.push(name.clone()),
-                                        _ => {}
-                                    }
-                                }
-                                let b_where = branch.filters.as_ref().map(|w| format!(" WHERE {}", compile_where_clause(w, &branch.alias))).unwrap_or_default();
-                                let b_table = match &branch.source { QueryIrSource::Table(t) => t.clone(), _ => panic!() };
-                                inner_branch_sqls.push(format!("SELECT {} FROM {} AS {}{}", branch_selects.join(", "), b_table, branch.alias, b_where));
-                            }
-                            format!("(\n{}\n)", inner_branch_sqls.join("\nUNION ALL\n"))
-                        },
-                    };
-                    format!("(SELECT json_group_array({}) FROM {} AS {} WHERE {}{}{})",
-                        child_json_obj, source_table, query.alias, where_str, order_by_sql, limit_offset)
+                    format!("(SELECT json_group_array({}) FROM {} AS {} WHERE {}{})",
+                        child_json_obj, actual_source_table, query.alias, where_str, limit_offset)
                 } else {
-                    let source_table = match &query.source {
-                        QueryIrSource::Table(t) => t.clone(),
-                        QueryIrSource::Polymorphic { alias: _, branches } => {
-                            let mut inner_branch_sqls = Vec::new();
-                            for branch in branches {
-                                let mut branch_selects = Vec::new();
-                                for sel in &branch.selections {
-                                    match sel {
-                                        SelectField::Scalar(name) | SelectField::ScalarArray(name) | SelectField::ScalarBoolean(name) => {
-                                            branch_selects.push(format!("{}.{}", branch.alias, name))
-                                        },
-                                        SelectField::SyntheticNull(name) => branch_selects.push(name.clone()),
-                                        _ => {}
-                                    }
-                                }
-                                let b_where = branch.filters.as_ref().map(|w| format!(" WHERE {}", compile_where_clause(w, &branch.alias))).unwrap_or_default();
-                                let b_table = match &branch.source { QueryIrSource::Table(t) => t.clone(), _ => panic!() };
-                                inner_branch_sqls.push(format!("SELECT {} FROM {} AS {}{}", branch_selects.join(", "), b_table, branch.alias, b_where));
-                            }
-                            format!("(\n{}\n)", inner_branch_sqls.join("\nUNION ALL\n"))
-                        },
-                    };
                     format!("(SELECT {} FROM {} AS {} WHERE {}{})",
-                        child_json_obj, source_table, query.alias, where_str, limit_offset)
+                        child_json_obj, actual_source_table, query.alias, where_str, limit_offset)
                 };
                 
                 json_pairs.push(format!("'{}', {}", field_name, subquery));
@@ -188,7 +223,7 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                     
                     for model_name in &fragment_keys {
                         let fragment_node = target_fragments.get(*model_name).unwrap();
-                        let sub_obj = compile_select(fragment_node, Some((&node.alias, &format!("{}.value->>'__id'", j_alias))));
+                        let sub_obj = compile_select(fragment_node, Some((&node.alias, &format!("{}.value->>'__id'", j_alias))), ctx);
                         
                         let mut where_conds = vec![format!("{}.__id = {}.value->>'__id'", fragment_node.alias, j_alias)];
                         if let Some(filters) = &fragment_node.filters {
@@ -223,7 +258,7 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                     
                     for model_name in &fragment_keys {
                         let fragment_node = target_fragments.get(*model_name).unwrap();
-                        let sub_obj = compile_select(fragment_node, Some((&node.alias, &id_col)));
+                        let sub_obj = compile_select(fragment_node, Some((&node.alias, &id_col)), ctx);
                         
                         let mut where_conds = vec![format!("{}.__id = {}", fragment_node.alias, id_col)];
                         if let Some(filters) = &fragment_node.filters {
@@ -302,7 +337,11 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>) -> Str
                     format!("(\n{}\n)", inner_branch_sqls.join("\nUNION ALL\n"))
                 },
             };
-            format!("SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT {} AS root_payload FROM {} AS {}{}{}{}{});", json_obj, source_table, node.alias, root_where, order_by_clause, limit_clause, offset_clause)
+            let mut final_sql = format!("SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT {} AS root_payload FROM {} AS {}{}{}{}{});", json_obj, source_table, node.alias, root_where, order_by_clause, limit_clause, offset_clause);
+            if !ctx.ctes.is_empty() {
+                final_sql = format!("WITH {} {}", ctx.ctes.join(", "), final_sql);
+            }
+            final_sql
     } else {
         // Child query: Return inner object formulation for subquery injection
         json_obj
@@ -329,7 +368,7 @@ mod tests {
             limit: None,
             offset: None,
         };
-        let sql = compile_select(&query, None);
+        let sql = compile_select(&query, None, &mut CTEContext::new());
         assert_eq!(sql, "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'name', t0.name) AS root_payload FROM User AS t0);");
     }
 
@@ -368,7 +407,7 @@ mod tests {
             limit: None,
             offset: None,
         };
-        let sql = compile_select(&query, None);
+        let sql = compile_select(&query, None, &mut CTEContext::new());
         assert_eq!(
             sql, 
             "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'posts', (SELECT json_group_array(json_object('__id', t1.__id, 'title', t1.title)) FROM Post AS t1 WHERE t1.author_id = t0.__id)) AS root_payload FROM User AS t0);"
@@ -411,7 +450,7 @@ mod tests {
             limit: None,
             offset: None,
         };
-        let sql = compile_select(&query, None);
+        let sql = compile_select(&query, None, &mut CTEContext::new());
         assert_eq!(
             sql,
             "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'search', CASE t0.search_type WHEN 'Article' THEN (SELECT json_object('__id', t1.__id, 'title', t1.title) FROM Article AS t1 WHERE t1.__id = t0.search_id) ELSE NULL END) AS root_payload FROM User AS t0);"
@@ -474,7 +513,7 @@ mod tests {
             offset: None,
         };
         
-        let sql = compile_select(&user_query, None);
+        let sql = compile_select(&user_query, None, &mut CTEContext::new());
         assert_eq!(
             sql,
             "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'posts', (SELECT json_group_array(json_object('__id', t1.__id, 'comments', (SELECT json_group_array(json_object('__id', t2.__id, 'body', t2.body)) FROM Comment AS t2 WHERE t2.post_id = t1.__id))) FROM Post AS t1 WHERE t1.author_id = t0.__id)) AS root_payload FROM User AS t0);"
@@ -496,7 +535,7 @@ mod tests {
             limit: None,
             offset: None,
         };
-        let sql = compile_select(&query, None);
+        let sql = compile_select(&query, None, &mut CTEContext::new());
         assert_eq!(sql, "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'tags', json(t0.tags)) AS root_payload FROM User AS t0);");
     }
 
@@ -534,7 +573,7 @@ mod tests {
             limit: None,
             offset: None,
         };
-        let sql = compile_select(&query, None);
+        let sql = compile_select(&query, None, &mut CTEContext::new());
         assert_eq!(
             sql, 
             "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'profile', (SELECT json_object('bio', t1.bio) FROM Profile AS t1 WHERE t1.user_id = t0.__id LIMIT 1)) AS root_payload FROM User AS t0);"
@@ -582,7 +621,7 @@ mod tests {
             limit: None,
             offset: None,
         };
-        let sql = compile_select(&query, None);
+        let sql = compile_select(&query, None, &mut CTEContext::new());
         
         assert_eq!(
             sql,
@@ -602,7 +641,7 @@ mod tests {
             limit: Some(10),
             offset: Some(5),
         };
-        let sql = compile_select(&query, None);
+        let sql = compile_select(&query, None, &mut CTEContext::new());
         assert_eq!(
             sql,
             "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id) AS root_payload FROM User AS t0 WHERE t0.name = 'Alice' LIMIT 10 OFFSET 5);"
@@ -671,10 +710,10 @@ mod tests {
             offset: None,
         };
         
-        let sql = compile_select(&query, None);
+        let sql = compile_select(&query, None, &mut CTEContext::new());
         assert_eq!(
             sql,
-            "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'posts', (SELECT json_group_array(json_object('title', t1.title)) FROM Post AS t1 WHERE t1.author_id = t0.__id AND t1.published = 'true' LIMIT 5 OFFSET 2)) AS root_payload FROM User AS t0);"
+            "WITH cte_t1 AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY author_id) AS caqui_rn FROM Post) SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'posts', (SELECT json_group_array(json_object('title', t1.title)) FROM cte_t1 AS t1 WHERE t1.author_id = t0.__id AND t1.published = 'true' AND t1.caqui_rn > 2 AND t1.caqui_rn <= 7)) AS root_payload FROM User AS t0);"
         );
     }
 
@@ -711,7 +750,7 @@ mod tests {
             offset: None,
         };
         
-        let sql = compile_select(&query, None);
+        let sql = compile_select(&query, None, &mut CTEContext::new());
         assert_eq!(
             sql,
             "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'search', CASE t0.search_type WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.__id = t0.search_id AND t1.status = 'published') ELSE NULL END) AS root_payload FROM User AS t0);"
@@ -758,7 +797,7 @@ mod tests {
             filters: None, limit: None, offset: None,
         };
 
-        let sql = compile_select(&query, None);
+        let sql = compile_select(&query, None, &mut CTEContext::new());
         
         // Assert the discriminator columns 'parent_type' and 'parent_id' are utilized correctly
         assert!(sql.contains("CASE t0.parent_type"));
@@ -796,7 +835,7 @@ mod tests {
             filters: None, limit: None, offset: None,
         };
 
-        let sql = compile_select(&query, None);
+        let sql = compile_select(&query, None, &mut CTEContext::new());
         println!("POLYMORPHIC BASE ARRAY SQL:\n{}", sql);
         
         // Asserts unpacking of the JSON array column 'favorites'
@@ -838,7 +877,7 @@ mod tests {
             limit: None,
             offset: None,
         };
-        let sql = compile_select(&query, None);
+        let sql = compile_select(&query, None, &mut CTEContext::new());
         assert_eq!(
             sql,
             "SELECT json_group_array(json(root_payload)) AS payload FROM (SELECT json_object('__id', t0.__id, 'contents', (SELECT json_group_array(json(CASE j_t0_contents.value->>'type' WHEN 'Article' THEN (SELECT json_object('title', t1.title) FROM Article AS t1 WHERE t1.__id = j_t0_contents.value->>'__id' AND t1.status = 'published') ELSE NULL END)) FROM (SELECT value, key FROM json_each(t0.contents) ORDER BY key ASC) AS j_t0_contents)) AS root_payload FROM User AS t0);"

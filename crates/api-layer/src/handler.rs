@@ -21,7 +21,7 @@ pub async fn api_execution_handler(
         };
 
         // 2. Compile IR to a single JSON-aggregating SQL string (Phase 4)
-        let sql_query = query_compiler::read::compile_select(&query_ir, None);
+        let sql_query = query_compiler::read::compile_select(&query_ir, None, &mut query_compiler::read::CTEContext::new());
 
         // 3. Thread-safe execution against the custom VFS-backed SQLite pool
         let conn = state.db_pool.get().await.unwrap();
@@ -61,7 +61,7 @@ pub async fn api_execution_handler(
             });
             let mut read_alias_idx = 0;
             if let Ok(query_ir) = hydrate_payload_to_ir(&state.ast, model, &temp_payload, &mut read_alias_idx, 0) {
-                let sql_query = query_compiler::read::compile_select(&query_ir, None);
+                let sql_query = query_compiler::read::compile_select(&query_ir, None, &mut query_compiler::read::CTEContext::new());
                 let conn = state.db_pool.get().await.unwrap();
                 let raw_json_string = conn.interact(move |db| {
                     db.prepare_cached(&sql_query)
@@ -103,7 +103,7 @@ pub async fn api_execution_handler(
                 Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
             };
             
-            let sql_query = query_compiler::read::compile_select(&query_ir, None);
+            let sql_query = query_compiler::read::compile_select(&query_ir, None, &mut query_compiler::read::CTEContext::new());
             
             let conn = state.db_pool.get().await.unwrap();
             conn.interact(move |db| {
