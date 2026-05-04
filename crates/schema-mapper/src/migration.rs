@@ -57,6 +57,12 @@ pub fn generate_sql(op: &MigrationOp) -> String {
         MigrationOp::CreateTrigger { trigger } => {
             format!("{}\n", trigger.sql)
         },
+        MigrationOp::DropTrigger { name } => {
+            format!("DROP TRIGGER IF EXISTS {};\n", name)
+        },
+        MigrationOp::DropVirtualTable { name } => {
+            format!("DROP TABLE IF EXISTS {};\n", name)
+        },
     }
 }
 

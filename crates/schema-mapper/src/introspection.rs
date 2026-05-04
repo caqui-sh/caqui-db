@@ -6,6 +6,8 @@ pub struct LiveTable {
     pub name: String,
     pub columns: HashMap<String, LiveColumn>, // HashMap for O(1) diffing lookups
     pub indexes: Vec<crate::PhysicalIndex>,
+    pub foreign_keys: Vec<String>,
+    pub triggers: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +31,52 @@ pub fn fetch_live_tables(conn: &Connection) -> Result<Vec<String>> {
         .collect::<Result<Vec<String>, _>>()?;
     
     Ok(tables)
+}
+
+pub fn introspect_table_foreign_keys(conn: &Connection, table_name: &str) -> Result<Vec<String>> {
+    let query = format!("PRAGMA foreign_key_list('{}')", table_name);
+    let mut stmt = conn.prepare(&query)?;
+    
+    let mut fks = Vec::new();
+    let fk_rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(2)?, // table (REFERENCES)
+            row.get::<_, String>(3)?, // from
+            row.get::<_, String>(4)?, // to
+            row.get::<_, String>(5)?, // on_update
+            row.get::<_, String>(6)?, // on_delete
+        ))
+    })?;
+
+    for res in fk_rows {
+        let (table, from, to, _on_update, on_delete) = res?;
+        let mut fk_def = format!("FOREIGN KEY ({}) REFERENCES \"{}\" ({})", from, table, to);
+        
+        match on_delete.as_str() {
+            "NO ACTION" => {}, // Default, we omit it to match lib.rs
+            "RESTRICT" => fk_def.push_str(" ON DELETE RESTRICT"),
+            "SET NULL" => fk_def.push_str(" ON DELETE SET NULL"),
+            "SET DEFAULT" => fk_def.push_str(" ON DELETE SET DEFAULT"),
+            "CASCADE" => fk_def.push_str(" ON DELETE CASCADE"),
+            _ => {}
+        };
+        
+        fk_def.push_str(" DEFERRABLE INITIALLY DEFERRED");
+        fks.push(fk_def);
+    }
+    
+    Ok(fks)
+}
+
+pub fn introspect_table_triggers(conn: &Connection, table_name: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT name FROM sqlite_schema WHERE type='trigger' AND tbl_name=? AND name NOT LIKE 'sqlite_%'"
+    )?;
+    
+    let triggers = stmt.query_map([table_name], |row| row.get(0))?
+        .collect::<Result<Vec<String>, _>>()?;
+        
+    Ok(triggers)
 }
 
 pub fn introspect_table_columns(conn: &Connection, table_name: &str) -> Result<HashMap<String, LiveColumn>> {

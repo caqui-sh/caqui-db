@@ -12,6 +12,17 @@ pub enum MigrationOp {
     CreateIndex { table: String, columns: Vec<String>, unique: bool },
     DropIndex { name: String },
     CreateTrigger { trigger: crate::PhysicalTrigger },
+    DropTrigger { name: String },
+    DropVirtualTable { name: String },
+}
+
+fn get_base_type(sqlite_type: &str) -> String {
+    let s = sqlite_type.to_uppercase();
+    if s.starts_with("TEXT") { "TEXT".to_string() }
+    else if s.starts_with("INTEGER") { "INTEGER".to_string() }
+    else if s.starts_with("REAL") { "REAL".to_string() }
+    else if s.starts_with("BLOB") { "BLOB".to_string() }
+    else { s }
 }
 
 pub fn compute_diff(desired: &[PhysicalTable], live: &HashMap<String, LiveTable>) -> Vec<MigrationOp> {
@@ -50,12 +61,26 @@ pub fn compute_diff(desired: &[PhysicalTable], live: &HashMap<String, LiveTable>
                         },
                         Some(live_col) => {
                             shared_cols.push(des_col.name.clone());
-                            let type_changed = !live_col.sqlite_type.eq_ignore_ascii_case(&des_col.sqlite_type);
+                            let type_changed = get_base_type(&live_col.sqlite_type) != get_base_type(&des_col.sqlite_type);
                             if type_changed {
                                 requires_rebuild = true; 
                             }
                         }
                     }
+                }
+                
+                for live_col_name in live_table.columns.keys() {
+                    if !des_table.columns.iter().any(|c| &c.name == live_col_name) {
+                        requires_rebuild = true;
+                        break;
+                    }
+                }
+
+                // Check Foreign Keys
+                let mut des_fks_set: std::collections::HashSet<&String> = des_table.foreign_keys.iter().collect();
+                let mut live_fks_set: std::collections::HashSet<&String> = live_table.foreign_keys.iter().collect();
+                if des_fks_set != live_fks_set {
+                    requires_rebuild = true;
                 }
                 
                 if requires_rebuild {
@@ -98,14 +123,28 @@ pub fn compute_diff(desired: &[PhysicalTable], live: &HashMap<String, LiveTable>
                     }
 
                     for trigger in &des_table.triggers {
-                        // SQLite triggers are dropped if the table is dropped, 
-                        // but here we just check if it exists.
-                        // For simplicity, we always re-push triggers if not using RebuildTable
-                        // actually we should check if trigger exists in live. 
-                        // But introspection doesn't fetch triggers yet.
-                        // So we always push CREATE TRIGGER IF NOT EXISTS.
-                        ops.push(MigrationOp::CreateTrigger {
-                            trigger: trigger.clone(),
+                        if !live_table.triggers.iter().any(|lt| lt == &trigger.name) {
+                            ops.push(MigrationOp::CreateTrigger {
+                                trigger: trigger.clone(),
+                            });
+                        }
+                    }
+
+                    for live_trigger in &live_table.triggers {
+                        if !des_table.triggers.iter().any(|dt| &dt.name == live_trigger) {
+                            ops.push(MigrationOp::DropTrigger {
+                                name: live_trigger.clone(),
+                            });
+                        }
+                    }
+                }
+
+                // Handle Virtual Table (FTS) drops (which we can detect by checking if the FTS table exists but shouldn't)
+                if des_table.fts_fields.is_none() {
+                    let expected_fts_name = format!("{}_fts", des_table.name);
+                    if live.contains_key(&expected_fts_name) {
+                        ops.push(MigrationOp::DropVirtualTable {
+                            name: expected_fts_name,
                         });
                     }
                 }
@@ -115,8 +154,16 @@ pub fn compute_diff(desired: &[PhysicalTable], live: &HashMap<String, LiveTable>
     
     // Pass 2: Deletions (Drop Tables)
     for live_table_name in live.keys() {
+        if live_table_name.contains("_fts_") || live_table_name.ends_with("_fts") {
+            continue; // FTS shadow tables and virtual tables are managed by the parent table's diff logic
+        }
         if !desired.iter().any(|dt| &dt.name == live_table_name) {
             ops.push(MigrationOp::DropTable { name: live_table_name.clone() });
+            
+            let expected_fts_name = format!("{}_fts", live_table_name);
+            if live.contains_key(&expected_fts_name) {
+                ops.push(MigrationOp::DropVirtualTable { name: expected_fts_name });
+            }
         }
     }
     
@@ -171,11 +218,44 @@ mod tests {
         let mut live_cols = HashMap::new();
         live_cols.insert("__id".to_string(), LiveColumn { name: "__id".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: true });
         
-        live.insert("User".to_string(), LiveTable { name: "User".to_string(), columns: live_cols, indexes: vec![] });
+        live.insert("User".to_string(), LiveTable { name: "User".to_string(), columns: live_cols, indexes: vec![], foreign_keys: vec![], triggers: vec![] });
         
         let ops = compute_diff(&desired, &live);
         
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], MigrationOp::AddColumn { table, column } if table == "User" && column.name == "name"));
+    }
+
+    #[test]
+    fn test_compute_diff_drop_column() {
+        let desired = vec![
+            PhysicalTable {
+                name: "User".to_string(),
+                columns: vec![
+                    PhysicalColumn { name: "__id".to_string(), sqlite_type: "TEXT".to_string(), is_json_array: false }
+                ],
+                indexes: vec![],
+                triggers: vec![],
+                foreign_keys: vec![],
+                fts_fields: None,
+            }
+        ];
+        
+        let mut live = HashMap::new();
+        let mut live_cols = HashMap::new();
+        live_cols.insert("__id".to_string(), LiveColumn { name: "__id".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: true });
+        live_cols.insert("name".to_string(), LiveColumn { name: "name".to_string(), sqlite_type: "TEXT".to_string(), not_null: false, default_value: None, is_pk: false });
+        
+        live.insert("User".to_string(), LiveTable { name: "User".to_string(), columns: live_cols, indexes: vec![], foreign_keys: vec![], triggers: vec![] });
+        
+        let ops = compute_diff(&desired, &live);
+        
+        assert_eq!(ops.len(), 1);
+        if let MigrationOp::RebuildTable { table, live_cols } = &ops[0] {
+            assert_eq!(table.name, "User");
+            assert_eq!(live_cols, &vec!["__id".to_string()]); // only the shared column is preserved
+        } else {
+            panic!("Expected RebuildTable operation");
+        }
     }
 }

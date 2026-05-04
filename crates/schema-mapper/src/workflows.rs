@@ -13,10 +13,14 @@ pub fn get_live_schema(conn: &Connection) -> rusqlite::Result<HashMap<String, Li
     for table_name in tables {
         let columns = introspect_table_columns(conn, &table_name)?;
         let indexes = crate::introspection::introspect_table_indexes(conn, &table_name)?;
+        let foreign_keys = crate::introspection::introspect_table_foreign_keys(conn, &table_name)?;
+        let triggers = crate::introspection::introspect_table_triggers(conn, &table_name)?;
         live_schema.insert(table_name.clone(), LiveTable {
             name: table_name,
             columns,
             indexes,
+            foreign_keys,
+            triggers,
         });
     }
     Ok(live_schema)
