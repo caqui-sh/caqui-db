@@ -161,6 +161,145 @@ pub fn hydrate_mutation_to_plan(
                 steps,
             })
         },
+        "updateMany" => {
+            let data = payload.get("data").and_then(|v| v.as_object())
+                .ok_or("Missing 'data' block in updateMany mutation")?;
+            
+            let where_obj = payload.get("where").and_then(|v| v.as_object())
+                .ok_or("Missing 'where' block in updateMany mutation")?;
+                
+            let model_def = ast.models.get(model_name)
+                .ok_or_else(|| format!("Security Exception: Model '{}' undefined.", model_name))?;
+
+            let mut set_clauses = Vec::new();
+            let mut params = Vec::new();
+            let mut param_idx = 1;
+
+            for (key, val) in data {
+                if key.starts_with("__") { continue; }
+                
+                let field_def = model_def.resolved_fields.iter().find(|f| &f.name == key)
+                    .ok_or_else(|| format!("Invalid field '{}' for model '{}'.", key, model_name))?;
+
+                match &field_def.field_type {
+                    AstFieldType::Scalar(type_name) | AstFieldType::Enum(type_name) => {
+                        let is_enum = matches!(&field_def.field_type, AstFieldType::Enum(_));
+                        let normalized_val = validate_and_normalize_scalar(ast, key, type_name, is_enum, val)?;
+                        set_clauses.push(format!("{} = ?{}", key, param_idx));
+                        params.push(Parameter::Literal(normalized_val));
+                        param_idx += 1;
+                    },
+                    AstFieldType::ScalarArray(_) | AstFieldType::EnumArray(_) => {
+                        set_clauses.push(format!("{} = ?{}", key, param_idx));
+                        let json_val = serde_json::to_string(val).unwrap_or_else(|_| "[]".to_string());
+                        params.push(Parameter::Literal(serde_json::Value::String(json_val)));
+                        param_idx += 1;
+                    },
+                    _ => {
+                        return Err(format!("Nested mutations are not supported in root-level updateMany for field '{}'", key));
+                    }
+                }
+            }
+
+            if set_clauses.is_empty() {
+                return Err("No data provided for updateMany".to_string());
+            }
+
+            let where_clause_ir = parse_where_clause(ast, where_obj, model_def)?;
+            let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, model_name, &mut param_idx);
+            params.extend(where_params);
+
+            let sql = format!(
+                "UPDATE {} SET {} WHERE {};",
+                model_name,
+                set_clauses.join(", "),
+                where_sql
+            );
+
+            let step_id = format!("step_{}_updatemany_{}", model_name.to_lowercase(), *alias_counter);
+            *alias_counter += 1;
+
+            steps.push(ExecutionStep::UpdateMany {
+                id: step_id.clone(),
+                queries: vec![(sql, params)],
+                parent_ref: None,
+            });
+
+            Ok(ExecutionPlan {
+                root_step_id: step_id,
+                steps,
+            })
+        },
+        "deleteMany" => {
+            let default_where = serde_json::Map::new();
+            let where_obj = payload.get("where").and_then(|v| v.as_object())
+                .unwrap_or(&default_where);
+                
+            let model_def = ast.models.get(model_name)
+                .ok_or_else(|| format!("Security Exception: Model '{}' undefined.", model_name))?;
+
+            let pk_col = model_def.resolved_fields.iter()
+                .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
+                .map(|f| f.name.as_str())
+                .unwrap_or("__id");
+            
+            let mut param_idx = 1;
+            let where_clause_ir = parse_where_clause(ast, where_obj, model_def)?;
+            let (where_sql, params) = compile_parameterized_where(&where_clause_ir, model_name, &mut param_idx);
+            
+            // --- Application-Level Cascading Deletes for Polymorphic Bases ---
+            for (other_model_name, other_model_def) in &ast.models {
+                for field in &other_model_def.resolved_fields {
+                    if let AstFieldType::PolymorphicBase(base_name) = &field.field_type {
+                        if model_def.resolved_bases.contains(base_name) {
+                            let cascade_step_id = format!("step_{}_cascade_{}_{}", model_name.to_lowercase(), other_model_name.to_lowercase(), *alias_counter);
+                            *alias_counter += 1;
+                            
+                            let type_col = format!("{}_type", field.name);
+                            let id_col = format!("{}_id", field.name);
+                            
+                            let cascade_sql = format!(
+                                "DELETE FROM {} WHERE {} = '{}' AND {} IN (SELECT {} FROM {} WHERE {});",
+                                other_model_name,
+                                type_col,
+                                model_name,
+                                id_col,
+                                pk_col,
+                                model_name,
+                                where_sql
+                            );
+                            
+                            steps.push(ExecutionStep::Query {
+                                id: cascade_step_id,
+                                sql: cascade_sql,
+                                params: params.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            // --- End Cascading Deletes ---
+
+            let sql = format!(
+                "DELETE FROM {} WHERE {};",
+                model_name,
+                where_sql
+            );
+
+            let step_id = format!("step_{}_deletemany_{}", model_name.to_lowercase(), *alias_counter);
+            *alias_counter += 1;
+            
+            steps.push(ExecutionStep::DeleteMany {
+                id: step_id.clone(),
+                queries: vec![(sql, params)],
+                parent_ref: None,
+            });
+            
+            Ok(ExecutionPlan {
+                root_step_id: step_id,
+                steps,
+            })
+        },
         _ => Err(format!("Unsupported mutation action: {}", action)),
     }
 }
@@ -2050,6 +2189,206 @@ mod tests {
             assert_eq!(params.len(), 1);
         } else {
             panic!("Expected Query step");
+        }
+    }
+
+    #[test]
+    fn test_hydrate_update_many() {
+        let ast = mock_ast();
+        let payload = json!({
+            "data": {
+                "age": 31
+            },
+            "where": {
+                "name": "Alice"
+            }
+        });
+        
+        let mut alias_counter = 0;
+        let plan = hydrate_mutation_to_plan(&ast, "User", "updateMany", &payload, &mut alias_counter).unwrap();
+        
+        assert_eq!(plan.steps.len(), 1);
+        if let ExecutionStep::UpdateMany { id, queries, .. } = &plan.steps[0] {
+            assert_eq!(id, "step_user_updatemany_0");
+            let (sql, params) = &queries[0];
+            assert!(sql.contains("UPDATE User SET age = ?1 WHERE User.name = ?2;"));
+            assert_eq!(params.len(), 2);
+        } else {
+            panic!("Expected UpdateMany step");
+        }
+    }
+
+    #[test]
+    fn test_hydrate_update_many_rejects_relations() {
+        let mut ast = mock_ast();
+        ast.models.get_mut("User").unwrap().resolved_fields.push(FieldNode {
+            name: "posts".to_string(),
+            field_type: AstFieldType::RelationArray("Post".to_string()),
+            is_optional: true,
+            attributes: vec![],
+        });
+
+        let payload = json!({
+            "data": {
+                "posts": { "create": [] }
+            },
+            "where": { "name": "Alice" }
+        });
+        
+        let mut alias_counter = 0;
+        let res = hydrate_mutation_to_plan(&ast, "User", "updateMany", &payload, &mut alias_counter);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("Nested mutations are not supported"));
+    }
+
+    #[test]
+    fn test_hydrate_delete_many() {
+        let ast = mock_ast();
+        let payload = json!({
+            "where": {
+                "age": { "gt": 20 }
+            }
+        });
+        
+        let mut alias_counter = 0;
+        let plan = hydrate_mutation_to_plan(&ast, "User", "deleteMany", &payload, &mut alias_counter).unwrap();
+        
+        assert_eq!(plan.steps.len(), 1);
+        if let ExecutionStep::DeleteMany { id, queries, .. } = &plan.steps[0] {
+            assert_eq!(id, "step_user_deletemany_0");
+            let (sql, params) = &queries[0];
+            assert!(sql.contains("DELETE FROM User WHERE User.age > ?1;"));
+            assert_eq!(params.len(), 1);
+        } else {
+            panic!("Expected DeleteMany step");
+        }
+    }
+
+    #[test]
+    fn test_hydrate_delete_many_cascades_polymorphic() {
+        use schema_parser::ast::BaseNode;
+        let mut ast = mock_ast();
+        
+        // Setup polymorphic relation
+        ast.bases.insert("Account".to_string(), BaseNode {
+            name: "Account".to_string(),
+            fields: vec![],
+            extends: vec![],
+            resolved_bases: std::collections::BTreeSet::new(),
+            resolved_fields: vec![],
+        });
+        ast.models.get_mut("User").unwrap().resolved_bases.insert("Account".to_string());
+        
+        ast.models.insert("Profile".to_string(), ModelNode {
+            block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(),
+            name: "Profile".to_string(),
+            resolved_fields: vec![
+                FieldNode {
+                    name: "owner".to_string(),
+                    field_type: AstFieldType::PolymorphicBase("Account".to_string()),
+                    is_optional: false,
+                    attributes: vec![],
+                }
+            ]
+        });
+
+        let payload = json!({
+            "where": { "name": "Alice" }
+        });
+        
+        let mut alias_counter = 0;
+        let plan = hydrate_mutation_to_plan(&ast, "User", "deleteMany", &payload, &mut alias_counter).unwrap();
+        
+        // Should have 2 steps: 1 cascade + 1 main delete
+        assert_eq!(plan.steps.len(), 2);
+        
+        // Cascade step
+        if let ExecutionStep::Query { sql, .. } = &plan.steps[0] {
+            assert!(sql.contains("DELETE FROM Profile WHERE owner_type = 'User' AND owner_id IN (SELECT __id FROM User WHERE User.name = ?1);"));
+        } else {
+            panic!("Expected Query step for cascade");
+        }
+    }
+
+    #[test]
+    fn test_hydrate_update_many_missing_data() {
+        let ast = mock_ast();
+        let payload = json!({
+            "where": { "name": "Alice" }
+        });
+        let mut alias_counter = 0;
+        let res = hydrate_mutation_to_plan(&ast, "User", "updateMany", &payload, &mut alias_counter);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("Missing 'data' block"));
+    }
+
+    #[test]
+    fn test_hydrate_update_many_empty_data() {
+        let ast = mock_ast();
+        let payload = json!({
+            "data": {},
+            "where": { "name": "Alice" }
+        });
+        let mut alias_counter = 0;
+        let res = hydrate_mutation_to_plan(&ast, "User", "updateMany", &payload, &mut alias_counter);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("No data provided"));
+    }
+
+    #[test]
+    fn test_hydrate_update_many_scalar_array() {
+        let mut ast = mock_ast();
+        ast.models.get_mut("User").unwrap().resolved_fields.push(FieldNode {
+            name: "tags".to_string(),
+            field_type: AstFieldType::ScalarArray("String".to_string()),
+            is_optional: true,
+            attributes: vec![],
+        });
+
+        let payload = json!({
+            "data": {
+                "tags": ["rust", "db"]
+            },
+            "where": { "name": "Alice" }
+        });
+        
+        let mut alias_counter = 0;
+        let plan = hydrate_mutation_to_plan(&ast, "User", "updateMany", &payload, &mut alias_counter).unwrap();
+        
+        assert_eq!(plan.steps.len(), 1);
+        if let ExecutionStep::UpdateMany { id, queries, .. } = &plan.steps[0] {
+            assert_eq!(id, "step_user_updatemany_0");
+            let (sql, params) = &queries[0];
+            assert!(sql.contains("UPDATE User SET tags = ?1 WHERE User.name = ?2;"));
+            assert_eq!(params.len(), 2);
+            if let Parameter::Literal(val) = &params[0] {
+                assert_eq!(val.as_str().unwrap(), "[\"rust\",\"db\"]");
+            } else {
+                panic!("Expected string literal for array parameter");
+            }
+        } else {
+            panic!("Expected UpdateMany step");
+        }
+    }
+
+    #[test]
+    fn test_hydrate_delete_many_empty_where() {
+        let ast = mock_ast();
+        let payload = json!({
+            "where": {}
+        });
+        
+        let mut alias_counter = 0;
+        let plan = hydrate_mutation_to_plan(&ast, "User", "deleteMany", &payload, &mut alias_counter).unwrap();
+        
+        assert_eq!(plan.steps.len(), 1);
+        if let ExecutionStep::DeleteMany { id, queries, .. } = &plan.steps[0] {
+            assert_eq!(id, "step_user_deletemany_0");
+            let (sql, params) = &queries[0];
+            assert!(sql.contains("DELETE FROM User WHERE 1=1;")); // Empty where evaluates to AlwaysTrue (1=1)
+            assert_eq!(params.len(), 0); // No parameters for empty where
+        } else {
+            panic!("Expected DeleteMany step");
         }
     }
 

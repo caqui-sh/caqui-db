@@ -45,7 +45,7 @@ pub async fn api_execution_handler(
             Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Database Error: {}", e)).into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Execution Error: {}", e)).into_response(),
         }
-    } else if action == "create" || action == "update" || action == "delete" || action == "upsert" {
+    } else if action == "create" || action == "update" || action == "delete" || action == "upsert" || action == "updateMany" || action == "deleteMany" {
         if state.ast.bases.contains_key(model) {
             return (StatusCode::METHOD_NOT_ALLOWED, "Security Exception: Cannot mutate abstract bases directly.").into_response();
         }
@@ -92,7 +92,12 @@ pub async fn api_execution_handler(
             }
         };
         
-        let raw_json_string = if action == "delete" {
+        let raw_json_string = if action == "updateMany" || action == "deleteMany" {
+            // Parse the stringified count returned by the executor
+            let count: i64 = root_id.parse().unwrap_or(0);
+            // Format it as a JSON object
+            Ok(Ok(format!("{{\"count\": {}}}", count)))
+        } else if action == "delete" {
             Ok(Ok(deleted_data.unwrap_or_else(|| format!("[{{\"id\": \"{}\"}}]", root_id))))
         } else {
             // 4. Create a temporary synthetic read payload to fetch the mutated record
@@ -2311,5 +2316,72 @@ mod tests {
         
         // Assert missing optional field safely falls back to explicit JSON null
         assert!(root["nickname"].is_null());
+    }
+
+    #[tokio::test]
+    async fn test_api_update_many() {
+        let state = build_test_state().await;
+        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "model": "User",
+                    "action": "updateMany",
+                    "where": { "age": { "gt": 20 } },
+                    "data": { "bio": "Updated Bulk Bio" }
+                }"#
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(json_body["data"]["count"], 1);
+
+        // Verify change
+        let conn = state.db_pool.get().await.unwrap();
+        let bio: String = conn.interact(|db| {
+            db.query_row("SELECT bio FROM User WHERE __id = 'u1'", [], |row| row.get(0))
+        }).await.unwrap().unwrap();
+        assert_eq!(bio, "Updated Bulk Bio");
+    }
+
+    #[tokio::test]
+    async fn test_api_delete_many() {
+        let state = build_test_state().await;
+        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                r#"{
+                    "model": "User",
+                    "action": "deleteMany",
+                    "where": { "name": "Bob" }
+                }"#
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(json_body["data"]["count"], 1);
+
+        // Verify it's gone
+        let conn = state.db_pool.get().await.unwrap();
+        let count: i64 = conn.interact(|db| {
+            db.query_row("SELECT COUNT(*) FROM User WHERE name = 'Bob'", [], |row| row.get(0))
+        }).await.unwrap().unwrap();
+        assert_eq!(count, 0);
     }
 }

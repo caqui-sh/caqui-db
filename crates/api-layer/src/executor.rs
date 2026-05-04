@@ -145,24 +145,28 @@ fn execute_steps(
                 returned_values.insert(id.clone(), returned_id);
             },
             ExecutionStep::UpdateMany { id, queries, parent_ref } => {
+                let mut total_affected: usize = 0;
                 for (sql, params) in queries {
                     let mut stmt = tx.prepare_cached(sql)?;
                     let sql_params = resolve_params(params, parent_ref.as_ref(), returned_values)?;
                     let borrowed_params: Vec<&dyn rusqlite::ToSql> = sql_params.iter().map(|b| &**b).collect();
-                    stmt.execute(&borrowed_params[..])?;
+                    total_affected += stmt.execute(&borrowed_params[..])?;
                 }
-                if id == root_step_id { *root_id = "".to_string(); }
-                returned_values.insert(id.clone(), "".to_string());
+                let count_str = total_affected.to_string();
+                if id == root_step_id { *root_id = count_str.clone(); }
+                returned_values.insert(id.clone(), count_str);
             },
             ExecutionStep::DeleteMany { id, queries, parent_ref } => {
+                let mut total_affected: usize = 0;
                 for (sql, params) in queries {
                     let mut stmt = tx.prepare_cached(sql)?;
                     let sql_params = resolve_params(params, parent_ref.as_ref(), returned_values)?;
                     let borrowed_params: Vec<&dyn rusqlite::ToSql> = sql_params.iter().map(|b| &**b).collect();
-                    stmt.execute(&borrowed_params[..])?;
+                    total_affected += stmt.execute(&borrowed_params[..])?;
                 }
-                if id == root_step_id { *root_id = "".to_string(); }
-                returned_values.insert(id.clone(), "".to_string());
+                let count_str = total_affected.to_string();
+                if id == root_step_id { *root_id = count_str.clone(); }
+                returned_values.insert(id.clone(), count_str);
             },
             ExecutionStep::UpsertBranch { check_sql, check_params, if_exists, if_not_exists, root_step_id: branch_root_id } => {
                 let mut stmt = tx.prepare_cached(check_sql)?;
@@ -284,7 +288,56 @@ mod tests {
         let res = execute_steps(&tx, &[step], &mut returned, "step_1", &mut root_id);
         
         assert!(res.is_ok());
-        assert_eq!(root_id, ""); // Batch ops return empty for root ID
+        assert_eq!(root_id, "0"); // Batch ops return "0" for root ID when no rows are affected
+    }
+
+    #[test]
+    fn test_execute_steps_batch_multiple_rows_affected() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE test (id TEXT PRIMARY KEY, val TEXT);").unwrap();
+        conn.execute("INSERT INTO test (id, val) VALUES (?1, ?2)", ["1", "old"]).unwrap();
+        conn.execute("INSERT INTO test (id, val) VALUES (?1, ?2)", ["2", "old"]).unwrap();
+        let tx = conn.transaction().unwrap();
+
+        let step = ExecutionStep::UpdateMany {
+            id: "step_1".to_string(),
+            queries: vec![
+                ("UPDATE test SET val = ?1 WHERE val = ?2".to_string(), vec![Parameter::Literal(serde_json::json!("new")), Parameter::Literal(serde_json::json!("old"))])
+            ],
+            parent_ref: None,
+        };
+
+        let mut returned = HashMap::new();
+        let mut root_id = String::new();
+        let res = execute_steps(&tx, &[step], &mut returned, "step_1", &mut root_id);
+        
+        assert!(res.is_ok());
+        assert_eq!(root_id, "2"); 
+    }
+
+    #[test]
+    fn test_execute_steps_batch_delete_multiple_rows_affected() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE test (id TEXT PRIMARY KEY, val TEXT);").unwrap();
+        conn.execute("INSERT INTO test (id, val) VALUES (?1, ?2)", ["1", "old"]).unwrap();
+        conn.execute("INSERT INTO test (id, val) VALUES (?1, ?2)", ["2", "old"]).unwrap();
+        conn.execute("INSERT INTO test (id, val) VALUES (?1, ?2)", ["3", "keep"]).unwrap();
+        let tx = conn.transaction().unwrap();
+
+        let step = ExecutionStep::DeleteMany {
+            id: "step_delete".to_string(),
+            queries: vec![
+                ("DELETE FROM test WHERE val = ?1".to_string(), vec![Parameter::Literal(serde_json::json!("old"))])
+            ],
+            parent_ref: None,
+        };
+
+        let mut returned = HashMap::new();
+        let mut root_id = String::new();
+        let res = execute_steps(&tx, &[step], &mut returned, "step_delete", &mut root_id);
+        
+        assert!(res.is_ok());
+        assert_eq!(root_id, "2"); 
     }
 
     #[test]
