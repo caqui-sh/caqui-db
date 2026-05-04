@@ -20,6 +20,28 @@ pub enum ExecutionStep {
         if_exists: Vec<ExecutionStep>,
         if_not_exists: Vec<ExecutionStep>,
         root_step_id: String,
+    },
+    UpdateBranch {
+        id: String,
+        sql: String,
+        params: Vec<Parameter>,
+        parent_ref: Parameter,
+    },
+    DeleteBranch {
+        id: String,
+        sql: String,
+        params: Vec<Parameter>,
+        parent_ref: Parameter,
+    },
+    UpdateMany {
+        id: String,
+        queries: Vec<(String, Vec<Parameter>)>,
+        parent_ref: Option<Parameter>,
+    },
+    DeleteMany {
+        id: String,
+        queries: Vec<(String, Vec<Parameter>)>,
+        parent_ref: Option<Parameter>,
     }
 }
 

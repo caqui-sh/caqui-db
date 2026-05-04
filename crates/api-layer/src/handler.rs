@@ -82,7 +82,14 @@ pub async fn api_execution_handler(
         // 3. Execute the mutation transactionally
         let root_id = match crate::executor::execute_mutation_plan(&state.db_pool, plan).await {
             Ok(id) => id,
-            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Mutation Execution Error: {}", e)).into_response(),
+            Err(e) => {
+                if e.contains("Record not found") {
+                    return (StatusCode::NOT_FOUND, format!("Mutation Execution Error: {}", e)).into_response();
+                } else if e.contains("Scoped Security Violation") {
+                    return (StatusCode::BAD_REQUEST, format!("Mutation Execution Error: {}", e)).into_response();
+                }
+                return (StatusCode::INTERNAL_SERVER_ERROR, format!("Mutation Execution Error: {}", e)).into_response();
+            }
         };
         
         let raw_json_string = if action == "delete" {
@@ -765,7 +772,7 @@ mod tests {
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let body_str = String::from_utf8_lossy(&body_bytes);
         assert!(body_str.contains("Record not found"));
@@ -1578,11 +1585,11 @@ mod tests {
 
         let response = app.oneshot(request).await.unwrap();
         // The nested update should fail, rolling back the transaction
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         
         let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let body_str = String::from_utf8_lossy(&body_bytes);
-        assert!(body_str.contains("Record not found"));
+        assert!(body_str.contains("Scoped Security Violation"));
     }
 
     #[tokio::test]

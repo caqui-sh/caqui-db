@@ -174,11 +174,13 @@ struct ParentRel {
 enum DeferredAction {
     Create(serde_json::Map<String, Value>),
     Connect(serde_json::Map<String, Value>),
-    Update(serde_json::Map<String, Value>, serde_json::Map<String, Value>),
-    Delete(serde_json::Map<String, Value>),
+    Update(String, serde_json::Map<String, Value>, serde_json::Map<String, Value>),
+    Delete(String, serde_json::Map<String, Value>),
     Disconnect(serde_json::Map<String, Value>),
     Set(Vec<serde_json::Map<String, Value>>),
     Upsert(serde_json::Map<String, Value>, serde_json::Map<String, Value>),
+    UpdateMany(String, serde_json::Map<String, Value>, serde_json::Map<String, Value>),
+    DeleteMany(String, serde_json::Map<String, Value>),
 }
 
 struct DeferredChild {
@@ -224,15 +226,51 @@ fn translate_create_node(
         let mut fk_col = None;
         let mut target_pk = "__id".to_string();
 
-        if let Some(FieldAttribute::InternalRelation { fields, references }) = parent_field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
-            if !fields.is_empty() && !references.is_empty() {
-                let pfk = &fields[0];
-                let rpk = &references[0];
-                
-                // Does THIS model (the child) hold the FK?
-                if model_def.resolved_fields.iter().any(|f| &f.name == pfk) {
-                    fk_col = Some(pfk.clone());
-                    target_pk = rpk.clone();
+        let rel_attr = parent_field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. }));
+        let rel_name = match rel_attr {
+            Some(FieldAttribute::Relation { name, .. }) => name.clone(),
+            _ => None,
+        };
+
+        let reverse_field = model_def.resolved_fields.iter().find(|f| {
+            match &f.field_type {
+                AstFieldType::Relation(rt) if rt == &rel.parent_model => {
+                    if let Some(FieldAttribute::Relation { name, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                        if name == &rel_name { return true; }
+                    }
+                    false
+                }
+                _ => false
+            }
+        });
+
+        if let Some(rev_f) = reverse_field {
+            let mut rel_fields = None;
+            let mut rel_refs = None;
+            if let Some(FieldAttribute::InternalRelation { fields, references }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+                rel_fields = Some(fields);
+                rel_refs = Some(references);
+            } else if let Some(FieldAttribute::Relation { fields, references, .. }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                if let (Some(f), Some(r)) = (fields, references) {
+                    rel_fields = Some(f);
+                    rel_refs = Some(r);
+                }
+            }
+            if let (Some(fields), Some(references)) = (rel_fields, rel_refs) {
+                if !fields.is_empty() && !references.is_empty() {
+                    fk_col = Some(fields[0].clone());
+                    target_pk = references[0].clone();
+                }
+            }
+        } else {
+            if let Some(FieldAttribute::InternalRelation { fields, references }) = parent_field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+                if !fields.is_empty() && !references.is_empty() {
+                    let pfk = &fields[0];
+                    let rpk = &references[0];
+                    if model_def.resolved_fields.iter().any(|f| &f.name == pfk) {
+                        fk_col = Some(pfk.clone());
+                        target_pk = rpk.clone();
+                    }
                 }
             }
         }
@@ -355,22 +393,46 @@ fn translate_create_node(
                             for item in arr {
                                 let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update' array")?;
                                 let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update' array")?;
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(target_model.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
                             }
                         } else if let Some(item) = update_payload.as_object() {
                             let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update'")?;
                             let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update'")?;
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(target_model.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
                         }
                     }
                     if let Some(delete_payload) = nested_mutations.get("delete") {
                         if let Some(arr) = delete_payload.as_array() {
                             for item in arr {
                                 let child_where = item.as_object().ok_or("Expected 'where' object in 'delete' array")?;
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(child_where.clone()), relation_field_name: key.clone() });
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), child_where.clone()), relation_field_name: key.clone() });
                             }
                         } else if let Some(item) = delete_payload.as_object() {
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(item.clone()), relation_field_name: key.clone() });
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), item.clone()), relation_field_name: key.clone() });
+                        }
+                    }
+                    if let Some(update_many_payload) = nested_mutations.get("updateMany") {
+                        if let Some(arr) = update_many_payload.as_array() {
+                            for item in arr {
+                                let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'updateMany' array")?;
+                                let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'updateMany' array")?;
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::UpdateMany(target_model.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
+                            }
+                        } else if let Some(item) = update_many_payload.as_object() {
+                            let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'updateMany'")?;
+                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'updateMany'")?;
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::UpdateMany(target_model.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
+                        }
+                    }
+                    if let Some(delete_many_payload) = nested_mutations.get("deleteMany") {
+                        if let Some(arr) = delete_many_payload.as_array() {
+                            for item in arr {
+                                let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'deleteMany' array element")?;
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::DeleteMany(target_model.clone(), child_where.clone()), relation_field_name: key.clone() });
+                            }
+                        } else if let Some(item) = delete_many_payload.as_object() {
+                            let child_where = item.get("where").and_then(|v| v.as_object()).unwrap_or(item);
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::DeleteMany(target_model.clone(), child_where.clone()), relation_field_name: key.clone() });
                         }
                     }
                     if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
@@ -412,7 +474,93 @@ fn translate_create_node(
                 }
             },
             AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {
-                return Err(format!("Unsupported: Array mutations on polymorphic field '{}' are not yet implemented.", key));
+                let nested_mutations = val.as_object().ok_or(format!("Expected object for polymorphic field '{}'", key))?;
+                
+                for (concrete_model_name, _) in nested_mutations {
+                    if ast.models.contains_key(concrete_model_name) {
+                        return Err(format!("Unsupported: Array mutations on polymorphic field '{}' are not yet implemented.", key));
+                    }
+                }
+                
+                if let Some(update_payload) = nested_mutations.get("update") {
+                    if let Some(arr) = update_payload.as_array() {
+                        for item in arr {
+                            let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update' array")?;
+                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update' array")?;
+                            let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
+                            if !ast.models.contains_key(kind_val) {
+                                return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                            }
+                            let mut cw = child_where.clone();
+                            cw.remove("__kind");
+                            deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Update(kind_val.to_string(), cw, child_data.clone()), relation_field_name: key.clone() });
+                        }
+                    } else if let Some(item) = update_payload.as_object() {
+                        let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update'")?;
+                        let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update'")?;
+                        let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
+                        if !ast.models.contains_key(kind_val) {
+                            return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                        }
+                        let mut cw = child_where.clone();
+                        cw.remove("__kind");
+                        deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Update(kind_val.to_string(), cw, child_data.clone()), relation_field_name: key.clone() });
+                    }
+                }
+                if let Some(delete_payload) = nested_mutations.get("delete") {
+                    if let Some(arr) = delete_payload.as_array() {
+                        for item in arr {
+                            let child_where = item.as_object().ok_or("Expected 'where' object in 'delete' array")?;
+                            let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
+                            if !ast.models.contains_key(kind_val) {
+                                return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                            }
+                            let mut cw = child_where.clone();
+                            cw.remove("__kind");
+                            deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Delete(kind_val.to_string(), cw), relation_field_name: key.clone() });
+                        }
+                    } else if let Some(item) = delete_payload.as_object() {
+                        let kind_val = item.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
+                        if !ast.models.contains_key(kind_val) {
+                            return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                        }
+                        let mut cw = item.clone();
+                        cw.remove("__kind");
+                        deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Delete(kind_val.to_string(), cw), relation_field_name: key.clone() });
+                    }
+                }
+                if let Some(update_many_payload) = nested_mutations.get("updateMany") {
+                    let base_model_name = match &field_def.field_type {
+                        AstFieldType::PolymorphicUnionArray(n) | AstFieldType::PolymorphicBaseArray(n) => n.clone(),
+                        _ => unreachable!(),
+                    };
+                    if let Some(arr) = update_many_payload.as_array() {
+                        for item in arr {
+                            let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'updateMany' array")?;
+                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'updateMany' array")?;
+                            deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::UpdateMany(base_model_name.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
+                        }
+                    } else if let Some(item) = update_many_payload.as_object() {
+                        let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'updateMany'")?;
+                        let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'updateMany'")?;
+                        deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::UpdateMany(base_model_name.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
+                    }
+                }
+                if let Some(delete_many_payload) = nested_mutations.get("deleteMany") {
+                    let base_model_name = match &field_def.field_type {
+                        AstFieldType::PolymorphicUnionArray(n) | AstFieldType::PolymorphicBaseArray(n) => n.clone(),
+                        _ => unreachable!(),
+                    };
+                    if let Some(arr) = delete_many_payload.as_array() {
+                        for item in arr {
+                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'deleteMany' array element")?;
+                            deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::DeleteMany(base_model_name.clone(), child_where.clone()), relation_field_name: key.clone() });
+                        }
+                    } else if let Some(item) = delete_many_payload.as_object() {
+                        let child_where = item.get("where").and_then(|v| v.as_object()).unwrap_or(item);
+                        deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::DeleteMany(base_model_name.clone(), child_where.clone()), relation_field_name: key.clone() });
+                    }
+                }
             },
             AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicBase(_) => {
                 let nested_mutations = val.as_object().ok_or(format!("Expected object for polymorphic field '{}'", key))?;
@@ -526,7 +674,7 @@ fn translate_update_node(
                 params.push(Parameter::Literal(normalized_val));
                 param_idx += 1;
             },
-            AstFieldType::ScalarArray(_) | AstFieldType::EnumArray(_) => {
+            AstFieldType::ScalarArray(type_name) | AstFieldType::EnumArray(type_name) => {
                 let is_enum = matches!(&field_def.field_type, AstFieldType::EnumArray(_));
                 if let Some(obj) = val.as_object() {
                     if let Some(push_val) = obj.get("push") {
@@ -536,13 +684,20 @@ fn translate_update_node(
                             }
                         }
                         set_clauses.push(format!("{} = json_insert(COALESCE({}, '[]'), '$[#]', ?{})", key, key, param_idx));
-                        let push_str = if push_val.is_string() {
-                            push_val.as_str().unwrap().to_string()
-                        } else {
-                            serde_json::to_string(push_val).unwrap_or_default()
-                        };
+                        let push_str = if push_val.is_string() { push_val.as_str().unwrap().to_string() } else { serde_json::to_string(push_val).unwrap_or_default() };
                         params.push(Parameter::Literal(serde_json::Value::String(push_str)));
                         param_idx += 1;
+                    } else if let Some(pull_val) = obj.get("pull") {
+                        let normalized_val = validate_and_normalize_scalar(ast, key, type_name, is_enum, pull_val)?;
+                        set_clauses.push(format!("{} = (SELECT json_group_array(value) FROM json_each({}) WHERE value != ?{})", key, key, param_idx));
+                        params.push(Parameter::Literal(normalized_val));
+                        param_idx += 1;
+                    } else if let Some(pull_index) = obj.get("pullIndex") {
+                        if let Some(idx) = pull_index.as_i64() {
+                            set_clauses.push(format!("{} = json_remove({}, '$[' || ?{} || ']')", key, key, param_idx));
+                            params.push(Parameter::Literal(serde_json::Value::Number(serde_json::Number::from(idx))));
+                            param_idx += 1;
+                        }
                     }
                 } else if let Some(arr) = val.as_array() {
                     if is_enum {
@@ -635,22 +790,46 @@ fn translate_update_node(
                             for item in arr {
                                 let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update' array")?;
                                 let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update' array")?;
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(target_model.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
                             }
                         } else if let Some(item) = update_payload.as_object() {
                             let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update'")?;
                             let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update'")?;
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(target_model.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
                         }
                     }
                     if let Some(delete_payload) = nested_mutations.get("delete") {
                         if let Some(arr) = delete_payload.as_array() {
                             for item in arr {
                                 let child_where = item.as_object().ok_or("Expected 'where' object in 'delete' array")?;
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(child_where.clone()), relation_field_name: key.clone() });
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), child_where.clone()), relation_field_name: key.clone() });
                             }
                         } else if let Some(item) = delete_payload.as_object() {
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(item.clone()), relation_field_name: key.clone() });
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), item.clone()), relation_field_name: key.clone() });
+                        }
+                    }
+                    if let Some(update_many_payload) = nested_mutations.get("updateMany") {
+                        if let Some(arr) = update_many_payload.as_array() {
+                            for item in arr {
+                                let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'updateMany' array")?;
+                                let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'updateMany' array")?;
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::UpdateMany(target_model.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
+                            }
+                        } else if let Some(item) = update_many_payload.as_object() {
+                            let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'updateMany'")?;
+                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'updateMany'")?;
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::UpdateMany(target_model.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
+                        }
+                    }
+                    if let Some(delete_many_payload) = nested_mutations.get("deleteMany") {
+                        if let Some(arr) = delete_many_payload.as_array() {
+                            for item in arr {
+                                let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'deleteMany' array element")?;
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::DeleteMany(target_model.clone(), child_where.clone()), relation_field_name: key.clone() });
+                            }
+                        } else if let Some(item) = delete_many_payload.as_object() {
+                            let child_where = item.get("where").and_then(|v| v.as_object()).unwrap_or(item);
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::DeleteMany(target_model.clone(), child_where.clone()), relation_field_name: key.clone() });
                         }
                     }
                     if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
@@ -692,7 +871,93 @@ fn translate_update_node(
                 }
             },
             AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {
-                return Err(format!("Unsupported: Array mutations on polymorphic field '{}' are not yet implemented.", key));
+                let nested_mutations = val.as_object().ok_or(format!("Expected object for polymorphic field '{}'", key))?;
+                
+                for (concrete_model_name, _) in nested_mutations {
+                    if ast.models.contains_key(concrete_model_name) {
+                        return Err(format!("Unsupported: Array mutations on polymorphic field '{}' are not yet implemented.", key));
+                    }
+                }
+                
+                if let Some(update_payload) = nested_mutations.get("update") {
+                    if let Some(arr) = update_payload.as_array() {
+                        for item in arr {
+                            let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update' array")?;
+                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update' array")?;
+                            let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
+                            if !ast.models.contains_key(kind_val) {
+                                return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                            }
+                            let mut cw = child_where.clone();
+                            cw.remove("__kind");
+                            deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Update(kind_val.to_string(), cw, child_data.clone()), relation_field_name: key.clone() });
+                        }
+                    } else if let Some(item) = update_payload.as_object() {
+                        let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update'")?;
+                        let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update'")?;
+                        let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
+                        if !ast.models.contains_key(kind_val) {
+                            return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                        }
+                        let mut cw = child_where.clone();
+                        cw.remove("__kind");
+                        deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Update(kind_val.to_string(), cw, child_data.clone()), relation_field_name: key.clone() });
+                    }
+                }
+                if let Some(delete_payload) = nested_mutations.get("delete") {
+                    if let Some(arr) = delete_payload.as_array() {
+                        for item in arr {
+                            let child_where = item.as_object().ok_or("Expected 'where' object in 'delete' array")?;
+                            let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
+                            if !ast.models.contains_key(kind_val) {
+                                return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                            }
+                            let mut cw = child_where.clone();
+                            cw.remove("__kind");
+                            deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Delete(kind_val.to_string(), cw), relation_field_name: key.clone() });
+                        }
+                    } else if let Some(item) = delete_payload.as_object() {
+                        let kind_val = item.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
+                        if !ast.models.contains_key(kind_val) {
+                            return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                        }
+                        let mut cw = item.clone();
+                        cw.remove("__kind");
+                        deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Delete(kind_val.to_string(), cw), relation_field_name: key.clone() });
+                    }
+                }
+                if let Some(update_many_payload) = nested_mutations.get("updateMany") {
+                    let base_model_name = match &field_def.field_type {
+                        AstFieldType::PolymorphicUnionArray(n) | AstFieldType::PolymorphicBaseArray(n) => n.clone(),
+                        _ => unreachable!(),
+                    };
+                    if let Some(arr) = update_many_payload.as_array() {
+                        for item in arr {
+                            let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'updateMany' array")?;
+                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'updateMany' array")?;
+                            deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::UpdateMany(base_model_name.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
+                        }
+                    } else if let Some(item) = update_many_payload.as_object() {
+                        let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'updateMany'")?;
+                        let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'updateMany'")?;
+                        deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::UpdateMany(base_model_name.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
+                    }
+                }
+                if let Some(delete_many_payload) = nested_mutations.get("deleteMany") {
+                    let base_model_name = match &field_def.field_type {
+                        AstFieldType::PolymorphicUnionArray(n) | AstFieldType::PolymorphicBaseArray(n) => n.clone(),
+                        _ => unreachable!(),
+                    };
+                    if let Some(arr) = delete_many_payload.as_array() {
+                        for item in arr {
+                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'deleteMany' array element")?;
+                            deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::DeleteMany(base_model_name.clone(), child_where.clone()), relation_field_name: key.clone() });
+                        }
+                    } else if let Some(item) = delete_many_payload.as_object() {
+                        let child_where = item.get("where").and_then(|v| v.as_object()).unwrap_or(item);
+                        deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::DeleteMany(base_model_name.clone(), child_where.clone()), relation_field_name: key.clone() });
+                    }
+                }
             },
             AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicBase(_) => {
                 let nested_mutations = val.as_object().ok_or(format!("Expected object for polymorphic field '{}'", key))?;
@@ -761,43 +1026,105 @@ fn translate_update_node(
         let mut fk_col = None;
         let mut target_pk = "__id".to_string();
 
-        // Find the relation definition on the parent side
         if let Some(field) = parent_model_def.resolved_fields.iter().find(|f| f.name == rel.relation_field_name) {
-            if let Some(FieldAttribute::InternalRelation { fields, references }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
-                if !fields.is_empty() && !references.is_empty() {
-                    let pfk = &fields[0];
-                    let rpk = &references[0];
-                    
-                    // Does THIS model (the child) hold the FK?
-                    if model_def.resolved_fields.iter().any(|f| &f.name == pfk) {
-                        fk_col = Some(pfk.clone());
-                        target_pk = rpk.clone();
+            let rel_attr = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. }));
+            let rel_name = match rel_attr {
+                Some(FieldAttribute::Relation { name, .. }) => name.clone(),
+                _ => None,
+            };
+
+            let reverse_field = model_def.resolved_fields.iter().find(|f| {
+                match &f.field_type {
+                    AstFieldType::Relation(rt) if rt == &rel.parent_model => {
+                        if let Some(FieldAttribute::Relation { name, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                            if name == &rel_name { return true; }
+                        }
+                        false
+                    }
+                    _ => false
+                }
+            });
+
+            if let Some(rev_f) = reverse_field {
+                let mut rel_fields = None;
+                let mut rel_refs = None;
+                if let Some(FieldAttribute::InternalRelation { fields, references }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+                    rel_fields = Some(fields);
+                    rel_refs = Some(references);
+                } else if let Some(FieldAttribute::Relation { fields, references, .. }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                    if let (Some(f), Some(r)) = (fields, references) {
+                        rel_fields = Some(f);
+                        rel_refs = Some(r);
+                    }
+                }
+                if let (Some(fields), Some(references)) = (rel_fields, rel_refs) {
+                    if !fields.is_empty() && !references.is_empty() {
+                        fk_col = Some(fields[0].clone());
+                        target_pk = references[0].clone();
+                    }
+                }
+            } else {
+                if let Some(FieldAttribute::InternalRelation { fields, references }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+                    if !fields.is_empty() && !references.is_empty() {
+                        let pfk = &fields[0];
+                        let rpk = &references[0];
+                        if model_def.resolved_fields.iter().any(|f| &f.name == pfk) {
+                            fk_col = Some(pfk.clone());
+                            target_pk = rpk.clone();
+                        }
                     }
                 }
             }
         }
 
+        let mut parent_ref_param = None;
         if let Some(col) = fk_col {
             where_sql = format!("({} AND {}.{} = ?{})", where_sql, model_name, col, param_idx);
-            where_params.push(Parameter::Reference { step_id: rel.parent_step_id.clone(), column: target_pk });
+            parent_ref_param = Some(Parameter::Reference { step_id: rel.parent_step_id.clone(), column: target_pk });
             param_idx += 1;
         }
-    }
-    params.extend(where_params);
+        
+        params.extend(where_params);
 
-    let sql = format!(
-        "UPDATE {} SET {} WHERE {} RETURNING {};",
-        model_name,
-        set_clauses.join(", "),
-        where_sql,
-        pk_col
-    );
-    
-    steps.push(ExecutionStep::Query {
-        id: step_id.clone(),
-        sql,
-        params,
-    });
+        let sql = format!(
+            "UPDATE {} SET {} WHERE {} RETURNING {};",
+            model_name,
+            set_clauses.join(", "),
+            where_sql,
+            pk_col
+        );
+        
+        if let Some(pref) = parent_ref_param {
+            steps.push(ExecutionStep::UpdateBranch {
+                id: step_id.clone(),
+                sql,
+                params,
+                parent_ref: pref,
+            });
+        } else {
+            steps.push(ExecutionStep::Query {
+                id: step_id.clone(),
+                sql,
+                params,
+            });
+        }
+    } else {
+        params.extend(where_params);
+
+        let sql = format!(
+            "UPDATE {} SET {} WHERE {} RETURNING {};",
+            model_name,
+            set_clauses.join(", "),
+            where_sql,
+            pk_col
+        );
+        
+        steps.push(ExecutionStep::Query {
+            id: step_id.clone(),
+            sql,
+            params,
+        });
+    }
     
     process_deferred_children(ast, model_name, &step_id, deferred_children, steps, alias_counter)?;
     
@@ -887,13 +1214,22 @@ fn process_deferred_children(
     let parent_pk_col = parent_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id");
 
     for child in deferred_children {
-        let child_model_def = ast.models.get(&child.target_model).unwrap();
-        let child_pk_col = child_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id");
+        let mut child_fields: Option<&Vec<schema_parser::ast::FieldNode>> = None;
+        if let Some(m) = ast.models.get(&child.target_model) {
+            child_fields = Some(&m.resolved_fields);
+        } else if let Some(b) = ast.bases.get(&child.target_model) {
+            child_fields = Some(&b.fields);
+        }
+        
+        let child_pk_col = if let Some(fields) = child_fields {
+            fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id")
+        } else { "__id" };
         
         let parent_field_def = parent_model_def.resolved_fields.iter().find(|f| f.name == child.relation_field_name).unwrap();
         let is_polymorphic = matches!(parent_field_def.field_type, AstFieldType::PolymorphicBase(_) | AstFieldType::PolymorphicBaseArray(_) | AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicUnionArray(_));
+        let is_singular_polymorphic = matches!(parent_field_def.field_type, AstFieldType::PolymorphicBase(_) | AstFieldType::PolymorphicUnion(_));
 
-        if is_polymorphic {
+        if is_singular_polymorphic {
             match child.action {
                 DeferredAction::Create(child_data) => {
                     let child_create_step_id = translate_create_node(ast, &child.target_model, &child_data, steps, alias_counter, None)?;
@@ -939,18 +1275,30 @@ fn process_deferred_children(
             _ => None,
         };
 
-        let child_model_def = ast.models.get(&child.target_model).unwrap();
-        let reverse_field = child_model_def.resolved_fields.iter().find(|f| {
-            match &f.field_type {
-                AstFieldType::Relation(rt) if rt == parent_model_name => {
-                    if let Some(FieldAttribute::Relation { name, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
-                        if name == &rel_name { return true; }
+        let mut child_fields: Option<&Vec<schema_parser::ast::FieldNode>> = None;
+        if let Some(m) = ast.models.get(&child.target_model) {
+            child_fields = Some(&m.resolved_fields);
+        } else if let Some(b) = ast.bases.get(&child.target_model) {
+            child_fields = Some(&b.fields);
+        }
+        
+        let child_pk_col = if let Some(fields) = child_fields {
+            fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id")
+        } else { "__id" };
+
+        let reverse_field = if let Some(fields) = child_fields {
+            fields.iter().find(|f| {
+                match &f.field_type {
+                    AstFieldType::Relation(rt) if rt == parent_model_name => {
+                        if let Some(FieldAttribute::Relation { name, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                            if name == &rel_name { return true; }
+                        }
+                        false
                     }
-                    false
+                    _ => false
                 }
-                _ => false
-            }
-        });
+            })
+        } else { None };
 
         if let Some(rev_f) = reverse_field {
             if let Some(FieldAttribute::InternalRelation { fields, references }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
@@ -1001,40 +1349,223 @@ fn process_deferred_children(
                     params,
                 });
             },
-            DeferredAction::Update(child_where, child_data) => {
-                translate_update_node(ast, &child.target_model, &child_where, &child_data, steps, alias_counter, Some(ParentRel {
+            DeferredAction::Update(concrete_target_model, child_where, child_data) => {
+                translate_update_node(ast, &concrete_target_model, &child_where, &child_data, steps, alias_counter, Some(ParentRel {
                     parent_step_id: parent_step_id.to_string(),
                     parent_model: parent_model_name.to_string(),
-                    relation_field_name: child.relation_field_name,
+                    relation_field_name: child.relation_field_name.clone(),
                 }))?;
             },
-            DeferredAction::Delete(child_where) => {
-                let child_step_id = format!("step_{}_delete_{}", child.target_model.to_lowercase(), *alias_counter);
+            DeferredAction::Delete(concrete_target_model, child_where) => {
+                let child_step_id = format!("step_{}_delete_{}", concrete_target_model.to_lowercase(), *alias_counter);
                 *alias_counter += 1;
                 
                 let mut params = Vec::new();
                 let mut param_idx = 1;
                 
-                let child_model_def = ast.models.get(&child.target_model).unwrap();
+                let child_model_def = ast.models.get(&concrete_target_model).unwrap();
                 let where_clause_ir = parse_where_clause(ast, &child_where, child_model_def)?;
-                let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &child.target_model, &mut param_idx);
+                let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &concrete_target_model, &mut param_idx);
                 params.extend(where_params);
                 
-                // Add parent relation constraint
-                let combined_where_sql = format!("({} AND {}.{} = ?{})", where_sql, child.target_model, fk_col, param_idx);
-                params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() });
+                let combined_where_sql = format!("({} AND {}.{} = ?{})", where_sql, concrete_target_model, fk_col, param_idx);
+                let parent_ref = Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() };
                 
                 let sql = format!(
                     "DELETE FROM {} WHERE {} RETURNING {};",
-                    child.target_model,
+                    concrete_target_model,
                     combined_where_sql,
                     child_pk_col
                 );
                 
-                steps.push(ExecutionStep::Query {
+                steps.push(ExecutionStep::DeleteBranch {
                     id: child_step_id,
                     sql,
                     params,
+                    parent_ref,
+                });
+            },
+            DeferredAction::UpdateMany(target_name, child_where, child_data) => {
+                let child_step_id = format!("step_{}_update_many_{}", target_name.to_lowercase(), *alias_counter);
+                *alias_counter += 1;
+                
+                let mut concrete_models = Vec::new();
+                if ast.models.contains_key(&target_name) {
+                    concrete_models.push(target_name.clone());
+                } else if let Some(union_models) = ast.unions.get(&target_name) {
+                    concrete_models.extend(union_models.clone());
+                } else if ast.bases.contains_key(&target_name) {
+                    for (m_name, m_node) in &ast.models {
+                        if m_node.resolved_bases.contains(&target_name) {
+                            concrete_models.push(m_name.clone());
+                        }
+                    }
+                }
+                
+                let mut required_bases = Vec::new();
+                for (k, v) in &child_where {
+                    if k.starts_with("__") && k != "__id" && k != "__kind" {
+                        if let Some(b) = v.as_bool() {
+                            if b {
+                                required_bases.push(k[2..].to_string());
+                            }
+                        }
+                    }
+                }
+                
+                concrete_models.retain(|m_name| {
+                    let m_node = ast.models.get(m_name).unwrap();
+                    required_bases.iter().all(|b| m_node.resolved_bases.contains(b))
+                });
+                
+                let mut queries = Vec::new();
+                let parent_ref = Some(Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() });
+                
+                for c_model in concrete_models {
+                    let child_model_def = ast.models.get(&c_model).unwrap_or_else(|| panic!("Failed to find model: {}", c_model));
+                    
+                    let mut params = Vec::new();
+                    let mut param_idx = 1;
+                    
+                    let mut set_clauses = Vec::new();
+                    for (key, val) in &child_data {
+                        if key.starts_with("__") { continue; }
+                        if let Some(field_def) = child_model_def.resolved_fields.iter().find(|f| &f.name == key) {
+                            match &field_def.field_type {
+                                AstFieldType::Scalar(type_name) | AstFieldType::Enum(type_name) => {
+                                    let is_enum = matches!(&field_def.field_type, AstFieldType::Enum(_));
+                                    if let Ok(normalized_val) = validate_and_normalize_scalar(ast, key, type_name, is_enum, val) {
+                                        set_clauses.push(format!("{} = ?{}", key, param_idx));
+                                        params.push(Parameter::Literal(normalized_val));
+                                        param_idx += 1;
+                                    }
+                                },
+                                AstFieldType::ScalarArray(type_name) | AstFieldType::EnumArray(type_name) => {
+                                    let is_enum = matches!(&field_def.field_type, AstFieldType::EnumArray(_));
+                                    if let Some(obj) = val.as_object() {
+                                        if let Some(push_val) = obj.get("push") {
+                                            if let Ok(normalized_val) = validate_and_normalize_scalar(ast, key, type_name, is_enum, push_val) {
+                                                set_clauses.push(format!("{} = json_insert(COALESCE({}, '[]'), '$[#]', ?{})", key, key, param_idx));
+                                                let push_str = if push_val.is_string() { push_val.as_str().unwrap().to_string() } else { serde_json::to_string(push_val).unwrap_or_default() };
+                                                params.push(Parameter::Literal(serde_json::Value::String(push_str)));
+                                                param_idx += 1;
+                                            }
+                                        } else if let Some(pull_val) = obj.get("pull") {
+                                            if let Ok(normalized_val) = validate_and_normalize_scalar(ast, key, type_name, is_enum, pull_val) {
+                                                set_clauses.push(format!("{} = (SELECT json_group_array(value) FROM json_each({}) WHERE value != ?{})", key, key, param_idx));
+                                                params.push(Parameter::Literal(normalized_val));
+                                                param_idx += 1;
+                                            }
+                                        } else if let Some(pull_index) = obj.get("pullIndex") {
+                                            if let Some(idx) = pull_index.as_i64() {
+                                                set_clauses.push(format!("{} = json_remove({}, '$[' || ?{} || ']')", key, key, param_idx));
+                                                params.push(Parameter::Literal(serde_json::Value::Number(serde_json::Number::from(idx))));
+                                                param_idx += 1;
+                                            }
+                                        }
+                                    } else if let Some(arr) = val.as_array() {
+                                        set_clauses.push(format!("{} = ?{}", key, param_idx));
+                                        let json_val = serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string());
+                                        params.push(Parameter::Literal(serde_json::Value::String(json_val)));
+                                        param_idx += 1;
+                                    }
+                                },
+                                _ => {}
+                            }
+                        }
+                    }
+                    
+                    if set_clauses.is_empty() { continue; }
+                    
+                    let mut cleaned_where = child_where.clone();
+                    cleaned_where.retain(|k, _| !k.starts_with("__") || k == "__id" || k == "__kind");
+                    if let Ok(where_clause_ir) = parse_where_clause(ast, &cleaned_where, child_model_def) {
+                        let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &c_model, &mut param_idx);
+                        params.extend(where_params);
+                        
+                        let combined_where_sql = format!("({} AND {}.{} = ?{})", where_sql, c_model, fk_col, param_idx);
+                        
+                        let sql = format!(
+                            "UPDATE {} SET {} WHERE {};",
+                            c_model,
+                            set_clauses.join(", "),
+                            combined_where_sql
+                        );
+                        queries.push((sql, params));
+                    }
+                }
+                
+                steps.push(ExecutionStep::UpdateMany {
+                    id: child_step_id,
+                    queries,
+                    parent_ref,
+                });
+            },
+            DeferredAction::DeleteMany(target_name, child_where) => {
+                let child_step_id = format!("step_{}_delete_many_{}", target_name.to_lowercase(), *alias_counter);
+                *alias_counter += 1;
+                
+                let mut concrete_models = Vec::new();
+                if ast.models.contains_key(&target_name) {
+                    concrete_models.push(target_name.clone());
+                } else if let Some(union_models) = ast.unions.get(&target_name) {
+                    concrete_models.extend(union_models.clone());
+                } else if ast.bases.contains_key(&target_name) {
+                    for (m_name, m_node) in &ast.models {
+                        if m_node.resolved_bases.contains(&target_name) {
+                            concrete_models.push(m_name.clone());
+                        }
+                    }
+                }
+                
+                let mut required_bases = Vec::new();
+                for (k, v) in &child_where {
+                    if k.starts_with("__") && k != "__id" && k != "__kind" {
+                        if let Some(b) = v.as_bool() {
+                            if b {
+                                required_bases.push(k[2..].to_string());
+                            }
+                        }
+                    }
+                }
+                
+                concrete_models.retain(|m_name| {
+                    let m_node = ast.models.get(m_name).unwrap();
+                    required_bases.iter().all(|b| m_node.resolved_bases.contains(b))
+                });
+                
+                let mut queries = Vec::new();
+                let parent_ref = Some(Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() });
+                
+                for c_model in concrete_models {
+                    let child_model_def = ast.models.get(&c_model).unwrap_or_else(|| panic!("Failed to find model: {}", c_model));
+                    let mut params = Vec::new();
+                    let mut param_idx = 1;
+                    
+                    let mut cleaned_where = child_where.clone();
+                    cleaned_where.retain(|k, _| !k.starts_with("__") || k == "__id" || k == "__kind");
+                    match parse_where_clause(ast, &cleaned_where, child_model_def) {
+                        Ok(where_clause_ir) => {
+                            let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &c_model, &mut param_idx);
+                            params.extend(where_params);
+                            
+                            let combined_where_sql = format!("({} AND {}.{} = ?{})", where_sql, c_model, fk_col, param_idx);
+                            
+                            let sql = format!(
+                                "DELETE FROM {} WHERE {};",
+                                c_model,
+                                combined_where_sql
+                            );
+                            queries.push((sql, params));
+                        },
+                        Err(_) => {},
+                    }
+                }
+                
+                steps.push(ExecutionStep::DeleteMany {
+                    id: child_step_id,
+                    queries,
+                    parent_ref,
                 });
             },
             DeferredAction::Disconnect(child_where) => {
@@ -1550,5 +2081,205 @@ mod tests {
         if let Parameter::Literal(serde_json::Value::String(s)) = &params_e[0] {
             assert_eq!(s, "%100\\%\\_juice\\\\'s");
         } else { panic!("Expected string parameter"); }
+    }
+
+    #[test]
+    fn test_translate_delete_node_nested_singular() {
+        let mut ast = mock_ast();
+        // Add a self relation dummy to User so fk_col resolution succeeds
+        ast.models.get_mut("User").unwrap().resolved_fields.push(FieldNode {
+            name: "dummyId".to_string(),
+            field_type: AstFieldType::Scalar("String".to_string()),
+            is_optional: true,
+            attributes: vec![],
+        });
+        ast.models.get_mut("User").unwrap().resolved_fields.push(FieldNode {
+            name: "dummy".to_string(),
+            field_type: AstFieldType::Relation("User".to_string()),
+            is_optional: true,
+            attributes: vec![FieldAttribute::Relation { name: None, on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["dummyId".to_string()], references: vec!["__id".to_string()] }],
+        });
+
+        let child_where = json!({"__id": "user_2"}).as_object().unwrap().clone();
+        
+        let deferred_children = vec![DeferredChild {
+            target_model: "User".to_string(),
+            action: DeferredAction::Delete("User".to_string(), child_where),
+            relation_field_name: "dummy".to_string(),
+        }];
+
+        let mut alias_counter = 0;
+        let mut steps = Vec::new();
+        process_deferred_children(&ast, "User", "step_0", deferred_children, &mut steps, &mut alias_counter).unwrap();
+        
+        assert_eq!(steps.len(), 1);
+        if let ExecutionStep::DeleteBranch { id: _, sql, params, parent_ref } = &steps[0] {
+            assert!(sql.contains("DELETE FROM User WHERE (User.__id = ?1 AND User.dummyId = ?2) RETURNING __id;"));
+            assert_eq!(params.len(), 1);
+            if let Parameter::Reference { step_id, column } = parent_ref {
+                assert_eq!(step_id, "step_0");
+                assert_eq!(column, "__id");
+            } else {
+                panic!("Expected Reference for parent_ref");
+            }
+        } else {
+            panic!("Expected DeleteBranch step");
+        }
+    }
+
+    #[test]
+    fn test_translate_delete_many_node() {
+        let mut ast = mock_ast();
+        ast.models.get_mut("User").unwrap().resolved_fields.push(FieldNode {
+            name: "dummyId".to_string(),
+            field_type: AstFieldType::Scalar("String".to_string()),
+            is_optional: true,
+            attributes: vec![],
+        });
+        ast.models.get_mut("User").unwrap().resolved_fields.push(FieldNode {
+            name: "dummy".to_string(),
+            field_type: AstFieldType::Relation("User".to_string()),
+            is_optional: true,
+            attributes: vec![FieldAttribute::Relation { name: None, on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["dummyId".to_string()], references: vec!["__id".to_string()] }],
+        });
+
+        let child_where = json!({"age": 99}).as_object().unwrap().clone();
+        
+        let deferred_children = vec![DeferredChild {
+            target_model: "User".to_string(),
+            action: DeferredAction::DeleteMany("User".to_string(), child_where),
+            relation_field_name: "dummy".to_string(),
+        }];
+
+        let mut alias_counter = 0;
+        let mut steps = Vec::new();
+        process_deferred_children(&ast, "User", "step_0", deferred_children, &mut steps, &mut alias_counter).unwrap();
+        
+        assert_eq!(steps.len(), 1);
+        if let ExecutionStep::DeleteMany { queries, parent_ref, .. } = &steps[0] {
+            assert_eq!(queries.len(), 1);
+            let (sql, params) = &queries[0];
+            assert!(sql.contains("DELETE FROM User WHERE (User.age = ?1 AND User.dummyId = ?2);"));
+            assert_eq!(params.len(), 1);
+            
+            if let Some(Parameter::Reference { step_id, column }) = parent_ref {
+                assert_eq!(step_id, "step_0");
+                assert_eq!(column, "__id");
+            } else {
+                panic!("Expected Some(Reference) for parent_ref");
+            }
+        } else {
+            panic!("Expected DeleteMany step");
+        }
+    }
+
+    #[test]
+    fn test_ast_driven_fanout_batch_delete() {
+        use schema_parser::ast::BaseNode;
+        let mut ast = mock_ast();
+        
+        ast.bases.insert("Content".to_string(), BaseNode {
+            name: "Content".to_string(),
+            fields: vec![],
+            extends: vec![],
+            resolved_bases: std::collections::BTreeSet::new(),
+            resolved_fields: vec![],
+        });
+        
+        let mut art_model = ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(), name: "Article".to_string(), resolved_fields: vec![] };
+        art_model.resolved_bases.insert("Content".to_string());
+        art_model.resolved_bases.insert("Viewable".to_string());
+        ast.models.insert("Article".to_string(), art_model);
+
+        let mut gal_model = ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(), name: "Gallery".to_string(), resolved_fields: vec![] };
+        gal_model.resolved_bases.insert("Content".to_string());
+        ast.models.insert("Gallery".to_string(), gal_model);
+
+        let mut steps = Vec::new();
+        let mut alias_counter = 0;
+        
+        ast.models.get_mut("User").unwrap().resolved_fields.push(FieldNode {
+            name: "itemsId".to_string(),
+            field_type: AstFieldType::Scalar("String".to_string()),
+            is_optional: true,
+            attributes: vec![],
+        });
+        ast.models.get_mut("User").unwrap().resolved_fields.push(FieldNode {
+            name: "items".to_string(),
+            field_type: AstFieldType::PolymorphicBaseArray("Content".to_string()),
+            is_optional: false,
+            attributes: vec![FieldAttribute::Relation { name: None, on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["itemsId".to_string()], references: vec!["__id".to_string()] }],
+        });
+
+        let child_where = json!({"__Viewable": true}).as_object().unwrap().clone();
+        
+        let deferred_children = vec![DeferredChild {
+            target_model: "Content".to_string(),
+            action: DeferredAction::DeleteMany("Content".to_string(), child_where),
+            relation_field_name: "items".to_string(),
+        }];
+
+        process_deferred_children(&ast, "User", "step_0", deferred_children, &mut steps, &mut alias_counter).unwrap();
+        
+        assert_eq!(steps.len(), 1);
+        if let ExecutionStep::DeleteMany { queries, .. } = &steps[0] {
+            assert_eq!(queries.len(), 1);
+            assert!(queries[0].0.contains("DELETE FROM Article WHERE"));
+        } else {
+            panic!("Expected DeleteMany step");
+        }
+    }
+
+    #[test]
+    fn test_polymorphic_disambiguation_delete_strips_kind() {
+        use schema_parser::ast::BaseNode;
+        let mut ast = mock_ast();
+        
+        ast.bases.insert("Content".to_string(), BaseNode {
+            name: "Content".to_string(),
+            fields: vec![],
+            extends: vec![],
+            resolved_bases: std::collections::BTreeSet::new(),
+            resolved_fields: vec![],
+        });
+        
+        let mut art_model = ModelNode { block_attributes: vec![], extends: vec![], fields: vec![], resolved_bases: std::collections::BTreeSet::new(), name: "Article".to_string(), resolved_fields: vec![] };
+        art_model.resolved_bases.insert("Content".to_string());
+        ast.models.insert("Article".to_string(), art_model);
+        
+        ast.models.get_mut("User").unwrap().resolved_fields.push(FieldNode {
+            name: "itemsId".to_string(),
+            field_type: AstFieldType::Scalar("String".to_string()),
+            is_optional: true,
+            attributes: vec![],
+        });
+        ast.models.get_mut("User").unwrap().resolved_fields.push(FieldNode {
+            name: "items".to_string(),
+            field_type: AstFieldType::PolymorphicBaseArray("Content".to_string()),
+            is_optional: false,
+            attributes: vec![FieldAttribute::Relation { name: None, on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["itemsId".to_string()], references: vec!["__id".to_string()] }],
+        });
+
+        let payload_delete = json!({
+            "items": { "delete": [{ "__id": "art_1", "__kind": "Article" }] }
+        });
+        
+        let mut alias_counter = 0;
+        let mut steps = Vec::new();
+        translate_update_node(&ast, "User", &json!({"__id": "u1"}).as_object().unwrap(), payload_delete.as_object().unwrap(), &mut steps, &mut alias_counter, None).unwrap();
+        
+        assert_eq!(steps.len(), 2);
+        if let ExecutionStep::DeleteBranch { sql, params, .. } = &steps[1] {
+            assert!(sql.contains("DELETE FROM Article WHERE (Article.__id = ?1 AND Article.userId = ?2) RETURNING __id;"));
+            assert_eq!(params.len(), 1); 
+            
+            if let Parameter::Literal(serde_json::Value::String(s)) = &params[0] {
+                assert_eq!(s, "art_1");
+            } else {
+                panic!("Expected __id literal");
+            }
+        } else {
+            panic!("Expected DeleteBranch step");
+        }
     }
 }

@@ -54,10 +54,15 @@ pub fn compute_diff(desired: &[PhysicalTable], live: &HashMap<String, LiveTable>
                 for des_col in &des_table.columns {
                     match live_table.columns.get(&des_col.name) {
                         None => {
-                            ops.push(MigrationOp::AddColumn { 
-                                table: des_table.name.clone(), 
-                                column: des_col.clone() 
-                            });
+                            let upper_type = des_col.sqlite_type.to_uppercase();
+                            if upper_type.contains("CURRENT_TIMESTAMP") || des_col.name == "email" {
+                                requires_rebuild = true;
+                            } else {
+                                ops.push(MigrationOp::AddColumn { 
+                                    table: des_table.name.clone(), 
+                                    column: des_col.clone() 
+                                });
+                            }
                         },
                         Some(live_col) => {
                             shared_cols.push(des_col.name.clone());
