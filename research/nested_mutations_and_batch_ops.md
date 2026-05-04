@@ -92,10 +92,12 @@ Because the engine parses the entire schema into an AST at boot, it knows exactl
 2. The compiler "fans out" and generates an array of SQL statements—one for each concrete implementing table.
 3. All statements are executed within the same transaction. If a specific table has no matching records, the operation safely affects 0 rows.
 
-### Implicit Base Marker Filtering
+### Implicit Base Markers as Polymorphic Type Casts
 To provide extreme granularity within these fan-out operations, clients can utilize the implicit Base marker fields (`__BaseName: true`) that `caqui` automatically injects into polymorphic models.
 
-Because a model can inherit from multiple Bases (e.g., `Article extends Content, Timestamped`), the client can issue an `updateMany` that targets *any* polymorphic array, but narrow the fan-out dynamically:
+This is fundamentally required when you need to perform an update using fields that do not exist on the root Base of the relation.
+
+For example, if the relation is `items: Content[]`, the AST compiler will strictly enforce that your `data` payload only contains fields defined on `Content`. However, if you want to update the `views` field (which belongs to a different Base called `Viewable`), the payload will be rejected unless you explicitly "cast" the validation scope.
 
 ```json
 {
@@ -106,19 +108,28 @@ Because a model can inherit from multiple Bases (e.g., `Article extends Content,
     "items": {
       "updateMany": {
         "where": { 
-           "__Timestamped": true, 
+           "__Viewable": true, 
            "published": false 
         },
-        "data": { "published": true }
+        "data": { "views": 0 }
       }
     }
   }
 }
 ```
-**How the Compiler uses Markers:**
-If `__Timestamped: true` is included in the `where` block, the AST compiler can heavily optimize the fan-out. Instead of generating `UPDATE` statements for *every* model in the `items` union/base, it cross-references the AST and only generates SQL for the concrete models that physically implement the `Timestamped` base. 
 
-This creates a highly expressive, type-safe, and deeply optimized batch mutation capability without sacrificing the abstraction of polymorphism.
+**How the Compiler Evaluation works (Intersection Type Casting):**
+1. **Context Elevation:** The compiler sees the `__Viewable: true` marker in the `where` block. It temporarily elevates the validation context from `Content` to `Viewable`.
+2. **Validation:** It checks if the `views` field exists on `Viewable`. Validation passes.
+3. **Optimized Fan-Out:** Instead of generating `UPDATE` statements for *every* model in the `items` union/base, it intersects the AST and only generates SQL for the concrete models that physically implement **both** `Content` AND `Viewable`. 
+
+### Strict Rejection for Field Mismatches
+If a user attempts to filter by a field that does not belong to the currently elevated context (e.g., `where: { "__Viewable": true, "authorName": "Alice" }` where `authorName` belongs to `UserBase`), the engine will employ **Strict Rejection** and throw a validation error.
+
+The engine does *not* attempt to implicitly guess the intersection type (e.g., inferring the target must implement both `Viewable` and `UserBase` just because the fields are present). To perform an intersection across multiple bases, the client must explicitly provide all required markers:
+`where: { "__Viewable": true, "__UserBase": true, ... }`
+
+This strict requirement ensures that API contracts remain explicit, validation remains fast, and SQL generation remains predictable and safe.
 ```json
 {
   "model": "Post",
