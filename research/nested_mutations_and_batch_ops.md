@@ -83,7 +83,42 @@ Because `caqui` automatically injects the `__kind` field into every model and re
 ## 3. Batch Operations (`updateMany` / `deleteMany`)
 Batch operations replace specific `__id` targeting with a generic `where` filter, enabling high-performance bulk operations.
 
-### Root-Level Batch Operations
+### Batch Polymorphism & AST-Driven Fan-Out
+When dealing with polymorphic relationships, batch operations (`updateMany`, `deleteMany`) require a different approach than singular operations. If a relation points to a `Base` (e.g., `Content` extended by `Article` and `Video`), forcing the client to specify a concrete `__kind` destroys the abstraction the Base is meant to provide.
+
+**AST-Driven Fan-Out:**
+Because the engine parses the entire schema into an AST at boot, it knows exactly which concrete models implement a specific `Base`. When a client issues a batch operation against a Base relation:
+1. The compiler validates the `where` and `data` blocks against the Base's defined fields.
+2. The compiler "fans out" and generates an array of SQL statements—one for each concrete implementing table.
+3. All statements are executed within the same transaction. If a specific table has no matching records, the operation safely affects 0 rows.
+
+### Implicit Base Marker Filtering
+To provide extreme granularity within these fan-out operations, clients can utilize the implicit Base marker fields (`__BaseName: true`) that `caqui` automatically injects into polymorphic models.
+
+Because a model can inherit from multiple Bases (e.g., `Article extends Content, Timestamped`), the client can issue an `updateMany` that targets *any* polymorphic array, but narrow the fan-out dynamically:
+
+```json
+{
+  "model": "Collection",
+  "action": "update",
+  "where": { "__id": "col_1" },
+  "data": {
+    "items": {
+      "updateMany": {
+        "where": { 
+           "__Timestamped": true, 
+           "published": false 
+        },
+        "data": { "published": true }
+      }
+    }
+  }
+}
+```
+**How the Compiler uses Markers:**
+If `__Timestamped: true` is included in the `where` block, the AST compiler can heavily optimize the fan-out. Instead of generating `UPDATE` statements for *every* model in the `items` union/base, it cross-references the AST and only generates SQL for the concrete models that physically implement the `Timestamped` base. 
+
+This creates a highly expressive, type-safe, and deeply optimized batch mutation capability without sacrificing the abstraction of polymorphism.
 ```json
 {
   "model": "Post",
