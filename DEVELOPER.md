@@ -90,22 +90,33 @@ When validated, the payload is compiled by Phase 4, thrown into the thread-safe 
 
 To maintain feature parity with modern DSLs (like Prisma or GraphQL), the following architectural features are under consideration for future development:
 
-### 1. Analytical Aggregation
-- **Use Case:** Supporting analytical endpoints like `count`, `aggregate`, `sum`, or `groupBy` to allow for data insights directly via the API.
+### 1. Analytical Aggregation & Grouping
+- **Use Case:** Supporting analytical endpoints like `count`, `aggregate`, `sum`, `avg`, `min`, `max`, or `groupBy` to allow for data insights directly via the API.
+- **Relational Counts:** The ability to select and filter by relation counts (e.g., `where: { posts: { _count: { gt: 5 } } }`).
 
-### 2. Compound Keys and Indices
+### 2. Cursor-Based Pagination
+- **Use Case:** High-performance traversal of large datasets. While the engine currently supports offset pagination (`limit` / `skip`), adding cursor-based pagination (`cursor` / `take`) is critical for scalable, infinite-scroll applications.
+
+### 3. Atomic Number Operations
+- **Use Case:** The ability to atomically mutate numeric fields directly in the database during an `update` mutation without prior reads (e.g., `views: { increment: 1 }`, `decrement`, `multiply`, `divide`).
+
+### 4. Compound Keys and Indices
 - **Syntax:** `@@unique([firstName, lastName])`, `@@id([authorId, postId])`, `@@index([email, status])`
 - **Why it is necessary:** Currently, the engine heavily relies on single-column UUID/CUID architectures. Compound keys are absolutely necessary for modeling natural "Join Tables" in many-to-many relationships without being forced to inject artificial, synthetic primary keys. It is also critical for supporting legacy database schemas and creating optimized, multi-column database indices for complex queries.
 
-### 3. Advanced AST Field Types
+### 5. Advanced AST Field Types & Modifiers
 - **Native JSON Scalars:** Support for a dedicated `Json` scalar type, allowing for arbitrary nested object storage. Future implementation should include deep nested mutators (e.g., `update: { "config": { "path": "nested.key", "set": "new_value" } }`) utilizing SQLite's native `json_set` and `json_replace` path operators.
 - **High-Precision Numerics:** Support for `Decimal` and `BigInt` for exact financial calculations or extremely large counters.
+- **Default Values:** Adding `@default(value)` or `@default(now())` to the schema AST to enforce defaults at the API and database levels.
 
-### 4. Batch Operations
+### 6. Batch Operations
 - **Syntax:** `action: "createMany"`, `action: "updateMany"`, `action: "deleteMany"`
 - **Use Case:** High-performance bulk data modifications. `createMany` should implement an optimized `INSERT` sequence for thousands of records in a single transaction, while `updateMany` will support mass-updates using complex `where` filters.
 
-### 5. Polymorphic Update & Delete
+### 7. Nested Update and Delete
+- **Use Case:** Expanding the relational mutation capabilities to support `update` and `delete` operations on nested records directly through their parent relationships, ensuring strict scoped safety (e.g., updating a `Post` strictly through the `User` that owns it).
+
+### 8. Polymorphic Update & Delete
 Currently, polymorphic fields only support `create`, `connect`, and `disconnect`. Implementing `update` and `delete` involves a significant architectural decision between two paths:
 
 | Path | Technical Approach | Trade-offs |
