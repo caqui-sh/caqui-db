@@ -45,10 +45,14 @@ The primary architectural goal for nested updates and deletes is **Scoped Securi
 }
 ```
 
-### The Polymorphic Challenge
+### The Polymorphic Challenge & `__kind` Discriminator
 Nested updates and deletes within polymorphic arrays pose a unique challenge: the engine must know which physical SQLite table to target without incurring the massive latency of "Look-Before-Write" reflection queries.
 
-**Solution:** We extend the existing disambiguation pattern. By requiring the client to wrap the action in the concrete model name, the compiler can generate direct, secure, and isolated `UPDATE` and `DELETE` statements, preserving the high-performance linear execution plan.
+Furthermore, because UUID/CUIDs are generated per-table, there is a theoretical (though mathematically improbable) chance of primary key collisions across different concrete models implementing the same Union or Base.
+
+**Solution:** Rather than strictly wrapping the entire mutation payload in the model name (which creates bulky, complex JSON structures), we rely on the client providing the `__kind` discriminator field directly within the `where` or `data` block.
+
+Because `caqui` automatically injects the `__kind` field into every model and returns it on read queries, the client already possesses this exact string. By requiring it during polymorphic mutations, the compiler can instantly and safely route the SQL `UPDATE` or `DELETE` to the correct table with zero ambiguity.
 
 ```json
 {
@@ -57,17 +61,24 @@ Nested updates and deletes within polymorphic arrays pose a unique challenge: th
   "where": { "__id": "col_1" },
   "data": {
     "items": {
-      "Article": {
-        "update": [ { "where": { "__id": "art_1" }, "data": { "body": "Revised" } } ],
-        "delete": [ { "__id": "art_2" } ]
-      },
-      "Video": {
-        "delete": [ { "__id": "vid_3" } ]
-      }
+      "update": [
+        { 
+          "where": { "__id": "art_1", "__kind": "Article" }, 
+          "data": { "body": "Revised" } 
+        }
+      ],
+      "delete": [
+        { "__id": "vid_3", "__kind": "Video" }
+      ]
     }
   }
 }
 ```
+**Architectural Benefits:**
+1. **Flat, Ergonomic API:** The payload remains a flat array of operations (`update: [...]`), exactly like standard non-polymorphic relations.
+2. **Zero Ambiguity:** The compiler knows immediately which AST `ModelNode` to validate the `data` against.
+3. **Collision-Proof:** The `__kind` guarantees we never accidentally update an `Article` if a `Video` happens to share the same `__id`.
+4. **Zero-Latency Execution:** The compiler generates a single, direct SQL statement (`UPDATE Article SET...`) without any LBW queries.
 
 ## 3. Batch Operations (`updateMany` / `deleteMany`)
 Batch operations replace specific `__id` targeting with a generic `where` filter, enabling high-performance bulk operations.
