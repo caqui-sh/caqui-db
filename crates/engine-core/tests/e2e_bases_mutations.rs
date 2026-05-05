@@ -184,9 +184,9 @@ async fn test_e2e_polymorphic_mutations() {
 }
 
 #[tokio::test]
-async fn test_e2e_polymorphic_array_mutations() {
+async fn test_array_polymorphic_create_connect() {
     let schema = r#"
-        base Content {  }
+        base Content { user: User? }
         model Article extends Content { title: String @@id(uuid) }
         model Video extends Content { duration: Int @@id(uuid) }
         
@@ -196,7 +196,15 @@ async fn test_e2e_polymorphic_array_mutations() {
             @@id(uuid)
         }
     "#;
-    let (app, _dir, _db_uri) = setup_app(schema).await;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        let art_schema: String = db.query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='Article'", [], |r| r.get(0)).unwrap();
+        println!("ARTICLE SCHEMA: {}", art_schema);
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid1', 120)", []).unwrap();
+    }).await.unwrap();
 
     let payload = json!({
         "action": "create",
@@ -204,15 +212,122 @@ async fn test_e2e_polymorphic_array_mutations() {
         "data": {
             "name": "Bob",
             "favorites": {
-                "Article": { "connect": { "__id": "1" } }
+                "create": [ { "Article": { "title": "New Art" } } ],
+                "connect": [ { "Video": { "__id": "vid1" } } ]
             }
         }
     });
 
     let (status, response) = post_query(&app, payload).await;
-    assert_ne!(status, StatusCode::OK);
-    let err_msg = response["error"].as_str().or(response["message"].as_str()).unwrap_or("");
-    assert!(err_msg.contains("Unsupported: Array mutations on polymorphic field 'favorites' are not yet implemented."));
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    let user_id = response["data"]["__id"].as_str().unwrap().to_string();
+
+    conn.interact(move |db| {
+        let count_art: i64 = db.query_row("SELECT count(*) FROM Article WHERE userId = ?1 AND title = 'New Art'", [&user_id], |r| r.get(0)).unwrap();
+        assert_eq!(count_art, 1);
+        
+        let count_vid: i64 = db.query_row("SELECT count(*) FROM Video WHERE userId = ?1 AND __id = 'vid1'", [&user_id], |r| r.get(0)).unwrap();
+        assert_eq!(count_vid, 1);
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_array_polymorphic_disconnect() {
+    let schema = r#"
+        base Content { user: User? }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorites: Content[]
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO User (__id, name) VALUES ('u2', 'Alice')", []).unwrap();
+        db.execute("INSERT INTO Article (__id, title, userId) VALUES ('art2', 'My Art', 'u2')", []).unwrap();
+        db.execute("INSERT INTO Video (__id, duration, userId) VALUES ('vid2', 120, 'u2')", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u2" },
+        "data": {
+            "favorites": {
+                "disconnect": [ { "Article": { "__id": "art2" } } ]
+            }
+        }
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    conn.interact(|db| {
+        let (art_user_id,): (Option<String>,) = db.query_row("SELECT userId FROM Article WHERE __id = 'art2'", [], |r| Ok((r.get(0).ok().flatten(),))).unwrap();
+        assert_eq!(art_user_id, None);
+        
+        let (vid_user_id,): (String,) = db.query_row("SELECT userId FROM Video WHERE __id = 'vid2'", [], |r| Ok((r.get(0).unwrap(),))).unwrap();
+        assert_eq!(vid_user_id, "u2");
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_array_polymorphic_set() {
+    let schema = r#"
+        base Content { user: User? }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorites: Content[]
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO User (__id, name) VALUES ('u3', 'Charlie')", []).unwrap();
+        db.execute("INSERT INTO Article (__id, title, userId) VALUES ('art3', 'Old Art', 'u3')", []).unwrap();
+        db.execute("INSERT INTO Video (__id, duration, userId) VALUES ('vid3', 120, 'u3')", []).unwrap();
+        
+        // New target
+        db.execute("INSERT INTO Article (__id, title) VALUES ('art4', 'New Target')", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u3" },
+        "data": {
+            "favorites": {
+                "set": [ { "Article": { "__id": "art4" } } ]
+            }
+        }
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    conn.interact(|db| {
+        let (art3_user_id,): (Option<String>,) = db.query_row("SELECT userId FROM Article WHERE __id = 'art3'", [], |r| Ok((r.get(0).ok().flatten(),))).unwrap();
+        assert_eq!(art3_user_id, None);
+        
+        let (vid3_user_id,): (Option<String>,) = db.query_row("SELECT userId FROM Video WHERE __id = 'vid3'", [], |r| Ok((r.get(0).ok().flatten(),))).unwrap();
+        assert_eq!(vid3_user_id, None); // Cross-table wipe succeeded
+        
+        let (art4_user_id,): (String,) = db.query_row("SELECT userId FROM Article WHERE __id = 'art4'", [], |r| Ok((r.get(0).unwrap(),))).unwrap();
+        assert_eq!(art4_user_id, "u3"); // New connection succeeded
+    }).await.unwrap();
 }
 
 #[tokio::test]

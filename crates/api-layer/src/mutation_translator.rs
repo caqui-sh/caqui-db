@@ -849,9 +849,121 @@ fn translate_create_node(
             AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {
                 let nested_mutations = val.as_object().ok_or(format!("Expected object for polymorphic field '{}'", key))?;
                 
-                for (concrete_model_name, _) in nested_mutations {
-                    if ast.models.contains_key(concrete_model_name) {
-                        return Err(format!("Unsupported: Array mutations on polymorphic field '{}' are not yet implemented.", key));
+                if let Some(create_payload) = nested_mutations.get("create") {
+                    if let Some(arr) = create_payload.as_array() {
+                        for item in arr {
+                            if let Some(item_obj) = item.as_object() {
+                                for (concrete_model_name, child_data_val) in item_obj {
+                                    if !ast.models.contains_key(concrete_model_name) {
+                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
+                                    }
+                                    if let Some(child_data) = child_data_val.as_object() {
+                                        deferred_children.push(DeferredChild {
+                                            target_model: concrete_model_name.clone(),
+                                            action: DeferredAction::Create(child_data.clone()),
+                                            relation_field_name: key.clone()
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if let Some(connect_payload) = nested_mutations.get("connect") {
+                    if let Some(arr) = connect_payload.as_array() {
+                        for item in arr {
+                            if let Some(item_obj) = item.as_object() {
+                                for (concrete_model_name, child_where_val) in item_obj {
+                                    if !ast.models.contains_key(concrete_model_name) {
+                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
+                                    }
+                                    if let Some(child_where) = child_where_val.as_object() {
+                                        deferred_children.push(DeferredChild {
+                                            target_model: concrete_model_name.clone(),
+                                            action: DeferredAction::Connect(child_where.clone()),
+                                            relation_field_name: key.clone()
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
+                    if let Some(arr) = disconnect_payload.as_array() {
+                        for item in arr {
+                            if let Some(item_obj) = item.as_object() {
+                                for (concrete_model_name, child_where_val) in item_obj {
+                                    if !ast.models.contains_key(concrete_model_name) {
+                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
+                                    }
+                                    if let Some(child_where) = child_where_val.as_object() {
+                                        deferred_children.push(DeferredChild {
+                                            target_model: concrete_model_name.clone(),
+                                            action: DeferredAction::Disconnect(child_where.clone()),
+                                            relation_field_name: key.clone()
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if let Some(set_payload) = nested_mutations.get("set") {
+                    let base_model_name = match &field_def.field_type {
+                        AstFieldType::PolymorphicUnionArray(n) | AstFieldType::PolymorphicBaseArray(n) => n.clone(),
+                        _ => unreachable!(),
+                    };
+                    
+                    let mut concrete_models = Vec::new();
+                    if let Some(union_models) = ast.unions.get(&base_model_name) {
+                        concrete_models.extend(union_models.clone());
+                    } else if ast.bases.contains_key(&base_model_name) {
+                        for (m_name, m_node) in &ast.models {
+                            if m_node.resolved_bases.contains(&base_model_name) {
+                                concrete_models.push(m_name.clone());
+                            }
+                        }
+                    }
+                    
+                    if let Some(arr) = set_payload.as_array() {
+                        let mut sets_by_model: std::collections::HashMap<String, Vec<serde_json::Map<String, Value>>> = std::collections::HashMap::new();
+                        for item in arr {
+                            if let Some(item_obj) = item.as_object() {
+                                for (concrete_model_name, child_where_val) in item_obj {
+                                    if let Some(child_where) = child_where_val.as_object() {
+                                        sets_by_model.entry(concrete_model_name.clone()).or_default().push(child_where.clone());
+                                    }
+                                }
+                            }
+                        }
+                        
+                        for c_model in concrete_models {
+                            if let Some(wheres) = sets_by_model.remove(&c_model) {
+                                deferred_children.push(DeferredChild {
+                                    target_model: c_model,
+                                    action: DeferredAction::Set(wheres),
+                                    relation_field_name: key.clone()
+                                });
+                            } else {
+                                deferred_children.push(DeferredChild {
+                                    target_model: c_model,
+                                    action: DeferredAction::Set(Vec::new()),
+                                    relation_field_name: key.clone()
+                                });
+                            }
+                        }
+                    } else {
+                        for c_model in concrete_models {
+                            deferred_children.push(DeferredChild {
+                                target_model: c_model,
+                                action: DeferredAction::Set(Vec::new()),
+                                relation_field_name: key.clone()
+                            });
+                        }
                     }
                 }
                 
@@ -1337,9 +1449,121 @@ fn translate_update_node(
             AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {
                 let nested_mutations = val.as_object().ok_or(format!("Expected object for polymorphic field '{}'", key))?;
                 
-                for (concrete_model_name, _) in nested_mutations {
-                    if ast.models.contains_key(concrete_model_name) {
-                        return Err(format!("Unsupported: Array mutations on polymorphic field '{}' are not yet implemented.", key));
+                if let Some(create_payload) = nested_mutations.get("create") {
+                    if let Some(arr) = create_payload.as_array() {
+                        for item in arr {
+                            if let Some(item_obj) = item.as_object() {
+                                for (concrete_model_name, child_data_val) in item_obj {
+                                    if !ast.models.contains_key(concrete_model_name) {
+                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
+                                    }
+                                    if let Some(child_data) = child_data_val.as_object() {
+                                        deferred_children.push(DeferredChild {
+                                            target_model: concrete_model_name.clone(),
+                                            action: DeferredAction::Create(child_data.clone()),
+                                            relation_field_name: key.clone()
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if let Some(connect_payload) = nested_mutations.get("connect") {
+                    if let Some(arr) = connect_payload.as_array() {
+                        for item in arr {
+                            if let Some(item_obj) = item.as_object() {
+                                for (concrete_model_name, child_where_val) in item_obj {
+                                    if !ast.models.contains_key(concrete_model_name) {
+                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
+                                    }
+                                    if let Some(child_where) = child_where_val.as_object() {
+                                        deferred_children.push(DeferredChild {
+                                            target_model: concrete_model_name.clone(),
+                                            action: DeferredAction::Connect(child_where.clone()),
+                                            relation_field_name: key.clone()
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
+                    if let Some(arr) = disconnect_payload.as_array() {
+                        for item in arr {
+                            if let Some(item_obj) = item.as_object() {
+                                for (concrete_model_name, child_where_val) in item_obj {
+                                    if !ast.models.contains_key(concrete_model_name) {
+                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
+                                    }
+                                    if let Some(child_where) = child_where_val.as_object() {
+                                        deferred_children.push(DeferredChild {
+                                            target_model: concrete_model_name.clone(),
+                                            action: DeferredAction::Disconnect(child_where.clone()),
+                                            relation_field_name: key.clone()
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if let Some(set_payload) = nested_mutations.get("set") {
+                    let base_model_name = match &field_def.field_type {
+                        AstFieldType::PolymorphicUnionArray(n) | AstFieldType::PolymorphicBaseArray(n) => n.clone(),
+                        _ => unreachable!(),
+                    };
+                    
+                    let mut concrete_models = Vec::new();
+                    if let Some(union_models) = ast.unions.get(&base_model_name) {
+                        concrete_models.extend(union_models.clone());
+                    } else if ast.bases.contains_key(&base_model_name) {
+                        for (m_name, m_node) in &ast.models {
+                            if m_node.resolved_bases.contains(&base_model_name) {
+                                concrete_models.push(m_name.clone());
+                            }
+                        }
+                    }
+                    
+                    if let Some(arr) = set_payload.as_array() {
+                        let mut sets_by_model: std::collections::HashMap<String, Vec<serde_json::Map<String, Value>>> = std::collections::HashMap::new();
+                        for item in arr {
+                            if let Some(item_obj) = item.as_object() {
+                                for (concrete_model_name, child_where_val) in item_obj {
+                                    if let Some(child_where) = child_where_val.as_object() {
+                                        sets_by_model.entry(concrete_model_name.clone()).or_default().push(child_where.clone());
+                                    }
+                                }
+                            }
+                        }
+                        
+                        for c_model in concrete_models {
+                            if let Some(wheres) = sets_by_model.remove(&c_model) {
+                                deferred_children.push(DeferredChild {
+                                    target_model: c_model,
+                                    action: DeferredAction::Set(wheres),
+                                    relation_field_name: key.clone()
+                                });
+                            } else {
+                                deferred_children.push(DeferredChild {
+                                    target_model: c_model,
+                                    action: DeferredAction::Set(Vec::new()),
+                                    relation_field_name: key.clone()
+                                });
+                            }
+                        }
+                    } else {
+                        for c_model in concrete_models {
+                            deferred_children.push(DeferredChild {
+                                target_model: c_model,
+                                action: DeferredAction::Set(Vec::new()),
+                                relation_field_name: key.clone()
+                            });
+                        }
                     }
                 }
                 
