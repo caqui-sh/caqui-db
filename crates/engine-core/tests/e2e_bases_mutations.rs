@@ -155,8 +155,8 @@ async fn test_e2e_polymorphic_mutations() {
         }
     });
 
-    let (status, _) = post_query(&app, payload).await;
-    assert_eq!(status, StatusCode::OK);
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
     
     // Connect
     let payload2 = json!({
@@ -428,5 +428,194 @@ async fn test_e2e_polymorphic_root_delete_many() {
         // Crucial: Assert tracking records are gone due to application-level cascades
         let act_count: i64 = db.query_row("SELECT count(*) FROM Activity", [], |r| r.get(0)).unwrap();
         assert_eq!(act_count, 0);
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_singular_polymorphic_disconnect() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Article (__id, title) VALUES ('art1', 'Title')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'Article', 'art1')", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": { "favorite": { "disconnect": true } }
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    conn.interact(|db| {
+        let (fav_type, fav_id): (Option<String>, Option<String>) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = 'u1'", [], |r| Ok((r.get(0).ok().flatten(), r.get(1).ok().flatten()))).unwrap();
+        assert_eq!(fav_type, None);
+        assert_eq!(fav_id, None);
+        
+        let count: i64 = db.query_row("SELECT count(*) FROM Article WHERE __id = 'art1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1); // Disconnect does not destroy the child
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_singular_polymorphic_delete() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid1', 120)", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'Video', 'vid1')", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": { "favorite": { "delete": { "__kind": "Video" } } }
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    conn.interact(|db| {
+        let (fav_type, fav_id): (Option<String>, Option<String>) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = 'u1'", [], |r| Ok((r.get(0).ok().flatten(), r.get(1).ok().flatten()))).unwrap();
+        assert_eq!(fav_type, None);
+        assert_eq!(fav_id, None);
+        
+        let count: i64 = db.query_row("SELECT count(*) FROM Video WHERE __id = 'vid1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 0); // Delete destroys the concrete record
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_singular_polymorphic_update() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Article (__id, title) VALUES ('art2', 'Old Title')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u2', 'Bob', 'Article', 'art2')", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u2" },
+        "data": { "favorite": { "update": { "__kind": "Article", "data": { "title": "New Title" } } } }
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    conn.interact(|db| {
+        let title: String = db.query_row("SELECT title FROM Article WHERE __id = 'art2'", [], |r| r.get(0)).unwrap();
+        assert_eq!(title, "New Title");
+        
+        let (fav_type, fav_id): (String, String) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = 'u2'", [], |r| Ok((r.get(0).unwrap(), r.get(1).unwrap()))).unwrap();
+        assert_eq!(fav_type, "Article");
+        assert_eq!(fav_id, "art2");
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_singular_polymorphic_upsert() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO User (__id, name) VALUES ('uA', 'User A')", []).unwrap();
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid2', 10)", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('uB', 'User B', 'Video', 'vid2')", []).unwrap();
+    }).await.unwrap();
+
+    // 1. Creation Branch
+    let payload_create = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "uA" },
+        "data": { "favorite": { "upsert": { "__kind": "Video", "create": { "duration": 100 }, "update": { "duration": 200 } } } }
+    });
+
+    let (status_create, response_create) = post_query(&app, payload_create).await;
+    assert_eq!(status_create, StatusCode::OK, "Response: {:?}", response_create);
+
+    conn.interact(|db| {
+        let (fav_type, fav_id): (String, String) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = 'uA'", [], |r| Ok((r.get(0).unwrap(), r.get(1).unwrap()))).unwrap();
+        assert_eq!(fav_type, "Video");
+        
+        let dur: i64 = db.query_row("SELECT duration FROM Video WHERE __id = ?1", [&fav_id], |r| r.get(0)).unwrap();
+        assert_eq!(dur, 100);
+    }).await.unwrap();
+
+    // 2. Update Branch
+    let payload_update = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "uB" },
+        "data": { "favorite": { "upsert": { "__kind": "Video", "create": { "duration": 100 }, "update": { "duration": 200 } } } }
+    });
+
+    let (status_update, response_update) = post_query(&app, payload_update).await;
+    assert_eq!(status_update, StatusCode::OK, "Response: {:?}", response_update);
+
+    conn.interact(|db| {
+        let (fav_type, fav_id): (String, String) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = 'uB'", [], |r| Ok((r.get(0).unwrap(), r.get(1).unwrap()))).unwrap();
+        assert_eq!(fav_type, "Video");
+        assert_eq!(fav_id, "vid2");
+        
+        let dur: i64 = db.query_row("SELECT duration FROM Video WHERE __id = 'vid2'", [], |r| r.get(0)).unwrap();
+        assert_eq!(dur, 200);
     }).await.unwrap();
 }

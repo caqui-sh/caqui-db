@@ -528,6 +528,7 @@ pub struct ParentRel {
     pub constraint: ParentConstraint,
     pub parent_model: String,
     pub relation_field_name: String,
+    pub is_forward_polymorphic: bool,
 }
 
 #[derive(Clone)]
@@ -1115,9 +1116,9 @@ fn translate_update_node(
     let mut set_clauses = Vec::new();
     let mut params = Vec::new();
     let mut param_idx = 1;
-    
+
     let mut deferred_children = Vec::new();
-    
+    let mut singular_poly_actions = Vec::new();    
     for (key, val) in data {
         if key.starts_with("__") { continue; }
         
@@ -1435,6 +1436,55 @@ fn translate_update_node(
                         continue;
                     }
                 }
+                
+                if let Some(delete_payload) = nested_mutations.get("delete") {
+                    let child_where = delete_payload.as_object().ok_or("Expected 'where' object in 'delete'")?;
+                    let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'delete' block")?;
+                    if !ast.models.contains_key(kind_val) {
+                        return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                    }
+                    
+                    singular_poly_actions.push((kind_val.to_string(), id_col.clone()));
+                    
+                    set_clauses.push(format!("{} = NULL", type_col));
+                    set_clauses.push(format!("{} = NULL", id_col));
+                    continue;
+                }
+                
+                if let Some(update_payload) = nested_mutations.get("update") {
+                    let child_update = update_payload.as_object().ok_or("Expected object in 'update'")?;
+                    let kind_val = child_update.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'update' block")?;
+                    let child_data = child_update.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' block in 'update'")?;
+                    
+                    if !ast.models.contains_key(kind_val) {
+                        return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                    }
+                    
+                    deferred_children.push(DeferredChild { 
+                        target_model: kind_val.to_string(), 
+                        action: DeferredAction::Update(kind_val.to_string(), serde_json::Map::new(), child_data.clone()), 
+                        relation_field_name: key.clone() 
+                    });
+                    continue;
+                }
+                
+                if let Some(upsert_payload) = nested_mutations.get("upsert") {
+                    let child_upsert = upsert_payload.as_object().ok_or("Expected object in 'upsert'")?;
+                    let kind_val = child_upsert.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'upsert' block")?;
+                    let create_data = child_upsert.get("create").and_then(|v| v.as_object()).ok_or("Expected 'create' block in 'upsert'")?;
+                    let update_data = child_upsert.get("update").and_then(|v| v.as_object()).ok_or("Expected 'update' block in 'upsert'")?;
+                    
+                    if !ast.models.contains_key(kind_val) {
+                        return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                    }
+                    
+                    deferred_children.push(DeferredChild { 
+                        target_model: kind_val.to_string(), 
+                        action: DeferredAction::Upsert(create_data.clone(), update_data.clone()), 
+                        relation_field_name: key.clone() 
+                    });
+                    continue;
+                }
 
                 // Expecting exactly one target type key (e.g. { "ModelA": { "connect": { "__id": "1" } } })
                 if nested_mutations.len() != 1 {
@@ -1479,6 +1529,29 @@ fn translate_update_node(
     let where_clause_ir = parse_where_clause(ast, where_obj, model_def)?;
     let (mut where_sql, mut where_params) = compile_parameterized_where(&where_clause_ir, model_name, &mut param_idx);
     
+    for (target_model, id_col) in singular_poly_actions {
+        let fetch_step_id = format!("step_{}_fetch_poly_id_{}", model_name.to_lowercase(), *alias_counter);
+        *alias_counter += 1;
+        
+        let mut subquery_param_idx = 1;
+        let (sub_where_sql, sub_where_params) = compile_parameterized_where(&where_clause_ir, model_name, &mut subquery_param_idx);
+        
+        steps.push(ExecutionStep::Query {
+            id: fetch_step_id.clone(),
+            sql: format!("SELECT {} FROM {} WHERE {}", id_col, model_name, sub_where_sql),
+            params: sub_where_params,
+        });
+        
+        let delete_step_id = format!("step_{}_poly_delete_{}", target_model.to_lowercase(), *alias_counter);
+        *alias_counter += 1;
+        
+        steps.push(ExecutionStep::Query {
+            id: delete_step_id,
+            sql: format!("DELETE FROM {} WHERE __id = ?1 RETURNING __id", target_model),
+            params: vec![Parameter::Reference { step_id: fetch_step_id, column: id_col }],
+        });
+    }
+    
     if let Some(rel) = &parent_rel {
         let parent_model_def = ast.models.get(&rel.parent_model).unwrap();
         let parent_pk_col = parent_model_def.resolved_fields.iter()
@@ -1496,7 +1569,11 @@ fn translate_update_node(
                 _ => None,
             };
 
-            let reverse_field = model_def.resolved_fields.iter().find(|f| {
+            if rel.is_forward_polymorphic {
+                fk_col = Some(pk_col.to_string());
+                target_pk = format!("{}_id", rel.relation_field_name);
+            } else {
+                let reverse_field = model_def.resolved_fields.iter().find(|f| {
                 match &f.field_type {
                     AstFieldType::Relation(rt) if rt == &rel.parent_model || ast.models.get(&rel.parent_model).map_or(false, |m| m.resolved_bases.contains(rt)) => {
                         if let Some(FieldAttribute::Relation { name, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
@@ -1538,10 +1615,28 @@ fn translate_update_node(
                     }
                 }
             }
-        }
+        } // close the else block for is_forward_polymorphic
+        } // close `if let Some(field) = ...`
 
         let mut parent_ref_param = None;
-        if let Some(col) = fk_col {
+        if rel.is_forward_polymorphic {
+            let id_col = format!("{}_id", rel.relation_field_name);
+            let parent_model_def = ast.models.get(&rel.parent_model).unwrap();
+            let parent_pk_col = parent_model_def.resolved_fields.iter()
+                .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
+                .map(|f| f.name.as_str())
+                .unwrap_or("__id");
+            where_sql = format!("({} AND {}.__id = (SELECT {} FROM {} WHERE {} = ?{}))", where_sql, model_name, id_col, rel.parent_model, parent_pk_col, param_idx);
+            match &rel.constraint {
+                ParentConstraint::Singular { step_id } => {
+                    parent_ref_param = Some(Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() });
+                },
+                ParentConstraint::Bulk { .. } => {
+                    return Err("Semantics Error: Cannot execute singular 'update' nested under a bulk operation. Use 'updateMany' instead.".to_string());
+                }
+            }
+            param_idx += 1;
+        } else if let Some(col) = fk_col {
             where_sql = format!("({} AND {}.{} = ?{})", where_sql, model_name, col, param_idx);
             match &rel.constraint {
                 ParentConstraint::Singular { step_id } => {
@@ -1705,6 +1800,9 @@ fn process_deferred_children(
         let is_singular_polymorphic = matches!(parent_field_def.field_type, AstFieldType::PolymorphicBase(_) | AstFieldType::PolymorphicUnion(_));
 
         if is_singular_polymorphic {
+            let type_col = format!("{}_type", child.relation_field_name);
+            let id_col = format!("{}_id", child.relation_field_name);
+            
             match child.action {
                 DeferredAction::Create(child_data) => {
                     let child_create_step_id = translate_create_node(ast, &child.target_model, &child_data, steps, alias_counter, None)?;
@@ -1712,9 +1810,6 @@ fn process_deferred_children(
                     // We must then update the parent model to point to the newly created child!
                     let update_step_id = format!("step_{}_poly_update_{}", parent_model_name.to_lowercase(), *alias_counter);
                     *alias_counter += 1;
-                    
-                    let type_col = format!("{}_type", child.relation_field_name);
-                    let id_col = format!("{}_id", child.relation_field_name);
                     
                     let sql = format!(
                         "UPDATE {} SET {} = ?, {} = ? WHERE {} = ? RETURNING {};",
@@ -1733,6 +1828,73 @@ fn process_deferred_children(
                             Parameter::Reference { step_id: child_create_step_id, column: child_pk_col.to_string() },
                             Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() }
                         ],
+                    });
+                },
+                DeferredAction::Update(concrete_target_model, child_where, child_data) => {
+                    translate_update_node(ast, &concrete_target_model, &child_where, &child_data, steps, alias_counter, Some(ParentRel {
+                        constraint: parent_constraint.clone(),
+                        parent_model: parent_model_name.to_string(),
+                        relation_field_name: child.relation_field_name.clone(),
+                        is_forward_polymorphic: true,
+                    }))?;
+                },
+                DeferredAction::Upsert(create_data, update_data) => {
+                    let check_sql = format!(
+                        "SELECT {} FROM {} WHERE {} = ?1 AND {} = ?2 AND {} IS NOT NULL", 
+                        parent_pk_col, parent_model_name, parent_pk_col, type_col, id_col
+                    );
+                    let check_params = vec![
+                        match parent_constraint {
+                            ParentConstraint::Singular { step_id } => Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() },
+                            ParentConstraint::Bulk { .. } => panic!("Upsert under bulk constraint not supported"),
+                        },
+                        Parameter::Literal(serde_json::Value::String(child.target_model.clone()))
+                    ];
+                    
+                    let mut if_not_exists = Vec::new();
+                    let child_create_step_id = translate_create_node(ast, &child.target_model, &create_data, &mut if_not_exists, alias_counter, None)?;
+                    
+                    let update_step_id = format!("step_{}_poly_update_{}", parent_model_name.to_lowercase(), *alias_counter);
+                    *alias_counter += 1;
+                    
+                    let sql = format!(
+                        "UPDATE {} SET {} = ?, {} = ? WHERE {} = ? RETURNING {};",
+                        parent_model_name,
+                        type_col,
+                        id_col,
+                        parent_pk_col,
+                        parent_pk_col
+                    );
+                    if_not_exists.push(ExecutionStep::Query {
+                        id: update_step_id,
+                        sql,
+                        params: vec![
+                            Parameter::Literal(serde_json::Value::String(child.target_model.clone())),
+                            Parameter::Reference { step_id: child_create_step_id, column: child_pk_col.to_string() },
+                            match parent_constraint {
+                                ParentConstraint::Singular { step_id } => Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() },
+                                ParentConstraint::Bulk { .. } => panic!("Upsert under bulk constraint not supported"),
+                            }
+                        ],
+                    });
+                    
+                    let mut if_exists = Vec::new();
+                    translate_update_node(ast, &child.target_model, &serde_json::Map::new(), &update_data, &mut if_exists, alias_counter, Some(ParentRel {
+                        constraint: parent_constraint.clone(),
+                        parent_model: parent_model_name.to_string(),
+                        relation_field_name: child.relation_field_name.clone(),
+                        is_forward_polymorphic: true,
+                    }))?;
+                    
+                    let branch_step_id = format!("step_{}_upsert_branch_{}", parent_model_name.to_lowercase(), *alias_counter);
+                    *alias_counter += 1;
+                    
+                    steps.push(ExecutionStep::UpsertBranch {
+                        check_sql,
+                        check_params,
+                        if_exists,
+                        if_not_exists,
+                        root_step_id: branch_step_id,
                     });
                 },
                 _ => return Err(format!("Unsupported deferred action for polymorphic relation '{}'", child.relation_field_name)),
@@ -1797,6 +1959,7 @@ fn process_deferred_children(
                     constraint: parent_constraint.clone(),
                     parent_model: parent_model_name.to_string(),
                     relation_field_name: child.relation_field_name,
+                    is_forward_polymorphic: false,
                 }))?;
             },
             DeferredAction::Connect(connect_where) => {
@@ -1841,6 +2004,7 @@ fn process_deferred_children(
                     constraint: parent_constraint.clone(),
                     parent_model: parent_model_name.to_string(),
                     relation_field_name: child.relation_field_name.clone(),
+                    is_forward_polymorphic: false,
                 }))?;
             },
             DeferredAction::Delete(concrete_target_model, child_where) => {
