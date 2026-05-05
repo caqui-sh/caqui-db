@@ -42,6 +42,7 @@ async fn setup_app() -> (axum::Router, deadpool_sqlite::Pool, tempfile::TempDir)
         model Post {
             title: String
             authorId: String?
+            tags: String[]
             author: User? @relation(fields: [authorId], references: [__id])
             @@id(uuid)
         }
@@ -136,5 +137,111 @@ async fn test_nested_connect_disconnect() {
     conn.interact(|db| {
         let fk: Option<String> = db.query_row("SELECT authorId FROM Post WHERE title = 'Connected Post'", [], |r| r.get(0)).unwrap();
         assert!(fk.is_none());
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_array_modifiers_multi_item() {
+    let (app, pool, _dir) = setup_app().await;
+
+    // 1. Create a Post with an empty array
+    let res = app.clone().oneshot(
+        Request::builder().method(http::Method::POST).uri("/api/v1/query")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::json!({
+                "action": "create",
+                "model": "Post",
+                "data": { "title": "Array Post" }
+            }).to_string())).unwrap()
+    ).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // 2. Multi-Push
+    let res = app.clone().oneshot(
+        Request::builder().method(http::Method::POST).uri("/api/v1/query")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::json!({
+                "action": "update",
+                "model": "Post",
+                "where": { "title": "Array Post" },
+                "data": {
+                    "tags": { "push": ["typescript", "rust"] }
+                }
+            }).to_string())).unwrap()
+    ).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let conn = pool.get().await.unwrap();
+    conn.interact(|db| {
+        let tags: String = db.query_row("SELECT tags FROM Post WHERE title = 'Array Post'", [], |r| r.get(0)).unwrap();
+        assert_eq!(tags, "[\"typescript\",\"rust\"]");
+    }).await.unwrap();
+
+    // Setup for pull
+    app.clone().oneshot(
+        Request::builder().method(http::Method::POST).uri("/api/v1/query")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::json!({
+                "action": "update",
+                "model": "Post",
+                "where": { "title": "Array Post" },
+                "data": {
+                    "tags": ["a", "b", "c", "b", "d"]
+                }
+            }).to_string())).unwrap()
+    ).await.unwrap();
+
+    // 3. Multi-Pull
+    let res = app.clone().oneshot(
+        Request::builder().method(http::Method::POST).uri("/api/v1/query")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::json!({
+                "action": "update",
+                "model": "Post",
+                "where": { "title": "Array Post" },
+                "data": {
+                    "tags": { "pull": ["b", "c"] }
+                }
+            }).to_string())).unwrap()
+    ).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    conn.interact(|db| {
+        let tags: String = db.query_row("SELECT tags FROM Post WHERE title = 'Array Post'", [], |r| r.get(0)).unwrap();
+        assert_eq!(tags, "[\"a\",\"d\"]");
+    }).await.unwrap();
+
+    // Setup for pullIndex
+    app.clone().oneshot(
+        Request::builder().method(http::Method::POST).uri("/api/v1/query")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::json!({
+                "action": "update",
+                "model": "Post",
+                "where": { "title": "Array Post" },
+                "data": {
+                    "tags": ["0", "1", "2", "3", "4"]
+                }
+            }).to_string())).unwrap()
+    ).await.unwrap();
+
+    // 4. Multi-PullIndex
+    let res = app.clone().oneshot(
+        Request::builder().method(http::Method::POST).uri("/api/v1/query")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::json!({
+                "action": "update",
+                "model": "Post",
+                "where": { "title": "Array Post" },
+                "data": {
+                    "tags": { "pullIndex": [1, 3] }
+                }
+            }).to_string())).unwrap()
+    ).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    conn.interact(|db| {
+        let tags: String = db.query_row("SELECT tags FROM Post WHERE title = 'Array Post'", [], |r| r.get(0)).unwrap();
+        assert_eq!(tags, "[\"0\",\"2\",\"4\"]");
     }).await.unwrap();
 }

@@ -24,6 +24,27 @@ fn validate_and_normalize_scalar(ast: &SchemaAst, field_name: &str, type_name: &
                 Err(format!("Validation Error: Field '{}' expects a Float.", field_name))
             }
         },
+        "Int" => {
+            if val.as_i64().is_some() {
+                Ok(val.clone())
+            } else {
+                Err(format!("Validation Error: Field '{}' expects an Int.", field_name))
+            }
+        },
+        "String" => {
+            if val.is_string() {
+                Ok(val.clone())
+            } else {
+                Err(format!("Validation Error: Field '{}' expects a String.", field_name))
+            }
+        },
+        "Boolean" => {
+            if val.is_boolean() {
+                Ok(val.clone())
+            } else {
+                Err(format!("Validation Error: Field '{}' expects a Boolean.", field_name))
+            }
+        },
         "DateTime" => {
             let str_val = val.as_str().ok_or_else(|| format!("Validation Error: Invalid ISO-8601 DateTime format for field '{}'.", field_name))?;
             let date = chrono::DateTime::parse_from_rfc3339(str_val)
@@ -1565,40 +1586,74 @@ fn process_deferred_children(
                         match &field_def.field_type {
                                 AstFieldType::Scalar(type_name) | AstFieldType::Enum(type_name) => {
                                     let is_enum = matches!(&field_def.field_type, AstFieldType::Enum(_));
-                                    if let Ok(normalized_val) = validate_and_normalize_scalar(ast, key, type_name, is_enum, val) {
-                                        set_clauses.push(format!("{} = ?{}", key, param_idx));
-                                        params.push(Parameter::Literal(normalized_val));
-                                        param_idx += 1;
-                                    }
+                                    let normalized_val = validate_and_normalize_scalar(ast, key, type_name, is_enum, val)?;
+                                    set_clauses.push(format!("{} = ?{}", key, param_idx));
+                                    params.push(Parameter::Literal(normalized_val));
+                                    param_idx += 1;
                                 },
                                 AstFieldType::ScalarArray(type_name) | AstFieldType::EnumArray(type_name) => {
                                     let is_enum = matches!(&field_def.field_type, AstFieldType::EnumArray(_));
                                     if let Some(obj) = val.as_object() {
                                         if let Some(push_val) = obj.get("push") {
-                                            if let Ok(normalized_val) = validate_and_normalize_scalar(ast, key, type_name, is_enum, push_val) {
+                                            if let Some(arr) = push_val.as_array() {
+                                                for item in arr {
+                                                    validate_and_normalize_scalar(ast, key, type_name, is_enum, item)?;
+                                                }
+                                                set_clauses.push(format!("{} = (SELECT json_group_array(value) FROM (SELECT value FROM json_each(COALESCE({}, '[]')) UNION ALL SELECT value FROM json_each(?{})))", key, key, param_idx));
+                                                let push_str = serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string());
+                                                params.push(Parameter::Literal(serde_json::Value::String(push_str)));
+                                                param_idx += 1;
+                                            } else {
+                                                validate_and_normalize_scalar(ast, key, type_name, is_enum, push_val)?;
                                                 set_clauses.push(format!("{} = json_insert(COALESCE({}, '[]'), '$[#]', ?{})", key, key, param_idx));
                                                 let push_str = if push_val.is_string() { push_val.as_str().unwrap().to_string() } else { serde_json::to_string(push_val).unwrap_or_default() };
                                                 params.push(Parameter::Literal(serde_json::Value::String(push_str)));
                                                 param_idx += 1;
                                             }
                                         } else if let Some(pull_val) = obj.get("pull") {
-                                            if let Ok(normalized_val) = validate_and_normalize_scalar(ast, key, type_name, is_enum, pull_val) {
+                                            if let Some(arr) = pull_val.as_array() {
+                                                for item in arr {
+                                                    validate_and_normalize_scalar(ast, key, type_name, is_enum, item)?;
+                                                }
+                                                set_clauses.push(format!("{} = (SELECT json_group_array(value) FROM json_each(COALESCE({}, '[]')) WHERE value NOT IN (SELECT value FROM json_each(?{})))", key, key, param_idx));
+                                                let pull_str = serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string());
+                                                params.push(Parameter::Literal(serde_json::Value::String(pull_str)));
+                                                param_idx += 1;
+                                            } else {
+                                                let normalized_val = validate_and_normalize_scalar(ast, key, type_name, is_enum, pull_val)?;
                                                 set_clauses.push(format!("{} = (SELECT json_group_array(value) FROM json_each({}) WHERE value != ?{})", key, key, param_idx));
                                                 params.push(Parameter::Literal(normalized_val));
                                                 param_idx += 1;
                                             }
                                         } else if let Some(pull_index) = obj.get("pullIndex") {
-                                            if let Some(idx) = pull_index.as_i64() {
+                                            if let Some(arr) = pull_index.as_array() {
+                                                for item in arr {
+                                                    if item.as_i64().is_none() {
+                                                        return Err(format!("Validation Error: pullIndex array must contain only integers for field '{}'", key));
+                                                    }
+                                                }
+                                                set_clauses.push(format!("{} = (SELECT json_group_array(value) FROM json_each(COALESCE({}, '[]')) WHERE key NOT IN (SELECT value FROM json_each(?{})))", key, key, param_idx));
+                                                let pull_str = serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string());
+                                                params.push(Parameter::Literal(serde_json::Value::String(pull_str)));
+                                                param_idx += 1;
+                                            } else if let Some(idx) = pull_index.as_i64() {
                                                 set_clauses.push(format!("{} = json_remove({}, '$[' || ?{} || ']')", key, key, param_idx));
                                                 params.push(Parameter::Literal(serde_json::Value::Number(serde_json::Number::from(idx))));
                                                 param_idx += 1;
+                                            } else {
+                                                return Err(format!("Validation Error: pullIndex must be an integer or array of integers for field '{}'", key));
                                             }
                                         }
                                     } else if let Some(arr) = val.as_array() {
+                                        for item in arr {
+                                            validate_and_normalize_scalar(ast, key, type_name, is_enum, item)?;
+                                        }
                                         set_clauses.push(format!("{} = ?{}", key, param_idx));
                                         let json_val = serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string());
                                         params.push(Parameter::Literal(serde_json::Value::String(json_val)));
                                         param_idx += 1;
+                                    } else {
+                                        return Err(format!("Validation Error: expected array or modifier object for array field '{}'", key));
                                     }
                                 },
                                 AstFieldType::Relation(target_model) | AstFieldType::RelationArray(target_model) => {
@@ -2151,39 +2206,65 @@ fn parse_update_data_block(
                 let is_enum = matches!(&field_def.field_type, AstFieldType::EnumArray(_));
                 if let Some(obj) = val.as_object() {
                     if let Some(push_val) = obj.get("push") {
-                        if is_enum {
-                            if let AstFieldType::EnumArray(t_name) = &field_def.field_type {
-                                validate_and_normalize_scalar(ast, key, t_name, true, push_val)?;
+                        if let Some(arr) = push_val.as_array() {
+                            for item in arr {
+                                validate_and_normalize_scalar(ast, key, type_name, is_enum, item)?;
                             }
+                            set_clauses.push(format!("{} = (SELECT json_group_array(value) FROM (SELECT value FROM json_each(COALESCE({}, '[]')) UNION ALL SELECT value FROM json_each(?{})))", key, key, *param_idx));
+                            let push_str = serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string());
+                            params.push(Parameter::Literal(serde_json::Value::String(push_str)));
+                            *param_idx += 1;
+                        } else {
+                            validate_and_normalize_scalar(ast, key, type_name, is_enum, push_val)?;
+                            set_clauses.push(format!("{} = json_insert(COALESCE({}, '[]'), '$[#]', ?{})", key, key, *param_idx));
+                            let push_str = if push_val.is_string() { push_val.as_str().unwrap().to_string() } else { serde_json::to_string(push_val).unwrap_or_default() };
+                            params.push(Parameter::Literal(serde_json::Value::String(push_str)));
+                            *param_idx += 1;
                         }
-                        set_clauses.push(format!("{} = json_insert(COALESCE({}, '[]'), '$[#]', ?{})", key, key, *param_idx));
-                        let push_str = if push_val.is_string() { push_val.as_str().unwrap().to_string() } else { serde_json::to_string(push_val).unwrap_or_default() };
-                        params.push(Parameter::Literal(serde_json::Value::String(push_str)));
-                        *param_idx += 1;
                     } else if let Some(pull_val) = obj.get("pull") {
-                        let normalized_val = validate_and_normalize_scalar(ast, key, type_name, is_enum, pull_val)?;
-                        set_clauses.push(format!("{} = (SELECT json_group_array(value) FROM json_each({}) WHERE value != ?{})", key, key, *param_idx));
-                        params.push(Parameter::Literal(normalized_val));
-                        *param_idx += 1;
+                        if let Some(arr) = pull_val.as_array() {
+                            for item in arr {
+                                validate_and_normalize_scalar(ast, key, type_name, is_enum, item)?;
+                            }
+                            set_clauses.push(format!("{} = (SELECT json_group_array(value) FROM json_each(COALESCE({}, '[]')) WHERE value NOT IN (SELECT value FROM json_each(?{})))", key, key, *param_idx));
+                            let pull_str = serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string());
+                            params.push(Parameter::Literal(serde_json::Value::String(pull_str)));
+                            *param_idx += 1;
+                        } else {
+                            let normalized_val = validate_and_normalize_scalar(ast, key, type_name, is_enum, pull_val)?;
+                            set_clauses.push(format!("{} = (SELECT json_group_array(value) FROM json_each({}) WHERE value != ?{})", key, key, *param_idx));
+                            params.push(Parameter::Literal(normalized_val));
+                            *param_idx += 1;
+                        }
                     } else if let Some(pull_index) = obj.get("pullIndex") {
-                        if let Some(idx) = pull_index.as_i64() {
+                        if let Some(arr) = pull_index.as_array() {
+                            for item in arr {
+                                if item.as_i64().is_none() {
+                                    return Err(format!("Validation Error: pullIndex array must contain only integers for field '{}'", key));
+                                }
+                            }
+                            set_clauses.push(format!("{} = (SELECT json_group_array(value) FROM json_each(COALESCE({}, '[]')) WHERE key NOT IN (SELECT value FROM json_each(?{})))", key, key, *param_idx));
+                            let pull_str = serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string());
+                            params.push(Parameter::Literal(serde_json::Value::String(pull_str)));
+                            *param_idx += 1;
+                        } else if let Some(idx) = pull_index.as_i64() {
                             set_clauses.push(format!("{} = json_remove({}, '$[' || ?{} || ']')", key, key, *param_idx));
                             params.push(Parameter::Literal(serde_json::Value::Number(serde_json::Number::from(idx))));
                             *param_idx += 1;
+                        } else {
+                            return Err(format!("Validation Error: pullIndex must be an integer or array of integers for field '{}'", key));
                         }
                     }
                 } else if let Some(arr) = val.as_array() {
-                    if is_enum {
-                        if let AstFieldType::EnumArray(t_name) = &field_def.field_type {
-                            for item in arr {
-                                validate_and_normalize_scalar(ast, key, t_name, true, item)?;
-                            }
-                        }
+                    for item in arr {
+                        validate_and_normalize_scalar(ast, key, type_name, is_enum, item)?;
                     }
                     set_clauses.push(format!("{} = ?{}", key, *param_idx));
                     let json_val = serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string());
                     params.push(Parameter::Literal(serde_json::Value::String(json_val)));
                     *param_idx += 1;
+                } else {
+                    return Err(format!("Validation Error: expected array or modifier object for array field '{}'", key));
                 }
             },
             AstFieldType::Relation(target_model) | AstFieldType::RelationArray(target_model) => {

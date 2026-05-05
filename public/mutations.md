@@ -19,6 +19,45 @@ Batch actions allow you to operate on sets of records dynamically.
 - **`updateMany`**: Update multiple records matching a specific `where` clause.
 - **`deleteMany`**: Delete multiple records matching a specific `where` clause.
 
+### Array Sub-Actions
+For fields defined as scalar arrays (e.g., `String[]` or `Int[]`), Caqui provides atomic modifiers to mutate the list directly within an update payload. These modifiers accept either a single value or an array of values:
+- **`push`**: Append new element(s) to the end of the array.
+- **`pull`**: Remove all occurrences of the specified scalar value(s) from the array.
+- **`pullIndex`**: Remove element(s) at the specific numeric index/indices.
+
+*Example:* 
+```json
+{
+  "action": "update",
+  "model": "Article",
+  "where": { "id": "1" },
+  "data": {
+    "tags": { "push": ["graphql", "rust"] }
+  }
+}
+```
+
+### Relational Sub-Actions
+When updating a parent record, you can nest actions to mutate its relationships in the same transaction. All the Singular and Batch actions (`create`, `connect`, `disconnect`, `update`, `delete`, `updateMany`, `deleteMany`) can be used as nested sub-actions.
+
+For "to-many" relationships, an additional modifier is available:
+- **`set`**: Replaces the entire list of connected records. This atomically disconnects all currently linked records and connects only the ones provided in the `set` payload.
+
+*Example:* 
+```json
+{
+  "action": "update",
+  "model": "Post",
+  "where": { "id": "1" },
+  "data": {
+    "authors": { 
+      "set": [{ "__id": "id1" }, { "__id": "id2" }] 
+    }
+  }
+}
+```
+
+
 ---
 
 ## Abstract Base Shapes & Polymorphism
@@ -62,10 +101,3 @@ When you issue a batch command against an abstract base, Caqui intelligently and
 *If `favorites` points to an abstract base shape (e.g., `Content`), the engine will seamlessly resolve the subqueries for `Article`, `Video`, and any other inheriting models.*
 
 ---
-
-## Arrays and Relational Limitations
-
-While the nested mutation system is highly flexible, there are a few important limitations to keep in mind regarding SQLite and relational structure:
-
-1. **Foreign-Key Array Creation:**
-   If your parent model physically holds the foreign key for a relation, you cannot perform a nested array `create`. A single foreign key column cannot point to multiple newly created child rows.
