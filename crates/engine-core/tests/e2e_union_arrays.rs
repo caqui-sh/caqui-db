@@ -225,3 +225,135 @@ async fn test_e2e_union_array_recursive_scoping() {
     assert_eq!(inner_contents.len(), 1);
     assert_eq!(inner_contents[0]["title"], "Hello World");
 }
+
+#[tokio::test]
+async fn test_polymorphic_union_base_shape_filtering() {
+    let schema = r#"
+        // 1. Define distinct base shapes
+        base Timestamped {
+            updatedAt: String @default("never")
+        }
+        base Viewable {
+            views: Int @default(0)
+        }
+
+        // 2. Define concrete models with mixed inheritance
+        model Article extends Timestamped, Viewable {
+            body: String
+            collectionId: String?
+            collection: Collection? @relation(fields: [collectionId], references: [__id])
+            @@id(uuid)
+        }
+
+        model Video extends Viewable {
+            url: String
+            collectionId: String?
+            collection: Collection? @relation(fields: [collectionId], references: [__id])
+            @@id(uuid)
+        }
+
+        model User extends Timestamped {
+            name: String
+            collectionId: String?
+            collection: Collection? @relation(fields: [collectionId], references: [__id])
+            @@id(uuid)
+        }
+
+        // 3. Define the Union and Parent Model
+        union SearchResult = Article | Video | User
+
+        model Collection {
+            name: String
+            items: SearchResult[]
+            @@id(uuid)
+        }
+    "#;
+
+    let dir = tempdir().unwrap();
+    let workspace = dir.path();
+    let _ = engine_core::vfs::bootstrap_custom_vfs();
+    
+    let caqui_bin = env!("CARGO_BIN_EXE_caqui");
+
+    let mut git_init = Command::new("git");
+    git_init.arg("init").current_dir(workspace);
+    run_cmd(git_init);
+
+    let mut caqui_init = Command::new(caqui_bin);
+    caqui_init.arg("init").current_dir(workspace);
+    run_cmd(caqui_init);
+
+    fs::write(workspace.join("schema.cq"), schema).unwrap();
+
+    let mut cmd = Command::new(caqui_bin);
+    cmd.args(&["schema", "push"]).current_dir(workspace);
+    run_cmd(cmd);
+
+    let db_path = workspace.join("app.db");
+    let db_uri = format!("file:{}?vfs=git", db_path.display());
+    
+    let pool = api_layer::db::create_pool(&db_uri);
+    
+    let ast = schema_parser::parser::parse_schema(schema).unwrap();
+    let ast = schema_parser::validation::validate_schema(ast).unwrap();
+    let state = api_layer::state::EngineState { 
+        ast: Arc::new(ast), 
+        db_pool: pool.clone()
+    };
+    let app = api_layer::router::build_dynamic_router(state);
+
+    // Seed Data
+    let conn = pool.get().await.unwrap();
+    conn.interact(|db| {
+        db.execute("INSERT INTO Collection (__id, name) VALUES ('c1', 'My Collection')", []).unwrap();
+        
+        db.execute("INSERT INTO Article (__id, body, collectionId, updatedAt, views) VALUES ('a1', 'Body', 'c1', 'never', 0)", []).unwrap();
+        db.execute("INSERT INTO Video (__id, url, collectionId, views) VALUES ('v1', 'url', 'c1', 0)", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, collectionId, updatedAt) VALUES ('u1', 'Alice', 'c1', 'never')", []).unwrap();
+    }).await.unwrap();
+
+    let payload = serde_json::json!({
+        "action": "update",
+        "model": "Collection",
+        "where": { "__id": "c1" },
+        "data": {
+            "items": {
+                "updateMany": {
+                    "where": { "__Timestamped": true },
+                    "data": { "updatedAt": "today" }
+                }
+            }
+        }
+    });
+
+    let response = app.clone()
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/api/v1/query")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body_bytes = axum::body::to_bytes(response.into_body(), 100000).await.unwrap();
+    if status != StatusCode::OK {
+        panic!("Request failed with status {}: {:?}", status, String::from_utf8_lossy(&body_bytes));
+    }
+
+    // Verify Data
+    conn.interact(|db| {
+        let art_updated_at: String = db.query_row("SELECT updatedAt FROM Article WHERE __id = 'a1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(art_updated_at, "today");
+
+        let user_updated_at: String = db.query_row("SELECT updatedAt FROM User WHERE __id = 'u1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(user_updated_at, "today");
+
+        // Video shouldn't have been updated (nor errored)
+        let vid_views: i64 = db.query_row("SELECT views FROM Video WHERE __id = 'v1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(vid_views, 0);
+    }).await.unwrap();
+}
