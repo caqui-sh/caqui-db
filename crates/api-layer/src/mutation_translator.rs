@@ -2309,7 +2309,7 @@ fn process_deferred_children(
                 
                 concrete_models.retain(|m_name| {
                     let m_node = ast.models.get(m_name).unwrap();
-                    required_bases.iter().all(|b| m_node.resolved_bases.contains(b))
+                    required_bases.iter().all(|b| m_node.resolved_bases.contains(b) || m_name == b)
                 });
                 
                 let mut queries = Vec::new();
@@ -2482,7 +2482,7 @@ fn process_deferred_children(
                     if set_clauses.is_empty() && bulk_deferred_children.is_empty() { continue; }
                     
                     let mut cleaned_where = child_where.clone();
-                    cleaned_where.retain(|k, _| !k.starts_with("__") || k == "__id" || k == "__kind");
+                    cleaned_where.retain(|k, _| !k.starts_with("__") || k == "__id");
                     if let Ok(where_clause_ir) = parse_where_clause(ast, &cleaned_where, child_model_def) {
                         let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &c_model, &mut param_idx);
                         params.extend(where_params);
@@ -2577,7 +2577,7 @@ fn process_deferred_children(
                 
                 concrete_models.retain(|m_name| {
                     let m_node = ast.models.get(m_name).unwrap();
-                    required_bases.iter().all(|b| m_node.resolved_bases.contains(b))
+                    required_bases.iter().all(|b| m_node.resolved_bases.contains(b) || m_name == b)
                 });
                 
                 let mut queries = Vec::new();
@@ -2596,7 +2596,7 @@ fn process_deferred_children(
                     }
                     
                     let mut cleaned_where = child_where.clone();
-                    cleaned_where.retain(|k, _| !k.starts_with("__") || k == "__id" || k == "__kind");
+                    cleaned_where.retain(|k, _| !k.starts_with("__") || k == "__id");
                     match parse_where_clause(ast, &cleaned_where, child_model_def) {
                         Ok(where_clause_ir) => {
                             let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &c_model, &mut param_idx);
