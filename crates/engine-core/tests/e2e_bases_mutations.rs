@@ -1058,6 +1058,115 @@ async fn test_array_polymorphic_delete_many() {
 }
 
 #[tokio::test]
+async fn test_implicit_cross_base_intersection_filtering() {
+    let schema = r#"
+        // 1. Define two distinct base shapes
+        base Identifiable {
+            slug: String
+        }
+        base Measurable {
+            metrics: Int @default(0)
+        }
+
+        // 2. Define concrete models with mixed inheritance
+        // Inherits BOTH
+        model Campaign extends Identifiable, Measurable {
+            name: String
+            dashboardId: String?
+            dashboard: Dashboard? @relation(fields: [dashboardId], references: [__id])
+            @@id(uuid)
+        }
+
+        // Inherits ONLY Identifiable
+        model UserProfile extends Identifiable {
+            bio: String
+            dashboardId: String?
+            dashboard: Dashboard? @relation(fields: [dashboardId], references: [__id])
+            @@id(uuid)
+        }
+
+        // Inherits ONLY Measurable
+        model Sensor extends Measurable {
+            status: String
+            dashboardId: String?
+            dashboard: Dashboard? @relation(fields: [dashboardId], references: [__id])
+            @@id(uuid)
+        }
+
+        // 3. Define the Parent Model that uses a Base Shape Array
+        model Dashboard {
+            title: String
+            // This array holds anything that inherits `Identifiable` 
+            // (i.e., Campaign and UserProfile)
+            items: Identifiable[] 
+            @@id(uuid)
+        }
+    "#;
+
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    // 1. Seed Data
+    conn.interact(|db| {
+        db.execute("INSERT INTO Dashboard (__id, title) VALUES ('d1', 'Main')", []).unwrap();
+        db.execute("INSERT INTO Campaign (__id, name, slug, metrics, dashboardId) VALUES ('c1', 'Camp', 'c-slug', 10, 'd1')", []).unwrap();
+        db.execute("INSERT INTO UserProfile (__id, bio, slug, dashboardId) VALUES ('u1', 'Bio', 'u-slug', 'd1')", []).unwrap();
+    }).await.unwrap();
+
+    // 2. Execute
+    let payload = serde_json::json!({
+      "action": "update",
+      "model": "Dashboard",
+      "where": { "__id": "d1" },
+      "data": {
+        "items": {
+          "updateMany": {
+            "where": { 
+              "__Identifiable": true, 
+              "metrics": { "gt": 0 }  // THIS FIELD DOES NOT EXIST ON UserProfile!
+            },
+            "data": { "slug": "intersected-slug" }
+          }
+        }
+      }
+    });
+
+    let response = app.clone()
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/api/v1/query")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body_bytes = axum::body::to_bytes(response.into_body(), 100000).await.unwrap();
+    
+    // We expect this to fail currently based on the prompt's prediction, but let's assert either outcome cleanly
+    if status == StatusCode::OK {
+        // Outcome A: Elegant Intersection
+        println!("Outcome A: Elegant Intersection Achieved!");
+        conn.interact(|db| {
+            let camp_slug: String = db.query_row("SELECT slug FROM Campaign WHERE __id = 'c1'", [], |r| r.get(0)).unwrap();
+            assert_eq!(camp_slug, "intersected-slug");
+            
+            let user_slug: String = db.query_row("SELECT slug FROM UserProfile WHERE __id = 'u1'", [], |r| r.get(0)).unwrap();
+            assert_eq!(user_slug, "u-slug"); // Unchanged
+        }).await.unwrap();
+    } else {
+        // Outcome B: Hard Failure
+        println!("Outcome B: Hard Failure Occurred!");
+        let error_msg = String::from_utf8_lossy(&body_bytes);
+        assert!(error_msg.contains("Invalid field 'metrics' for model 'UserProfile'"), "Unexpected error: {}", error_msg);
+    }
+}
+
+#[tokio::test]
 async fn test_array_polymorphic_update_nested_create_connect() {
     let schema = r#"
         base Content { user: User? }
