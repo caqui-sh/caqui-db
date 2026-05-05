@@ -953,8 +953,37 @@ fn translate_create_node(
                     if let Some(child_data) = create_payload.as_object() {
                         deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(child_data.clone()), relation_field_name: key.clone() });
                     }
+                } else if let Some(disconnect_val) = actions_obj.get("disconnect") {
+                    if disconnect_val.as_bool().unwrap_or(false) {
+                        columns.push(type_col.clone());
+                        placeholders.push(format!("?{}", param_idx));
+                        params.push(Parameter::Literal(serde_json::Value::Null));
+                        param_idx += 1;
+
+                        columns.push(id_col.clone());
+                        placeholders.push(format!("?{}", param_idx));
+                        params.push(Parameter::Literal(serde_json::Value::Null));
+                        param_idx += 1;
+                    }
+                } else if let Some(update_payload) = actions_obj.get("update") {
+                    let child_update = update_payload.as_object().ok_or("Expected object in 'update'")?;
+                    let child_where = child_update.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update'")?;
+                    let child_data = child_update.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update'")?;
+                    
+                    deferred_children.push(DeferredChild {
+                        target_model: target_model.clone(),
+                        action: DeferredAction::Update(target_model.clone(), child_where.clone(), child_data.clone()),
+                        relation_field_name: key.clone()
+                    });
+                } else if let Some(delete_payload) = actions_obj.get("delete") {
+                    let child_where = delete_payload.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'delete'")?;
+                    deferred_children.push(DeferredChild {
+                        target_model: target_model.clone(),
+                        action: DeferredAction::Delete(target_model.clone(), child_where.clone()),
+                        relation_field_name: key.clone()
+                    });
                 } else {
-                    return Err(format!("Unsupported action for polymorphic field '{}'. Only 'connect' and 'create' are supported.", key));
+                    return Err(format!("Unsupported action for polymorphic field '{}'.", key));
                 }
             }
         }
@@ -1355,6 +1384,45 @@ fn process_deferred_children(
                         relation_field_name: child.relation_field_name.clone(),
                         is_forward_polymorphic: true,
                     }))?;
+                },
+                DeferredAction::Delete(concrete_target_model, child_where) => {
+                    let child_step_id = format!("step_{}_delete_{}", concrete_target_model.to_lowercase(), *alias_counter);
+                    *alias_counter += 1;
+                    
+                    let mut params = Vec::new();
+                    let mut param_idx = 1;
+                    
+                    let child_model_def = ast.models.get(&concrete_target_model).unwrap();
+                    let child_pk_col = child_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id");
+                    
+                    let where_clause_ir = parse_where_clause(ast, &child_where, child_model_def)?;
+                    let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &concrete_target_model, &mut param_idx);
+                    params.extend(where_params);
+                    
+                    let id_col = format!("{}_id", child.relation_field_name);
+                    let type_col = format!("{}_type", child.relation_field_name);
+                    
+                    let combined_where_sql = format!("({} AND {}.__id = (SELECT {} FROM {} WHERE {} = ?{} AND {} = '{}'))", 
+                        where_sql, concrete_target_model, id_col, parent_model_name, parent_pk_col, param_idx, type_col, concrete_target_model);
+                        
+                    let parent_ref = match parent_constraint {
+                        ParentConstraint::Singular { step_id } => Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() },
+                        ParentConstraint::Bulk { .. } => return Err("Semantics Error: Cannot execute singular 'delete' nested under a bulk operation. Use 'deleteMany' instead.".to_string()),
+                    };
+                    
+                    let sql = format!(
+                        "DELETE FROM {} WHERE {} RETURNING {};",
+                        concrete_target_model,
+                        combined_where_sql,
+                        child_pk_col
+                    );
+                    
+                    steps.push(ExecutionStep::DeleteBranch {
+                        id: child_step_id,
+                        sql,
+                        params,
+                        parent_ref,
+                    });
                 },
                 _ => return Err(format!("Unsupported deferred action for polymorphic relation '{}'", child.relation_field_name)),
             }
@@ -2378,45 +2446,6 @@ fn parse_update_data_block(
                 let type_col = format!("{}_type", key);
                 let id_col = format!("{}_id", key);
 
-                if let Some(disconnect_val) = nested_mutations.get("disconnect") {
-                    if disconnect_val.as_bool().unwrap_or(false) {
-                        set_clauses.push(format!("{} = NULL", type_col));
-                        set_clauses.push(format!("{} = NULL", id_col));
-                        continue;
-                    }
-                }
-                
-                if let Some(delete_payload) = nested_mutations.get("delete") {
-                    let child_where = delete_payload.as_object().ok_or("Expected 'where' object in 'delete'")?;
-                    let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'delete' block")?;
-                    if !ast.models.contains_key(kind_val) {
-                        return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
-                    }
-                    
-                    singular_poly_actions.push((kind_val.to_string(), id_col.clone(), type_col.clone()));
-                    
-                    set_clauses.push(format!("{} = NULL", type_col));
-                    set_clauses.push(format!("{} = NULL", id_col));
-                    continue;
-                }
-                
-                if let Some(update_payload) = nested_mutations.get("update") {
-                    let child_update = update_payload.as_object().ok_or("Expected object in 'update'")?;
-                    let kind_val = child_update.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'update' block")?;
-                    let child_data = child_update.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' block in 'update'")?;
-                    
-                    if !ast.models.contains_key(kind_val) {
-                        return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
-                    }
-                    
-                    deferred_children.push(DeferredChild {
-                        target_model: kind_val.to_string(),
-                        action: DeferredAction::Update(kind_val.to_string(), serde_json::Map::new(), child_data.clone()),
-                        relation_field_name: key.clone()
-                    });
-                    continue;
-                }
-
                 // Expecting exactly one target type key (e.g. { "ModelA": { "connect": { "__id": "1" } } })
                 if nested_mutations.len() != 1 {
                     return Err(format!("Polymorphic field '{}' requires exactly one target type in the mutation payload.", key));
@@ -2446,8 +2475,35 @@ fn parse_update_data_block(
                     if let Some(child_data) = create_payload.as_object() {
                         deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(child_data.clone()), relation_field_name: key.clone() });
                     }
+                } else if let Some(disconnect_val) = actions_obj.get("disconnect") {
+                    if disconnect_val.as_bool().unwrap_or(false) {
+                        set_clauses.push(format!("{} = ?{}", type_col, *param_idx));
+                        params.push(Parameter::Literal(serde_json::Value::Null));
+                        *param_idx += 1;
+
+                        set_clauses.push(format!("{} = ?{}", id_col, *param_idx));
+                        params.push(Parameter::Literal(serde_json::Value::Null));
+                        *param_idx += 1;
+                    }
+                } else if let Some(update_payload) = actions_obj.get("update") {
+                    let child_update = update_payload.as_object().ok_or("Expected object in 'update'")?;
+                    let child_where = child_update.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update'")?;
+                    let child_data = child_update.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update'")?;
+                    
+                    deferred_children.push(DeferredChild {
+                        target_model: target_model.clone(),
+                        action: DeferredAction::Update(target_model.clone(), child_where.clone(), child_data.clone()),
+                        relation_field_name: key.clone()
+                    });
+                } else if let Some(delete_payload) = actions_obj.get("delete") {
+                    let child_where = delete_payload.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'delete'")?;
+                    deferred_children.push(DeferredChild {
+                        target_model: target_model.clone(),
+                        action: DeferredAction::Delete(target_model.clone(), child_where.clone()),
+                        relation_field_name: key.clone()
+                    });
                 } else {
-                    return Err(format!("Unsupported action for polymorphic field '{}'. Only 'connect' and 'create' are supported.", key));
+                    return Err(format!("Unsupported action for polymorphic field '{}'.", key));
                 }
             },
             AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {

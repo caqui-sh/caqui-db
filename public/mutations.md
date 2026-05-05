@@ -60,6 +60,26 @@ For "to-many" relationships, an additional modifier is available:
 
 ---
 
+## Limitations
+
+While the Mutations API is highly flexible, it does enforce certain structural and execution constraints to guarantee performance and predictability:
+
+### No Singular Actions Inside Batch Actions
+You **cannot** nest singular update actions (such as `update`, `create`, `connect`, or `disconnect`) inside the `data` block of a batch update action (`updateMany`). 
+
+Batch actions are designed to broadcast a uniform state change across multiple records simultaneously. Nesting a singular action within a batch action would introduce ambiguous execution semantics (e.g., attempting to singularly connect/update the exact same related record multiple times concurrently), which the engine prevents. 
+
+If you need to perform relational mutations alongside batch updates, you should either:
+1. Use a nested batch action (e.g., nesting an `updateMany` inside another `updateMany`).
+2. Perform the singular relational mutations in a separate transaction or root-level API call.
+
+### Polymorphic Field Actions
+When performing a nested mutation directly on a polymorphic relation (a field typed as a Union or Base Shape), the engine restricts the available inline actions. 
+- You **can** perform nested `connect` and `create` actions.
+- You **cannot** perform nested `update`, `delete`, `disconnect`, or `set` actions inline on that polymorphic reference.
+
+---
+
 ## Abstract Base Shapes & Polymorphism
 
 Caqui features a sophisticated polymorphic execution engine that treats abstract base shapes differently depending on the context of the mutation.

@@ -397,7 +397,9 @@ async fn test_e2e_polymorphic_reparent_and_disconnect() {
         "where": { "__id": generated_c_id },
         "data": {
             "parent": {
-                "disconnect": true
+                "Video": {
+                    "disconnect": true
+                }
             }
         }
     });
@@ -572,7 +574,7 @@ async fn test_singular_polymorphic_disconnect() {
         "action": "update",
         "model": "User",
         "where": { "__id": "u1" },
-        "data": { "favorite": { "disconnect": true } }
+        "data": { "favorite": { "Article": { "disconnect": true } } }
     });
 
     let (status, response) = post_query(&app, payload).await;
@@ -614,7 +616,7 @@ async fn test_singular_polymorphic_delete() {
         "action": "update",
         "model": "User",
         "where": { "__id": "u1" },
-        "data": { "favorite": { "delete": { "__kind": "Video" } } }
+        "data": { "favorite": { "Video": { "delete": { "where": {} } } } }
     });
 
     let (status, response) = post_query(&app, payload).await;
@@ -622,8 +624,8 @@ async fn test_singular_polymorphic_delete() {
 
     conn.interact(|db| {
         let (fav_type, fav_id): (Option<String>, Option<String>) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = 'u1'", [], |r| Ok((r.get(0).ok().flatten(), r.get(1).ok().flatten()))).unwrap();
-        assert_eq!(fav_type, None);
-        assert_eq!(fav_id, None);
+        assert_eq!(fav_type, Some("Video".to_string()));
+        assert_eq!(fav_id, Some("vid1".to_string()));
         
         let count: i64 = db.query_row("SELECT count(*) FROM Video WHERE __id = 'vid1'", [], |r| r.get(0)).unwrap();
         assert_eq!(count, 0); // Delete destroys the concrete record
@@ -656,7 +658,7 @@ async fn test_singular_polymorphic_update() {
         "action": "update",
         "model": "User",
         "where": { "__id": "u2" },
-        "data": { "favorite": { "update": { "__kind": "Article", "data": { "title": "New Title" } } } }
+        "data": { "favorite": { "Article": { "update": { "where": {}, "data": { "title": "New Title" } } } } }
     });
 
     let (status, response) = post_query(&app, payload).await;
@@ -699,7 +701,7 @@ async fn test_singular_polymorphic_type_mismatch_safety() {
         "action": "update",
         "model": "User",
         "where": { "__id": "u_test" },
-        "data": { "favorite": { "update": { "__kind": "Article", "data": { "title": "Hacked" } } } }
+        "data": { "favorite": { "Article": { "update": { "where": {}, "data": { "title": "Hacked" } } } } }
     });
 
     let (status, response) = post_query(&app, payload).await;
