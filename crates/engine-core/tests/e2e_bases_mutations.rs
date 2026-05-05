@@ -1167,6 +1167,57 @@ async fn test_implicit_cross_base_intersection_filtering() {
 }
 
 #[tokio::test]
+async fn test_strict_field_validation_nested_batch_action() {
+    let schema = r#"
+        base Content { collection: Collection? }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { url: String @@id(uuid) }
+        
+        model Collection {
+            name: String
+            items: Content[]
+            @@id(uuid)
+        }
+    "#;
+
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Collection (__id, name) VALUES ('c1', 'My Collection')", []).unwrap();
+        db.execute("INSERT INTO Article (__id, title, collectionId) VALUES ('a1', 'Title', 'c1')", []).unwrap();
+        db.execute("INSERT INTO Video (__id, url, collectionId) VALUES ('v1', 'http', 'c1')", []).unwrap();
+    }).await.unwrap();
+
+    let payload = serde_json::json!({
+        "action": "update",
+        "model": "Collection",
+        "where": { "__id": "c1" },
+        "data": {
+            "items": {
+                "updateMany": {
+                    "where": { "__Content": true },
+                    "data": { "url": "https://hacked.com" } // 'Article' does not have 'url'
+                }
+            }
+        }
+    });
+
+    let res = app.clone().oneshot(
+        Request::builder().method(http::Method::POST).uri("/api/v1/query")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(payload.to_string())).unwrap()
+    ).await.unwrap();
+    
+    assert_ne!(res.status(), StatusCode::OK);
+
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let body_str = String::from_utf8_lossy(&body_bytes);
+    assert!(body_str.contains("This field does not match/exist on the resolved bases in the where clause: [Content]"));
+}
+
+#[tokio::test]
 async fn test_array_polymorphic_update_nested_create_connect() {
     let schema = r#"
         base Content { user: User? }

@@ -2334,8 +2334,16 @@ fn process_deferred_children(
                     let mut bulk_deferred_children = Vec::new();
                     for (key, val) in &child_data {
                         if key.starts_with("__") { continue; }
-                        if let Some(field_def) = child_model_def.resolved_fields.iter().find(|f| &f.name == key) {
-                            match &field_def.field_type {
+                        let field_def = child_model_def.resolved_fields.iter().find(|f| &f.name == key)
+                            .ok_or_else(|| {
+                                if !required_bases.is_empty() {
+                                    format!("Invalid field '{}' for target '{}'. This field does not match/exist on the resolved bases in the where clause: [{}].", key, target_name, required_bases.join(", "))
+                                } else {
+                                    format!("Invalid field '{}' for target '{}'.", key, target_name)
+                                }
+                            })?;
+                            
+                        match &field_def.field_type {
                                 AstFieldType::Scalar(type_name) | AstFieldType::Enum(type_name) => {
                                     let is_enum = matches!(&field_def.field_type, AstFieldType::Enum(_));
                                     if let Ok(normalized_val) = validate_and_normalize_scalar(ast, key, type_name, is_enum, val) {
@@ -2478,7 +2486,6 @@ fn process_deferred_children(
                                 },
                                 _ => {}
                             }
-                        }
                     }
                     
                     if set_clauses.is_empty() && bulk_deferred_children.is_empty() { continue; }
