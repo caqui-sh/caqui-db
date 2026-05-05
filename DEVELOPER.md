@@ -118,10 +118,9 @@ To maintain feature parity with modern DSLs (like Prisma or GraphQL), the follow
 - **Status:** **Fully Implemented**.
 - **Capabilities:** Caqui supports `create`, `update`, `delete`, `connect`, and `disconnect` on nested records directly through their parent relationships. This includes strict scoped safety and translates into highly optimized linear Execution Plans. It also flawlessly supports deep nesting under bulk contexts (`updateMany` / `deleteMany`) via dynamic AST subquery interception.
 
-### 8. Polymorphic Update & Delete
-Currently, polymorphic fields only support `create`, `connect`, and `disconnect`. Implementing `update` and `delete` involves a significant architectural decision between two paths:
-
-| Path | Technical Approach | Trade-offs |
-| :--- | :--- | :--- |
-| **User-Asserted Types** | The client provides the target model (e.g., `"User": { "update": { ... } }`). The engine generates a single SQL statement with a subquery validating the row discriminator. | **Pros**: Statically verifiable, zero-latency execution, maintains the Linear Execution Plan. <br> **Cons**: Slight increase in client-side responsibility. |
-| **Dynamic Runtime Dispatch** | The engine queries the row's `_type` column at runtime and dynamically branches the execution plan. | **Pros**: Maximum client-side ergonomics. <br> **Cons**: Requires a "Look-before-write" (LBW) cycle, breaking the current high-performance linear model and increasing executor complexity. |
+### 8. Polymorphic Mutations (Implemented)
+- **Status:** **Fully Implemented**.
+- **Capabilities:** The engine fully supports complex mutations natively utilizing "User-Asserted Types" (e.g., using `__kind: "Article"` or wrapper keys like `{ "Article": { ... } }`) to explicitly disambiguate target tables. This enforces zero-latency, statically verifiable execution paths without "Look-before-write" database hits.
+- **Singular Polymorphic Relations (`Base`, `Union`):** Supports `create`, `connect`, `disconnect`, `delete`, `update`, and `upsert`. The engine enforces strict safety by explicitly querying parent-pointer mappings before acting on children, preventing potential UUID collisions across tables.
+- **Array Polymorphic Relations (`Base[]`, `Union[]`):** Supports `create`, `connect`, `disconnect`, `set`, `update`, `delete`, `updateMany`, and `deleteMany`. 
+  - *Architectural Limitation (`upsert`):* Nested `upsert` actions on *any* 1:N array relations (including standard relations and polymorphic arrays) are fundamentally not supported. This is because SQLite's `INSERT ... ON CONFLICT(...) DO UPDATE` requires the conflict target to be a `UNIQUE` index. Since the foreign keys mapping children back to the parent in an array are not unique, the database correctly panics. Operations must be split into distinct `create` or `update` paths.

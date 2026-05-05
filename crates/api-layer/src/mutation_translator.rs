@@ -992,6 +992,7 @@ fn translate_create_node(
                         deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Update(kind_val.to_string(), cw, child_data.clone()), relation_field_name: key.clone() });
                     }
                 }
+                
                 if let Some(delete_payload) = nested_mutations.get("delete") {
                     if let Some(arr) = delete_payload.as_array() {
                         for item in arr {
@@ -1592,6 +1593,7 @@ fn translate_update_node(
                         deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Update(kind_val.to_string(), cw, child_data.clone()), relation_field_name: key.clone() });
                     }
                 }
+                
                 if let Some(delete_payload) = nested_mutations.get("delete") {
                     if let Some(arr) = delete_payload.as_array() {
                         for item in arr {
@@ -2746,13 +2748,13 @@ fn process_deferred_children(
                     let mut param_idx = 1;
                     
                     // The FK to the parent is required for creation
-                    columns.push(pfk.clone());
+                    columns.push(fk_col.clone());
                     placeholders.push(format!("?{}", param_idx));
-                    params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: rpk.clone() });
+                    params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() });
                     param_idx += 1;
 
                     for (key, val) in create_data {
-                        if key != pfk {
+                        if *key != fk_col {
                             columns.push(key.clone());
                             placeholders.push(format!("?{}", param_idx));
                             params.push(Parameter::Literal(val.clone()));
@@ -2763,7 +2765,7 @@ fn process_deferred_children(
                     let mut update_set_clauses = Vec::new();
                     if let Some(update_data_obj) = update_data.get("data").and_then(|v| v.as_object()).or(Some(&update_data)) {
                         for (key, val) in update_data_obj {
-                            if *key != pfk {
+                            if *key != fk_col {
                                 update_set_clauses.push(format!("{} = ?{}", key, param_idx));
                                 params.push(Parameter::Literal(val.clone()));
                                 param_idx += 1;

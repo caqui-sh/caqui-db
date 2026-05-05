@@ -1056,3 +1056,49 @@ async fn test_array_polymorphic_delete_many() {
         assert_eq!(count_vid, 1); // Videos untouched
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn test_array_polymorphic_update_nested_create_connect() {
+    let schema = r#"
+        base Content { user: User? }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorites: Content[]
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO User (__id, name) VALUES ('u1', 'Alice')", []).unwrap();
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('v1', 120)", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": {
+            "favorites": {
+                "create": [ { "Article": { "title": "New" } } ],
+                "connect": [ { "Video": { "__id": "v1" } } ]
+            }
+        }
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    conn.interact(|db| {
+        let count_art: i64 = db.query_row("SELECT count(*) FROM Article WHERE userId = 'u1' AND title = 'New'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count_art, 1);
+
+        let count_vid: i64 = db.query_row("SELECT count(*) FROM Video WHERE userId = 'u1' AND __id = 'v1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count_vid, 1);
+    }).await.unwrap();
+}
