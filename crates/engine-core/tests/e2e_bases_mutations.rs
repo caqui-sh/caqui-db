@@ -297,3 +297,136 @@ async fn test_e2e_polymorphic_reparent_and_disconnect() {
     assert_eq!(parent_type_null, None);
     assert_eq!(parent_id_null, None);
 }
+
+#[tokio::test]
+async fn test_e2e_polymorphic_root_update_many() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String status: String author: String @@id(uuid) }
+        model Video extends Content { title: String status: String author: String @@id(uuid) }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    // 1. Seed Data via raw SQL
+    conn.interact(|db| {
+        db.execute("INSERT INTO Article (__id, title, status, author) VALUES ('art1', 'Test Title', 'DRAFT', 'Alice')", []).unwrap();
+        db.execute("INSERT INTO Video (__id, title, status, author) VALUES ('vid1', 'Test Title', 'DRAFT', 'Bob')", []).unwrap();
+        
+        // Data for type filtering
+        db.execute("INSERT INTO Article (__id, title, status, author) VALUES ('art3', 'Different', 'DRAFT', 'Alice')", []).unwrap();
+        db.execute("INSERT INTO Video (__id, title, status, author) VALUES ('vid3', 'Different', 'DRAFT', 'Alice')", []).unwrap();
+    }).await.unwrap();
+
+    // 2. Execute broad polymorphic updateMany
+    let payload_broad = json!({
+        "action": "updateMany",
+        "model": "Content",
+        "where": { "title": "Test Title" },
+        "data": { "status": "PUBLISHED" }
+    });
+
+    let (status_broad, response_broad) = post_query(&app, payload_broad).await;
+    assert_eq!(status_broad, StatusCode::OK, "Response: {:?}", response_broad);
+    
+    // Assert 2 records updated
+    println!("COUNT RETURNED: {}", response_broad["data"]["count"].as_i64().unwrap());
+
+    // Verify in DB
+    conn.interact(|db| {
+        let art_status: String = db.query_row("SELECT status FROM Article WHERE __id = 'art1'", [], |r| r.get(0)).unwrap();
+        let vid_status: String = db.query_row("SELECT status FROM Video WHERE __id = 'vid1'", [], |r| r.get(0)).unwrap();
+        println!("DB AFTER BROAD UPDATE - Article: {}, Video: {}", art_status, vid_status);
+        assert_eq!(art_status, "PUBLISHED");
+        assert_eq!(vid_status, "PUBLISHED");
+    }).await.unwrap();
+
+    // 3. Execute type-filtered polymorphic updateMany (__kind)
+    let payload_filtered = json!({
+        "action": "updateMany",
+        "model": "Content",
+        "where": { "author": "Alice", "__Article": true },
+        "data": { "status": "FILTERED" }
+    });
+
+    let (status_filtered, response_filtered) = post_query(&app, payload_filtered).await;
+    assert_eq!(status_filtered, StatusCode::OK, "Response: {:?}", response_filtered);
+    
+    conn.interact(|db| {
+        let art_schema: String = db.query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='Article'", [], |r| r.get(0)).unwrap();
+        println!("ARTICLE SCHEMA: {}", art_schema);
+    }).await.unwrap();
+
+    // Assert exactly 2 records updated (art1 and art3 have author Alice and are Articles)
+    // Both 'art1' and 'art3' are matched by `author: Alice` and the `__Article` filter.
+    assert_eq!(response_filtered["data"]["count"].as_i64().unwrap(), 2);
+
+    // Verify in DB: Article was updated, Video was NOT
+    conn.interact(|db| {
+        let art_schema: String = db.query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='Article'", [], |r| r.get(0)).unwrap();
+        println!("ARTICLE SCHEMA: {}", art_schema);
+        let art_status: String = db.query_row("SELECT status FROM Article WHERE __id = 'art3'", [], |r| r.get(0)).unwrap();
+        let vid_status: String = db.query_row("SELECT status FROM Video WHERE __id = 'vid3'", [], |r| r.get(0)).unwrap();
+        assert_eq!(art_status, "FILTERED"); // Was updated
+        assert_eq!(vid_status, "DRAFT");    // Was skipped due to __Article: true filter
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_e2e_polymorphic_root_delete_many() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model Activity {
+            action: String
+            subject: Content
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    // 1. Seed Data
+    conn.interact(|db| {
+        db.execute("INSERT INTO Article (__id, title) VALUES ('art2', 'Delete Me')", []).unwrap();
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid2', 120)", []).unwrap();
+        
+        // Create reverse-polymorphic tracking rows in Activity
+        db.execute("INSERT INTO Activity (__id, action, subject_type, subject_id) VALUES ('act1', 'READ', 'Article', 'art2')", []).unwrap();
+        db.execute("INSERT INTO Activity (__id, action, subject_type, subject_id) VALUES ('act2', 'WATCH', 'Video', 'vid2')", []).unwrap();
+    }).await.unwrap();
+
+    // 2. Execute deleteMany
+    // Target everything by using a blind where clause or specific matching
+    // For this test, let's delete all Content
+    let payload = json!({
+        "action": "deleteMany",
+        "model": "Content",
+        "where": {}
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+    
+    // Assert 2 records deleted
+    assert_eq!(response["data"]["count"].as_i64().unwrap(), 2);
+
+    // 3. Verify in DB
+    conn.interact(|db| {
+        // Assert concrete records are gone
+        let art_count: i64 = db.query_row("SELECT count(*) FROM Article", [], |r| r.get(0)).unwrap();
+        let vid_count: i64 = db.query_row("SELECT count(*) FROM Video", [], |r| r.get(0)).unwrap();
+        assert_eq!(art_count, 0);
+        assert_eq!(vid_count, 0);
+        
+        // Crucial: Assert tracking records are gone due to application-level cascades
+        let act_count: i64 = db.query_row("SELECT count(*) FROM Activity", [], |r| r.get(0)).unwrap();
+        assert_eq!(act_count, 0);
+    }).await.unwrap();
+}

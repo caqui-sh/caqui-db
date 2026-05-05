@@ -38,6 +38,7 @@ async fn setup_app() -> (axum::Router, deadpool_sqlite::Pool, tempfile::TempDir)
             age: Int
             bio: String
             role: String
+            tags: String[]
             posts: Post[]
             @@id(uuid)
         }
@@ -62,16 +63,16 @@ async fn setup_app() -> (axum::Router, deadpool_sqlite::Pool, tempfile::TempDir)
     let conn = pool.get().await.unwrap();
     conn.interact(|db| -> Result<(), rusqlite::Error> {
         // 3 Admins
-        db.execute("INSERT INTO User (__id, name, age, bio, role) VALUES ('u1', 'Admin1', 30, 'bio', 'Admin');", [])?;
-        db.execute("INSERT INTO User (__id, name, age, bio, role) VALUES ('u2', 'Admin2', 31, 'bio', 'Admin');", [])?;
-        db.execute("INSERT INTO User (__id, name, age, bio, role) VALUES ('u3', 'Admin3', 32, 'bio', 'Admin');", [])?;
+        db.execute("INSERT INTO User (__id, name, age, bio, role, tags) VALUES ('u1', 'Admin1', 30, 'bio', 'Admin', '[]');", [])?;
+        db.execute("INSERT INTO User (__id, name, age, bio, role, tags) VALUES ('u2', 'Admin2', 31, 'bio', 'Admin', '[]');", [])?;
+        db.execute("INSERT INTO User (__id, name, age, bio, role, tags) VALUES ('u3', 'Admin3', 32, 'bio', 'Admin', '[]');", [])?;
         
         // 2 Users
-        db.execute("INSERT INTO User (__id, name, age, bio, role) VALUES ('u4', 'User1', 20, 'bio', 'User');", [])?;
-        db.execute("INSERT INTO User (__id, name, age, bio, role) VALUES ('u5', 'User2', 21, 'bio', 'User');", [])?;
+        db.execute("INSERT INTO User (__id, name, age, bio, role, tags) VALUES ('u4', 'User1', 20, 'bio', 'User', '[]');", [])?;
+        db.execute("INSERT INTO User (__id, name, age, bio, role, tags) VALUES ('u5', 'User2', 21, 'bio', 'User', '[]');", [])?;
         
         // 1 Guest
-        db.execute("INSERT INTO User (__id, name, age, bio, role) VALUES ('u6', 'Guest1', 18, 'bio', 'Guest');", [])?;
+        db.execute("INSERT INTO User (__id, name, age, bio, role, tags) VALUES ('u6', 'Guest1', 18, 'bio', 'Guest', '[]');", [])?;
         
         // Posts
         db.execute("INSERT INTO Post (__id, title, authorId) VALUES ('p1', 'Admin Post', 'u1');", [])?;
@@ -339,4 +340,204 @@ async fn test_bulk_multi_field_updates() {
         db.query_row("SELECT COUNT(*) FROM User WHERE bio = 'Super Admin' AND age = 99", [], |row| row.get(0))
     }).await.unwrap().unwrap();
     assert_eq!(count, 3);
+}
+
+#[tokio::test]
+async fn test_bulk_array_operations() {
+    let (app, pool, _dir) = setup_app().await;
+
+    let payload = serde_json::json!({
+        "model": "User",
+        "action": "updateMany",
+        "where": { "role": "Admin" },
+        "data": { "tags": { "push": "Super" } }
+    });
+
+    let res = app.clone().oneshot(
+        Request::builder().method(http::Method::POST).uri("/api/v1/query")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(payload.to_string())).unwrap()
+    ).await.unwrap();
+    
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json_body: Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(json_body["data"]["count"], 3);
+
+    let conn = pool.get().await.unwrap();
+    let count: i64 = conn.interact(|db| {
+        db.query_row("SELECT COUNT(*) FROM User WHERE role = 'Admin' AND tags LIKE '%\"Super\"%'", [], |row| row.get(0))
+    }).await.unwrap().unwrap();
+    assert_eq!(count, 3);
+}
+
+#[tokio::test]
+async fn test_bulk_nested_create_and_delete() {
+    let (app, pool, _dir) = setup_app().await;
+
+    let payload = serde_json::json!({
+        "model": "User",
+        "action": "updateMany",
+        "where": { "role": "User" },
+        "data": { 
+            "bio": "Bulk Nested User",
+            "posts": {
+                "create": [{ "title": "Bonus Post" }],
+                "deleteMany": { "title": "User Post" }
+            }
+        }
+    });
+
+    let res = app.clone().oneshot(
+        Request::builder().method(http::Method::POST).uri("/api/v1/query")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(payload.to_string())).unwrap()
+    ).await.unwrap();
+    
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json_body: Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(json_body["data"]["count"], 2);
+
+    let conn = pool.get().await.unwrap();
+    conn.interact(|db| {
+        // Assert bio updated
+        let count_bio: i64 = db.query_row("SELECT COUNT(*) FROM User WHERE bio = 'Bulk Nested User'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count_bio, 2);
+
+        // Assert 2 new Bonus posts created and linked
+        let count_bonus: i64 = db.query_row("SELECT COUNT(*) FROM Post WHERE title = 'Bonus Post'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count_bonus, 2);
+
+        // Assert User Post deleted correctly (only for matching role="User", but User Post belongs to User1)
+        let count_deleted: i64 = db.query_row("SELECT COUNT(*) FROM Post WHERE title = 'User Post'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count_deleted, 0);
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_bulk_nested_singleton_rejections() {
+    let (app, _pool, _dir) = setup_app().await;
+
+    let payloads = vec![
+        // 1. Nested update
+        serde_json::json!({
+            "model": "User", "action": "updateMany", "where": {},
+            "data": { "posts": { "update": { "where": {}, "data": { "title": "New" } } } }
+        }),
+        // 2. Nested upsert
+        serde_json::json!({
+            "model": "User", "action": "updateMany", "where": {},
+            "data": { "posts": { "upsert": { "create": { "title": "1" }, "update": { "title": "1" } } } }
+        }),
+        // 3. Nested set
+        serde_json::json!({
+            "model": "User", "action": "updateMany", "where": {},
+            "data": { "posts": { "set": [{ "__id": "p1" }] } }
+        }),
+        // 4. Nested connect
+        serde_json::json!({
+            "model": "User", "action": "updateMany", "where": {},
+            "data": { "posts": { "connect": [{ "__id": "p1" }] } }
+        })
+    ];
+
+    for payload in payloads {
+        let res = app.clone().oneshot(
+            Request::builder().method(http::Method::POST).uri("/api/v1/query")
+                .header(http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(payload.to_string())).unwrap()
+        ).await.unwrap();
+
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let error_msg = String::from_utf8_lossy(&body_bytes);
+        assert!(error_msg.contains("Semantics Error"), "Expected Semantics Error, got: {}", error_msg);
+    }
+}
+
+#[tokio::test]
+async fn test_delete_many_batch_ids() {
+    let (app, pool, _dir) = setup_app().await;
+
+    let payload = serde_json::json!({
+        "model": "User",
+        "action": "deleteMany",
+        "where": { "__id": { "in": ["u1", "u2", "u3"] } }
+    });
+
+    let res = app.clone().oneshot(
+        Request::builder().method(http::Method::POST).uri("/api/v1/query")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(payload.to_string())).unwrap()
+    ).await.unwrap();
+    
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json_body: Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(json_body["data"]["count"], 3);
+
+    let conn = pool.get().await.unwrap();
+    let count: i64 = conn.interact(|db| {
+        db.query_row("SELECT COUNT(*) FROM User WHERE role = 'Admin'", [], |row| row.get(0))
+    }).await.unwrap().unwrap();
+    assert_eq!(count, 0, "The 3 Admin users should be deleted.");
+}
+
+#[tokio::test]
+async fn test_delete_many_logical_grouping() {
+    let (app, pool, _dir) = setup_app().await;
+
+    let payload = serde_json::json!({
+        "model": "User",
+        "action": "deleteMany",
+        "where": { 
+            "OR": [ 
+                { "role": "Guest" }, 
+                { "age": { "lt": 21 } } 
+            ] 
+        }
+    });
+
+    let res = app.clone().oneshot(
+        Request::builder().method(http::Method::POST).uri("/api/v1/query")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(payload.to_string())).unwrap()
+    ).await.unwrap();
+    
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json_body: Value = serde_json::from_slice(&body_bytes).unwrap();
+    
+    // OR: [ { role: "Guest" }, { age: { lt: 21 } } ]
+    // Matches u6 (Guest, 18), u4 (User, 20). Total = 2.
+    assert_eq!(json_body["data"]["count"], 2);
+
+    let conn = pool.get().await.unwrap();
+    let count: i64 = conn.interact(|db| {
+        db.query_row("SELECT COUNT(*) FROM User WHERE __id IN ('u4', 'u6')", [], |row| row.get(0))
+    }).await.unwrap().unwrap();
+    assert_eq!(count, 0, "Users u4 and u6 should be deleted.");
+}
+
+#[tokio::test]
+async fn test_delete_many_zero_match() {
+    let (app, _pool, _dir) = setup_app().await;
+
+    let payload = serde_json::json!({
+        "model": "User",
+        "action": "deleteMany",
+        "where": { "role": "Banned" }
+    });
+
+    let res = app.clone().oneshot(
+        Request::builder().method(http::Method::POST).uri("/api/v1/query")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(payload.to_string())).unwrap()
+    ).await.unwrap();
+    
+    assert_eq!(res.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+    let json_body: Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(json_body["data"]["count"], 0);
 }
