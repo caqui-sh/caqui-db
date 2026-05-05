@@ -1391,6 +1391,10 @@ fn process_deferred_children(
                     
                     let mut params = Vec::new();
                     let mut param_idx = 1;
+                    if let ParentConstraint::Bulk { params: bulk_params, .. } = parent_constraint {
+                        params.extend(bulk_params.clone());
+                        param_idx += bulk_params.len();
+                    }
                     
                     let child_model_def = ast.models.get(&concrete_target_model).unwrap();
                     let child_pk_col = child_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id");
@@ -1402,27 +1406,41 @@ fn process_deferred_children(
                     let id_col = format!("{}_id", child.relation_field_name);
                     let type_col = format!("{}_type", child.relation_field_name);
                     
-                    let combined_where_sql = format!("({} AND {}.__id = (SELECT {} FROM {} WHERE {} = ?{} AND {} = '{}'))", 
-                        where_sql, concrete_target_model, id_col, parent_model_name, parent_pk_col, param_idx, type_col, concrete_target_model);
-                        
-                    let parent_ref = match parent_constraint {
-                        ParentConstraint::Singular { step_id } => Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() },
-                        ParentConstraint::Bulk { .. } => return Err("Semantics Error: Cannot execute singular 'delete' nested under a bulk operation. Use 'deleteMany' instead.".to_string()),
+                    let combined_where_sql = match parent_constraint {
+                        ParentConstraint::Singular { .. } => format!("({} AND {}.__id = (SELECT {} FROM {} WHERE {} = ?{} AND {} = '{}'))", 
+                            where_sql, concrete_target_model, id_col, parent_model_name, parent_pk_col, param_idx, type_col, concrete_target_model),
+                        ParentConstraint::Bulk { sql: bulk_sql, .. } => format!("({} AND {}.__id IN (SELECT {} FROM {} WHERE {} IN ({}) AND {} = '{}'))", 
+                            where_sql, concrete_target_model, id_col, parent_model_name, parent_pk_col, bulk_sql, type_col, concrete_target_model),
                     };
-                    
-                    let sql = format!(
-                        "DELETE FROM {} WHERE {} RETURNING {};",
-                        concrete_target_model,
-                        combined_where_sql,
-                        child_pk_col
-                    );
-                    
-                    steps.push(ExecutionStep::DeleteBranch {
-                        id: child_step_id,
-                        sql,
-                        params,
-                        parent_ref,
-                    });
+                        
+                    match parent_constraint {
+                        ParentConstraint::Singular { step_id } => {
+                            let parent_ref = Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() };
+                            let sql = format!(
+                                "DELETE FROM {} WHERE {} RETURNING {};",
+                                concrete_target_model,
+                                combined_where_sql,
+                                child_pk_col
+                            );
+                            steps.push(ExecutionStep::DeleteBranch {
+                                id: child_step_id,
+                                sql,
+                                params,
+                                parent_ref,
+                            });
+                        },
+                        ParentConstraint::Bulk { .. } => {
+                            let sql = format!(
+                                "DELETE FROM {} WHERE {};",
+                                concrete_target_model,
+                                combined_where_sql
+                            );
+                            steps.push(ExecutionStep::DeleteMany {
+                                id: child_step_id,
+                                queries: vec![(sql, params)],
+                            });
+                        }
+                    }
                 },
                 _ => return Err(format!("Unsupported deferred action for polymorphic relation '{}'", child.relation_field_name)),
             }
@@ -1570,24 +1588,34 @@ fn process_deferred_children(
                         format!("({} AND {}.{} IN ({}))", where_sql, concrete_target_model, fk_col, bulk_sql)
                     }
                 };
-                let parent_ref = match parent_constraint {
-                    ParentConstraint::Singular { step_id } => Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() },
-                    ParentConstraint::Bulk { .. } => Parameter::Reference { step_id: "BULK_DUMMY".to_string(), column: target_pk.clone() },
-                };
-                
-                let sql = format!(
-                    "DELETE FROM {} WHERE {} RETURNING {};",
-                    concrete_target_model,
-                    combined_where_sql,
-                    child_pk_col
-                );
-                
-                steps.push(ExecutionStep::DeleteBranch {
-                    id: child_step_id,
-                    sql,
-                    params,
-                    parent_ref,
-                });
+                match parent_constraint {
+                    ParentConstraint::Singular { step_id } => {
+                        let parent_ref = Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() };
+                        let sql = format!(
+                            "DELETE FROM {} WHERE {} RETURNING {};",
+                            concrete_target_model,
+                            combined_where_sql,
+                            child_pk_col
+                        );
+                        steps.push(ExecutionStep::DeleteBranch {
+                            id: child_step_id,
+                            sql,
+                            params,
+                            parent_ref,
+                        });
+                    },
+                    ParentConstraint::Bulk { .. } => {
+                        let sql = format!(
+                            "DELETE FROM {} WHERE {};",
+                            concrete_target_model,
+                            combined_where_sql
+                        );
+                        steps.push(ExecutionStep::DeleteMany {
+                            id: child_step_id,
+                            queries: vec![(sql, params)],
+                        });
+                    }
+                }
             },
             DeferredAction::UpdateMany(target_name, child_where, child_data) => {
                 let child_step_id = format!("step_{}_update_many_{}", target_name.to_lowercase(), *alias_counter);

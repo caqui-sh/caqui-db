@@ -311,3 +311,200 @@ async fn test_null_state_interactions() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(response["error"].as_str().unwrap().contains("Record Not Found"));
 }
+
+#[tokio::test]
+async fn test_conditional_scoped_deletions() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid1', 120)", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'Video', 'vid1')", []).unwrap();
+    }).await.unwrap();
+
+    // Send a delete where the condition fails (duration = 999)
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": { 
+            "favorite": { 
+                "Video": { "delete": { "where": { "duration": 999 } } }
+            } 
+        }
+    });
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(response["error"].as_str().unwrap().contains("Record Not Found") || response["error"].as_str().unwrap().contains("Scoped Security Violation"));
+
+    // Verify record was NOT deleted
+    conn.interact(|db| {
+        let count: i64 = db.query_row("SELECT count(*) FROM Video WHERE __id = 'vid1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_cross_type_deletion_rejections() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('shared_id', 120)", []).unwrap();
+        db.execute("INSERT INTO Article (__id, title) VALUES ('shared_id', 'Secret')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'Video', 'shared_id')", []).unwrap();
+    }).await.unwrap();
+
+    // Send a delete targeting the Article table, trying to spoof via the ID
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": { 
+            "favorite": { 
+                "Article": { "delete": { "where": {} } }
+            } 
+        }
+    });
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(response["error"].as_str().unwrap().contains("Record Not Found") || response["error"].as_str().unwrap().contains("Scoped Security Violation"));
+
+    // Verify neither record was deleted
+    conn.interact(|db| {
+        let count: i64 = db.query_row("SELECT count(*) FROM Video WHERE __id = 'shared_id'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+        let count_art: i64 = db.query_row("SELECT count(*) FROM Article WHERE __id = 'shared_id'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count_art, 1);
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_dangling_pointer_read_safety() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid1', 120)", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'Video', 'vid1')", []).unwrap();
+    }).await.unwrap();
+
+    // Perform successful nested delete
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": { 
+            "favorite": { 
+                "Video": { "delete": { "where": {} } }
+            } 
+        }
+    });
+    let (status, _) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Read the user, fetching the favorite. Should safely return null without panicking on FK missing.
+    let payload = json!({
+        "action": "findMany",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "select": { 
+            "name": true,
+            "favorite": {
+                "Video": { "select": { "duration": true } }
+            }
+        }
+    });
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK);
+    
+    let rows = response["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    let user = &rows[0];
+    assert_eq!(user["name"], "Alice");
+    assert!(user["favorite"].is_null()); // The crucial read safety assertion
+}
+
+#[tokio::test]
+async fn test_nested_deletes_under_batch_operations() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid1', 120)", []).unwrap();
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid2', 300)", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'Video', 'vid1')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u2', 'Bob', 'Video', 'vid2')", []).unwrap();
+    }).await.unwrap();
+
+    // Target User u1 via batch updateMany, nesting a delete
+    let payload = json!({
+        "action": "updateMany",
+        "model": "User",
+        "where": { "name": "Alice" }, // Targets only u1
+        "data": { 
+            "favorite": { 
+                "Video": { "delete": { "where": {} } }
+            } 
+        }
+    });
+    let (status, _) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Verify vid1 is gone, vid2 is perfectly safe
+    conn.interact(|db| {
+        let count1: i64 = db.query_row("SELECT count(*) FROM Video WHERE __id = 'vid1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count1, 0); // Deleted
+        
+        let count2: i64 = db.query_row("SELECT count(*) FROM Video WHERE __id = 'vid2'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count2, 1); // Unharmed
+    }).await.unwrap();
+}
