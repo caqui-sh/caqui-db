@@ -174,6 +174,7 @@ pub fn hydrate_mutation_to_plan(
             let mut set_clauses = Vec::new();
             let mut params = Vec::new();
             let mut param_idx = 1;
+            let mut deferred_children = Vec::new();
 
             for (key, val) in data {
                 if key.starts_with("__") { continue; }
@@ -195,35 +196,154 @@ pub fn hydrate_mutation_to_plan(
                         params.push(Parameter::Literal(serde_json::Value::String(json_val)));
                         param_idx += 1;
                     },
-                    _ => {
-                        return Err(format!("Nested mutations are not supported in root-level updateMany for field '{}'", key));
-                    }
+                    AstFieldType::Relation(target_model) | AstFieldType::RelationArray(target_model) => {
+                        if let Some(nested_mutations) = val.as_object() {
+                            if let Some(um_payload) = nested_mutations.get("updateMany") {
+                                if let Some(arr) = um_payload.as_array() {
+                                    for item in arr {
+                                        let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
+                                        let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
+                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::UpdateMany(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
+                                    }
+                                } else if let Some(item) = um_payload.as_object() {
+                                    let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
+                                    let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::UpdateMany(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
+                                }
+                            }
+                            if let Some(dm_payload) = nested_mutations.get("deleteMany") {
+                                if let Some(arr) = dm_payload.as_array() {
+                                    for item in arr {
+                                        let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
+                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::DeleteMany(target_model.clone(), c_where.clone()), relation_field_name: key.clone() });
+                                    }
+                                } else if let Some(item) = dm_payload.as_object() {
+                                    let c_where = item.get("where").and_then(|v| v.as_object()).unwrap_or(item);
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::DeleteMany(target_model.clone(), c_where.clone()), relation_field_name: key.clone() });
+                                }
+                            }
+                            if let Some(update_payload) = nested_mutations.get("update") {
+                                if let Some(arr) = update_payload.as_array() {
+                                    for item in arr {
+                                        let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
+                                        let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
+                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
+                                    }
+                                } else if let Some(item) = update_payload.as_object() {
+                                    let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
+                                    let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
+                                }
+                            }
+                            if let Some(delete_payload) = nested_mutations.get("delete") {
+                                if let Some(arr) = delete_payload.as_array() {
+                                    for item in arr {
+                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), item.as_object().unwrap().clone()), relation_field_name: key.clone() });
+                                    }
+                                } else if let Some(item) = delete_payload.as_object() {
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), item.clone()), relation_field_name: key.clone() });
+                                }
+                            }
+                            if let Some(upsert_payload) = nested_mutations.get("upsert") {
+                                if let Some(arr) = upsert_payload.as_array() {
+                                    for item in arr {
+                                        let c_create = item.get("create").and_then(|v| v.as_object()).unwrap();
+                                        let c_update = item.get("update").and_then(|v| v.as_object()).unwrap();
+                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(c_create.clone(), c_update.clone()), relation_field_name: key.clone() });
+                                    }
+                                } else if let Some(item) = upsert_payload.as_object() {
+                                    let c_create = item.get("create").and_then(|v| v.as_object()).unwrap();
+                                    let c_update = item.get("update").and_then(|v| v.as_object()).unwrap();
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(c_create.clone(), c_update.clone()), relation_field_name: key.clone() });
+                                }
+                            }
+                            if let Some(set_payload) = nested_mutations.get("set") {
+                                if let Some(arr) = set_payload.as_array() {
+                                    let mut set_wheres = Vec::new();
+                                    for item in arr {
+                                        set_wheres.push(item.as_object().unwrap().clone());
+                                    }
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(set_wheres), relation_field_name: key.clone() });
+                                } else {
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(Vec::new()), relation_field_name: key.clone() });
+                                }
+                            }
+                            if let Some(create_payload) = nested_mutations.get("create") {
+                                if let Some(arr) = create_payload.as_array() {
+                                    for item in arr {
+                                        let c_data = item.as_object().unwrap();
+                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(c_data.clone()), relation_field_name: key.clone() });
+                                    }
+                                } else if let Some(item) = create_payload.as_object() {
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(item.clone()), relation_field_name: key.clone() });
+                                }
+                            }
+                            if let Some(connect_payload) = nested_mutations.get("connect") {
+                                if let Some(arr) = connect_payload.as_array() {
+                                    for item in arr {
+                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Connect(item.as_object().unwrap().clone()), relation_field_name: key.clone() });
+                                    }
+                                } else if let Some(item) = connect_payload.as_object() {
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Connect(item.clone()), relation_field_name: key.clone() });
+                                }
+                            }
+                            if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
+                                if let Some(arr) = disconnect_payload.as_array() {
+                                    for item in arr {
+                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(item.as_object().unwrap().clone()), relation_field_name: key.clone() });
+                                    }
+                                } else if let Some(item) = disconnect_payload.as_object() {
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(item.clone()), relation_field_name: key.clone() });
+                                }
+                            }
+                        }
+                    },
+                    _ => {}
                 }
             }
 
-            if set_clauses.is_empty() {
+            if set_clauses.is_empty() && deferred_children.is_empty() {
                 return Err("No data provided for updateMany".to_string());
             }
 
             let where_clause_ir = parse_where_clause(ast, where_obj, model_def)?;
             let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, model_name, &mut param_idx);
-            params.extend(where_params);
+            params.extend(where_params.clone());
+
+            let set_str = if set_clauses.is_empty() {
+                format!("__id = __id")
+            } else {
+                set_clauses.join(", ")
+            };
 
             let sql = format!(
                 "UPDATE {} SET {} WHERE {};",
                 model_name,
-                set_clauses.join(", "),
+                set_str,
                 where_sql
             );
 
             let step_id = format!("step_{}_updatemany_{}", model_name.to_lowercase(), *alias_counter);
             *alias_counter += 1;
 
-            steps.push(ExecutionStep::UpdateMany {
-                id: step_id.clone(),
-                queries: vec![(sql, params)],
-                parent_ref: None,
-            });
+            steps.push(ExecutionStep::UpdateMany { id: step_id.clone(), queries: vec![(sql, params)] });
+
+            if !deferred_children.is_empty() {
+                let pk_col = model_def.resolved_fields.iter()
+                    .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
+                    .map(|f| f.name.as_str())
+                    .unwrap_or("__id");
+                
+                let sub_sql = format!("SELECT {} FROM {} WHERE {}", pk_col, model_name, where_sql);
+                process_deferred_children(
+                    ast,
+                    model_name,
+                    &ParentConstraint::Bulk { sql: sub_sql, params: where_params },
+                    deferred_children,
+                    &mut steps,
+                    alias_counter
+                )?;
+            }
 
             Ok(ExecutionPlan {
                 root_step_id: step_id,
@@ -289,11 +409,7 @@ pub fn hydrate_mutation_to_plan(
             let step_id = format!("step_{}_deletemany_{}", model_name.to_lowercase(), *alias_counter);
             *alias_counter += 1;
             
-            steps.push(ExecutionStep::DeleteMany {
-                id: step_id.clone(),
-                queries: vec![(sql, params)],
-                parent_ref: None,
-            });
+            steps.push(ExecutionStep::DeleteMany { id: step_id.clone(), queries: vec![(sql, params)] });
             
             Ok(ExecutionPlan {
                 root_step_id: step_id,
@@ -304,12 +420,20 @@ pub fn hydrate_mutation_to_plan(
     }
 }
 
-struct ParentRel {
-    parent_step_id: String,
-    parent_model: String,
-    relation_field_name: String,
+#[derive(Clone)]
+pub enum ParentConstraint {
+    Singular { step_id: String },
+    Bulk { sql: String, params: Vec<Parameter> },
 }
 
+#[derive(Clone)]
+pub struct ParentRel {
+    pub constraint: ParentConstraint,
+    pub parent_model: String,
+    pub relation_field_name: String,
+}
+
+#[derive(Clone)]
 enum DeferredAction {
     Create(serde_json::Map<String, Value>),
     Connect(serde_json::Map<String, Value>),
@@ -322,6 +446,7 @@ enum DeferredAction {
     DeleteMany(String, serde_json::Map<String, Value>),
 }
 
+#[derive(Clone)]
 struct DeferredChild {
     target_model: String,
     action: DeferredAction,
@@ -373,9 +498,11 @@ fn translate_create_node(
 
         let reverse_field = model_def.resolved_fields.iter().find(|f| {
             match &f.field_type {
-                AstFieldType::Relation(rt) if rt == &rel.parent_model => {
+                AstFieldType::Relation(rt) | AstFieldType::PolymorphicBase(rt) if rt == &rel.parent_model || ast.models.get(&rel.parent_model).map_or(false, |m| m.resolved_bases.contains(rt)) => {
                     if let Some(FieldAttribute::Relation { name, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
                         if name == &rel_name { return true; }
+                    } else if rel_name.is_none() {
+                        return true;
                     }
                     false
                 }
@@ -415,10 +542,19 @@ fn translate_create_node(
         }
         
         if let Some(col) = fk_col {
-            columns.push(col.clone());
-            placeholders.push(format!("?{}", param_idx));
-            params.push(Parameter::Reference { step_id: rel.parent_step_id.clone(), column: target_pk });
-            param_idx += 1;
+            match &rel.constraint {
+                ParentConstraint::Singular { step_id } => {
+                    columns.push(col.clone());
+                    placeholders.push(format!("?{}", param_idx));
+                    params.push(Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() });
+                    param_idx += 1;
+                },
+                ParentConstraint::Bulk { params: bulk_params, .. } => {
+                    // For bulk, we inject the parent's parameters at the start
+                    params.extend(bulk_params.clone());
+                    param_idx += bulk_params.len();
+                }
+            }
         }
     }
     
@@ -745,16 +881,107 @@ fn translate_create_node(
         }
     }
     
-    let sql = if columns.is_empty() {
-        format!("INSERT INTO {} DEFAULT VALUES RETURNING {};", model_name, pk_col)
+    let mut bulk_parent = None;
+    let mut fk_col_name = None;
+    let mut target_pk_name = "__id".to_string();
+    if let Some(rel) = &parent_rel {
+        if let ParentConstraint::Bulk { sql: parent_sql, .. } = &rel.constraint {
+            bulk_parent = Some((rel.parent_model.clone(), parent_sql.clone()));
+        }
+        
+        // Re-use the same logic as the start of the function
+        let parent_model_def = ast.models.get(&rel.parent_model).unwrap();
+        let parent_field_def = parent_model_def.resolved_fields.iter().find(|f| f.name == rel.relation_field_name).unwrap();
+        let rel_attr = parent_field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. }));
+        let rel_name = match rel_attr {
+            Some(FieldAttribute::Relation { name, .. }) => name.clone(),
+            _ => None,
+        };
+        let reverse_field = model_def.resolved_fields.iter().find(|f| {
+            match &f.field_type {
+                AstFieldType::Relation(rt) if rt == &rel.parent_model || ast.models.get(&rel.parent_model).map_or(false, |m| m.resolved_bases.contains(rt)) => {
+                    if let Some(FieldAttribute::Relation { name, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                        if name == &rel_name { return true; }
+                    }
+                    true // Fallback to true if no name, like the original logic did or didn't do?
+                }
+                _ => false
+            }
+        });
+        if let Some(rev_f) = reverse_field {
+            let mut rel_fields = None;
+            let mut rel_refs = None;
+            if let Some(FieldAttribute::InternalRelation { fields, references }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+                rel_fields = Some(fields);
+                rel_refs = Some(references);
+            } else if let Some(FieldAttribute::Relation { fields, references, .. }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                if let (Some(f), Some(r)) = (fields, references) {
+                    rel_fields = Some(f);
+                    rel_refs = Some(r);
+                }
+            }
+            if let (Some(fields), Some(references)) = (rel_fields, rel_refs) {
+                if !fields.is_empty() && !references.is_empty() {
+                    fk_col_name = Some(fields[0].clone());
+                    target_pk_name = references[0].clone();
+                }
+            }
+            if fk_col_name.is_none() {
+                fk_col_name = Some(format!("{}Id", rev_f.name));
+            }
+        }
+        if fk_col_name.is_none() {
+            if let Some(FieldAttribute::InternalRelation { fields, references }) = parent_field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+                if !fields.is_empty() && !references.is_empty() {
+                    let pfk = &fields[0];
+                    let rpk = &references[0];
+                    if model_def.resolved_fields.iter().any(|f| &f.name == pfk) {
+                        fk_col_name = Some(pfk.clone());
+                        target_pk_name = rpk.clone();
+                    }
+                }
+            }
+        }
+        
+        // If we still can't find it, we fallback to the heuristic like `fk_column_name.unwrap_or_else(|| format!("{}Id", parent_model_name.to_string()))` 
+        // Wait, Caqui usually defaults to parent_model_name + "Id" or target_model + "Id".
+        // Let's just default to what is usually done for reverse fields.
+        if fk_col_name.is_none() {
+            fk_col_name = Some(format!("{}Id", rel.parent_model.to_lowercase()));
+        }
+    }
+
+    let sql = if let Some((parent_model, parent_sql)) = bulk_parent {
+        let fk = fk_col_name.unwrap();
+        if columns.is_empty() {
+            format!(
+                "INSERT INTO {} ({}) SELECT {} FROM ({}) RETURNING {};",
+                model_name, fk, target_pk_name, parent_sql, pk_col
+            )
+        } else {
+            format!(
+                "INSERT INTO {} ({}, {}) SELECT {}, {} FROM ({}) RETURNING {};",
+                model_name,
+                columns.join(", "),
+                fk,
+                placeholders.join(", "),
+                target_pk_name,
+                parent_sql,
+                pk_col
+            )
+        }
     } else {
-        format!(
-            "INSERT INTO {} ({}) VALUES ({}) RETURNING {};",
-            model_name,
-            columns.join(", "),
-            placeholders.join(", "),
-            pk_col
-        )
+        if columns.is_empty() {
+            format!("INSERT INTO {} DEFAULT VALUES RETURNING {};", model_name, pk_col)
+        } else {
+            format!(
+                "INSERT INTO {} ({}) VALUES ({}) RETURNING {};",
+                model_name,
+                columns.join(", "),
+                placeholders.join(", "),
+                pk_col
+            )
+        }
     };
     
     steps.push(ExecutionStep::Query {
@@ -763,7 +990,7 @@ fn translate_create_node(
         params,
     });
     
-    process_deferred_children(ast, model_name, &step_id, deferred_children, steps, alias_counter)?;
+    process_deferred_children(ast, model_name, &ParentConstraint::Singular { step_id: step_id.clone() }, deferred_children, steps, alias_counter)?;
     
     Ok(step_id)
 }
@@ -1174,7 +1401,7 @@ fn translate_update_node(
 
             let reverse_field = model_def.resolved_fields.iter().find(|f| {
                 match &f.field_type {
-                    AstFieldType::Relation(rt) if rt == &rel.parent_model => {
+                    AstFieldType::Relation(rt) if rt == &rel.parent_model || ast.models.get(&rel.parent_model).map_or(false, |m| m.resolved_bases.contains(rt)) => {
                         if let Some(FieldAttribute::Relation { name, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
                             if name == &rel_name { return true; }
                         }
@@ -1219,7 +1446,14 @@ fn translate_update_node(
         let mut parent_ref_param = None;
         if let Some(col) = fk_col {
             where_sql = format!("({} AND {}.{} = ?{})", where_sql, model_name, col, param_idx);
-            parent_ref_param = Some(Parameter::Reference { step_id: rel.parent_step_id.clone(), column: target_pk });
+            match &rel.constraint {
+                ParentConstraint::Singular { step_id } => {
+                    parent_ref_param = Some(Parameter::Reference { step_id: step_id.clone(), column: target_pk });
+                },
+                ParentConstraint::Bulk { .. } => {
+                    return Err("Semantics Error: Cannot execute singular 'update' nested under a bulk operation. Use 'updateMany' instead.".to_string());
+                }
+            }
             param_idx += 1;
         }
         
@@ -1265,7 +1499,7 @@ fn translate_update_node(
         });
     }
     
-    process_deferred_children(ast, model_name, &step_id, deferred_children, steps, alias_counter)?;
+    process_deferred_children(ast, model_name, &ParentConstraint::Singular { step_id: step_id.clone() }, deferred_children, steps, alias_counter)?;
     
     Ok(step_id)
 }
@@ -1344,11 +1578,16 @@ fn translate_root_upsert_node(
 fn process_deferred_children(
     ast: &SchemaAst,
     parent_model_name: &str,
-    parent_step_id: &str,
+    parent_constraint: &ParentConstraint,
     deferred_children: Vec<DeferredChild>,
     steps: &mut Vec<ExecutionStep>,
     alias_counter: &mut usize,
 ) -> Result<(), String> {
+    let parent_step_id = match parent_constraint {
+        ParentConstraint::Singular { step_id } => step_id.clone(),
+        ParentConstraint::Bulk { .. } => "UNIMPLEMENTED_BULK".to_string(), // Phase 3 will handle this
+    };
+
     let parent_model_def = ast.models.get(parent_model_name).unwrap();
     let parent_pk_col = parent_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id");
 
@@ -1428,9 +1667,11 @@ fn process_deferred_children(
         let reverse_field = if let Some(fields) = child_fields {
             fields.iter().find(|f| {
                 match &f.field_type {
-                    AstFieldType::Relation(rt) if rt == parent_model_name => {
+                    AstFieldType::Relation(rt) | AstFieldType::PolymorphicBase(rt) if rt == parent_model_name || ast.models.get(parent_model_name).map_or(false, |m| m.resolved_bases.contains(rt)) => {
                         if let Some(FieldAttribute::Relation { name, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
                             if name == &rel_name { return true; }
+                        } else if rel_name.is_none() {
+                            return true;
                         }
                         false
                     }
@@ -1446,6 +1687,9 @@ fn process_deferred_children(
                     target_pk = references[0].clone();
                 }
             }
+            if fk_column_name.is_none() {
+                fk_column_name = Some(format!("{}Id", rev_f.name));
+            }
         }
 
         let fk_col = fk_column_name.unwrap_or_else(|| format!("{}Id", parent_model_name.to_lowercase()));
@@ -1453,18 +1697,25 @@ fn process_deferred_children(
         match child.action {
             DeferredAction::Create(child_data) => {
                 translate_create_node(ast, &child.target_model, &child_data, steps, alias_counter, Some(ParentRel {
-                    parent_step_id: parent_step_id.to_string(),
+                    constraint: parent_constraint.clone(),
                     parent_model: parent_model_name.to_string(),
                     relation_field_name: child.relation_field_name,
                 }))?;
             },
             DeferredAction::Connect(connect_where) => {
+                if let ParentConstraint::Bulk { .. } = parent_constraint {
+                    return Err("Semantics Error: Cannot 'connect' a child to multiple parents in a bulk update when the child holds the foreign key.".to_string());
+                }
+                
                 let child_step_id = format!("step_{}_connect_{}", child.target_model.to_lowercase(), *alias_counter);
                 *alias_counter += 1;
                 
                 let mut params = Vec::new();
                 let mut param_idx = 1;
-                
+                if let ParentConstraint::Bulk { params: bulk_params, .. } = parent_constraint {
+                    params.extend(bulk_params.clone());
+                    param_idx += bulk_params.len();
+                }
                 let set_clause = format!("{} = ?{}", fk_col, param_idx);
                 params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() });
                 param_idx += 1;
@@ -1490,7 +1741,7 @@ fn process_deferred_children(
             },
             DeferredAction::Update(concrete_target_model, child_where, child_data) => {
                 translate_update_node(ast, &concrete_target_model, &child_where, &child_data, steps, alias_counter, Some(ParentRel {
-                    parent_step_id: parent_step_id.to_string(),
+                    constraint: parent_constraint.clone(),
                     parent_model: parent_model_name.to_string(),
                     relation_field_name: child.relation_field_name.clone(),
                 }))?;
@@ -1501,14 +1752,29 @@ fn process_deferred_children(
                 
                 let mut params = Vec::new();
                 let mut param_idx = 1;
-                
+                if let ParentConstraint::Bulk { params: bulk_params, .. } = parent_constraint {
+                    params.extend(bulk_params.clone());
+                    param_idx += bulk_params.len();
+                }
                 let child_model_def = ast.models.get(&concrete_target_model).unwrap();
                 let where_clause_ir = parse_where_clause(ast, &child_where, child_model_def)?;
                 let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &concrete_target_model, &mut param_idx);
                 params.extend(where_params);
                 
-                let combined_where_sql = format!("({} AND {}.{} = ?{})", where_sql, concrete_target_model, fk_col, param_idx);
-                let parent_ref = Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() };
+                let combined_where_sql = match parent_constraint {
+                    ParentConstraint::Singular { step_id } => {
+                        let sql = format!("({} AND {}.{} = ?{})", where_sql, concrete_target_model, fk_col, param_idx);
+                        param_idx += 1;
+                        sql
+                    },
+                    ParentConstraint::Bulk { sql: bulk_sql, .. } => {
+                        format!("({} AND {}.{} IN ({}))", where_sql, concrete_target_model, fk_col, bulk_sql)
+                    }
+                };
+                let parent_ref = match parent_constraint {
+                    ParentConstraint::Singular { step_id } => Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() },
+                    ParentConstraint::Bulk { .. } => Parameter::Reference { step_id: "BULK_DUMMY".to_string(), column: target_pk.clone() },
+                };
                 
                 let sql = format!(
                     "DELETE FROM {} WHERE {} RETURNING {};",
@@ -1558,15 +1824,23 @@ fn process_deferred_children(
                 });
                 
                 let mut queries = Vec::new();
-                let parent_ref = Some(Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() });
+                let parent_ref = match parent_constraint {
+                    ParentConstraint::Singular { step_id } => Some(Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() }),
+                    ParentConstraint::Bulk { .. } => None,
+                };
                 
                 for c_model in concrete_models {
                     let child_model_def = ast.models.get(&c_model).unwrap_or_else(|| panic!("Failed to find model: {}", c_model));
                     
                     let mut params = Vec::new();
                     let mut param_idx = 1;
+                    if let ParentConstraint::Bulk { params: bulk_params, .. } = parent_constraint {
+                        params.extend(bulk_params.clone());
+                        param_idx += bulk_params.len();
+                    }
                     
                     let mut set_clauses = Vec::new();
+                    let mut bulk_deferred_children = Vec::new();
                     for (key, val) in &child_data {
                         if key.starts_with("__") { continue; }
                         if let Some(field_def) = child_model_def.resolved_fields.iter().find(|f| &f.name == key) {
@@ -1609,12 +1883,114 @@ fn process_deferred_children(
                                         param_idx += 1;
                                     }
                                 },
+                                AstFieldType::Relation(target_model) | AstFieldType::RelationArray(target_model) => {
+                                    if let Some(nested_mutations) = val.as_object() {
+                                        if let Some(um_payload) = nested_mutations.get("updateMany") {
+                                            if let Some(arr) = um_payload.as_array() {
+                                                for item in arr {
+                                                    let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
+                                                    let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
+                                                    bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::UpdateMany(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
+                                                }
+                                            } else if let Some(item) = um_payload.as_object() {
+                                                let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
+                                                let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
+                                                bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::UpdateMany(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
+                                            }
+                                        }
+                                        if let Some(dm_payload) = nested_mutations.get("deleteMany") {
+                                            if let Some(arr) = dm_payload.as_array() {
+                                                for item in arr {
+                                                    let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
+                                                    bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::DeleteMany(target_model.clone(), c_where.clone()), relation_field_name: key.clone() });
+                                                }
+                                            } else if let Some(item) = dm_payload.as_object() {
+                                                let c_where = item.get("where").and_then(|v| v.as_object()).unwrap_or(item);
+                                                bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::DeleteMany(target_model.clone(), c_where.clone()), relation_field_name: key.clone() });
+                                            }
+                                        }
+                                        if let Some(d_payload) = nested_mutations.get("delete") {
+                                            if let Some(arr) = d_payload.as_array() {
+                                                for item in arr {
+                                                    bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), item.as_object().unwrap().clone()), relation_field_name: key.clone() });
+                                                }
+                                            } else if let Some(item) = d_payload.as_object() {
+                                                bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), item.clone()), relation_field_name: key.clone() });
+                                            }
+                                        }
+                                        if let Some(create_payload) = nested_mutations.get("create") {
+                                            if let Some(arr) = create_payload.as_array() {
+                                                for item in arr {
+                                                    let c_data = item.as_object().unwrap();
+                                                    bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(c_data.clone()), relation_field_name: key.clone() });
+                                                }
+                                            } else if let Some(item) = create_payload.as_object() {
+                                                bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(item.clone()), relation_field_name: key.clone() });
+                                            }
+                                        }
+                                        if let Some(connect_payload) = nested_mutations.get("connect") {
+                                            if let Some(arr) = connect_payload.as_array() {
+                                                for item in arr {
+                                                    bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Connect(item.as_object().unwrap().clone()), relation_field_name: key.clone() });
+                                                }
+                                            } else if let Some(item) = connect_payload.as_object() {
+                                                bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Connect(item.clone()), relation_field_name: key.clone() });
+                                            }
+                                        }
+                                        if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
+                                            if let Some(arr) = disconnect_payload.as_array() {
+                                                for item in arr {
+                                                    bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(item.as_object().unwrap().clone()), relation_field_name: key.clone() });
+                                                }
+                                            } else if let Some(item) = disconnect_payload.as_object() {
+                                                bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(item.clone()), relation_field_name: key.clone() });
+                                            }
+                                        }
+                                        if let Some(update_payload) = nested_mutations.get("update") {
+                                            if let Some(arr) = update_payload.as_array() {
+                                                for item in arr {
+                                                    let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
+                                                    let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
+                                                    bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
+                                                }
+                                            } else if let Some(item) = update_payload.as_object() {
+                                                let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
+                                                let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
+                                                bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
+                                            }
+                                        }
+                                        if let Some(upsert_payload) = nested_mutations.get("upsert") {
+                                            if let Some(arr) = upsert_payload.as_array() {
+                                                for item in arr {
+                                                    let c_create = item.get("create").and_then(|v| v.as_object()).unwrap();
+                                                    let c_update = item.get("update").and_then(|v| v.as_object()).unwrap();
+                                                    bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(c_create.clone(), c_update.clone()), relation_field_name: key.clone() });
+                                                }
+                                            } else if let Some(item) = upsert_payload.as_object() {
+                                                let c_create = item.get("create").and_then(|v| v.as_object()).unwrap();
+                                                let c_update = item.get("update").and_then(|v| v.as_object()).unwrap();
+                                                bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(c_create.clone(), c_update.clone()), relation_field_name: key.clone() });
+                                            }
+                                        }
+                                        if let Some(set_payload) = nested_mutations.get("set") {
+                                            if let Some(arr) = set_payload.as_array() {
+                                                let mut set_wheres = Vec::new();
+                                                for item in arr {
+                                                    set_wheres.push(item.as_object().unwrap().clone());
+                                                }
+                                                bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(set_wheres), relation_field_name: key.clone() });
+                                            } else {
+                                                bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(Vec::new()), relation_field_name: key.clone() });
+                                            }
+                                        }
+                                    }
+                                },
                                 _ => {}
                             }
                         }
                     }
                     
-                    if set_clauses.is_empty() { continue; }
+                    if set_clauses.is_empty() && bulk_deferred_children.is_empty() { continue; }
                     
                     let mut cleaned_where = child_where.clone();
                     cleaned_where.retain(|k, _| !k.starts_with("__") || k == "__id" || k == "__kind");
@@ -1622,23 +1998,65 @@ fn process_deferred_children(
                         let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &c_model, &mut param_idx);
                         params.extend(where_params);
                         
-                        let combined_where_sql = format!("({} AND {}.{} = ?{})", where_sql, c_model, fk_col, param_idx);
+                        let combined_where_sql = match parent_constraint {
+                            ParentConstraint::Singular { step_id } => {
+                                let sql = format!("({} AND {}.{} = ?{})", where_sql, c_model, fk_col, param_idx);
+                                params.push(Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() });
+                                param_idx += 1;
+                                sql
+                            },
+                            ParentConstraint::Bulk { sql: bulk_sql, .. } => {
+                                format!("({} AND {}.{} IN ({}))", where_sql, c_model, fk_col, bulk_sql)
+                            }
+                        };
+                        
+                        let set_str = if set_clauses.is_empty() {
+                            format!("__id = __id")
+                        } else {
+                            set_clauses.join(", ")
+                        };
                         
                         let sql = format!(
                             "UPDATE {} SET {} WHERE {};",
                             c_model,
-                            set_clauses.join(", "),
+                            set_str,
                             combined_where_sql
                         );
                         queries.push((sql, params));
+                        
+                        if !bulk_deferred_children.is_empty() {
+                            let mut sub_idx = match parent_constraint {
+                                ParentConstraint::Singular { .. } => 1,
+                                ParentConstraint::Bulk { params: prev_params, .. } => 1 + prev_params.len(),
+                            };
+                            let (sub_where_sql, sub_where_params) = compile_parameterized_where(&where_clause_ir, &c_model, &mut sub_idx);
+                            
+                            let mut final_subquery_params = match parent_constraint {
+                                ParentConstraint::Singular { .. } => sub_where_params,
+                                ParentConstraint::Bulk { params: prev_params, .. } => {
+                                    let mut p = prev_params.clone();
+                                    p.extend(sub_where_params);
+                                    p
+                                }
+                            };
+
+                            let final_subquery_sql = match parent_constraint {
+                                ParentConstraint::Singular { step_id: _ } => {
+                                    let c_pk_col = ast.models.get(&c_model).unwrap().resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id");
+                                    format!("SELECT {} FROM {} WHERE {}", c_pk_col, c_model, sub_where_sql)
+                                },
+                                ParentConstraint::Bulk { sql: prev_sql, .. } => {
+                                    let c_pk_col = ast.models.get(&c_model).unwrap().resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id");
+                                    format!("SELECT {} FROM {} WHERE {} AND {} IN ({})", c_pk_col, c_model, sub_where_sql, fk_col, prev_sql)
+                                }
+                            };
+                            
+                            process_deferred_children(ast, &c_model, &ParentConstraint::Bulk { sql: final_subquery_sql, params: final_subquery_params }, bulk_deferred_children.clone(), steps, alias_counter)?;
+                        }
                     }
                 }
                 
-                steps.push(ExecutionStep::UpdateMany {
-                    id: child_step_id,
-                    queries,
-                    parent_ref,
-                });
+                steps.push(ExecutionStep::UpdateMany { id: child_step_id, queries });
             },
             DeferredAction::DeleteMany(target_name, child_where) => {
                 let child_step_id = format!("step_{}_delete_many_{}", target_name.to_lowercase(), *alias_counter);
@@ -1674,12 +2092,19 @@ fn process_deferred_children(
                 });
                 
                 let mut queries = Vec::new();
-                let parent_ref = Some(Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() });
+                let parent_ref = match parent_constraint {
+                    ParentConstraint::Singular { step_id } => Some(Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() }),
+                    ParentConstraint::Bulk { .. } => None,
+                };
                 
                 for c_model in concrete_models {
                     let child_model_def = ast.models.get(&c_model).unwrap_or_else(|| panic!("Failed to find model: {}", c_model));
                     let mut params = Vec::new();
                     let mut param_idx = 1;
+                    if let ParentConstraint::Bulk { params: bulk_params, .. } = parent_constraint {
+                        params.extend(bulk_params.clone());
+                        param_idx += bulk_params.len();
+                    }
                     
                     let mut cleaned_where = child_where.clone();
                     cleaned_where.retain(|k, _| !k.starts_with("__") || k == "__id" || k == "__kind");
@@ -1688,7 +2113,17 @@ fn process_deferred_children(
                             let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &c_model, &mut param_idx);
                             params.extend(where_params);
                             
-                            let combined_where_sql = format!("({} AND {}.{} = ?{})", where_sql, c_model, fk_col, param_idx);
+                            let combined_where_sql = match parent_constraint {
+                            ParentConstraint::Singular { step_id } => {
+                                let sql = format!("({} AND {}.{} = ?{})", where_sql, c_model, fk_col, param_idx);
+                                params.push(Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() });
+                                param_idx += 1;
+                                sql
+                            },
+                            ParentConstraint::Bulk { sql: bulk_sql, .. } => {
+                                format!("({} AND {}.{} IN ({}))", where_sql, c_model, fk_col, bulk_sql)
+                            }
+                        };
                             
                             let sql = format!(
                                 "DELETE FROM {} WHERE {};",
@@ -1701,11 +2136,7 @@ fn process_deferred_children(
                     }
                 }
                 
-                steps.push(ExecutionStep::DeleteMany {
-                    id: child_step_id,
-                    queries,
-                    parent_ref,
-                });
+                steps.push(ExecutionStep::DeleteMany { id: child_step_id, queries });
             },
             DeferredAction::Disconnect(child_where) => {
                 let child_step_id = format!("step_{}_disconnect_{}", child.target_model.to_lowercase(), *alias_counter);
@@ -1719,8 +2150,17 @@ fn process_deferred_children(
                 let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &child.target_model, &mut param_idx);
                 params.extend(where_params);
                 
-                let combined_where_sql = format!("({} AND {}.{} = ?{})", where_sql, child.target_model, fk_col, param_idx);
-                params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() });
+                let combined_where_sql = match parent_constraint {
+                    ParentConstraint::Singular { step_id } => {
+                        let sql = format!("({} AND {}.{} = ?{})", where_sql, child.target_model, fk_col, param_idx);
+                        params.push(Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() });
+                        param_idx += 1;
+                        sql
+                    },
+                    ParentConstraint::Bulk { sql: bulk_sql, .. } => {
+                        format!("({} AND {}.{} IN ({}))", where_sql, child.target_model, fk_col, bulk_sql)
+                    }
+                };
                 
                 let sql = format!(
                     "UPDATE {} SET {} = NULL WHERE {} RETURNING {};",
@@ -1737,6 +2177,10 @@ fn process_deferred_children(
                 });
             },
             DeferredAction::Upsert(create_data, update_data) => {
+                if let ParentConstraint::Bulk { .. } = parent_constraint {
+                    return Err("Semantics Error: Cannot 'upsert' a child to multiple parents in a bulk update.".to_string());
+                }
+                
                 let mut pfk_col = None;
                 let mut rpk_col = None;
                 if let Some(FieldAttribute::InternalRelation { fields, references }) = ast.models.get(parent_model_name).unwrap().resolved_fields.iter().find(|f| f.name == child.relation_field_name).unwrap().attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
@@ -1852,6 +2296,10 @@ fn process_deferred_children(
                 }
             },
             DeferredAction::Set(child_wheres) => {
+                if let ParentConstraint::Bulk { .. } = parent_constraint {
+                    return Err("Semantics Error: Cannot 'set' a relation to multiple distinct parents in a bulk update.".to_string());
+                }
+                
                 // First disconnect all existing
                 let disconnect_step_id = format!("step_{}_set_disconnect_{}", child.target_model.to_lowercase(), *alias_counter);
                 *alias_counter += 1;
@@ -1869,9 +2317,12 @@ fn process_deferred_children(
                     *alias_counter += 1;
                     
                     let mut params = Vec::new();
-                    let mut param_idx = 1;
-                    
-                    let set_clause = format!("{} = ?{}", fk_col, param_idx);
+                let mut param_idx = 1;
+                if let ParentConstraint::Bulk { params: bulk_params, .. } = parent_constraint {
+                    params.extend(bulk_params.clone());
+                    param_idx += bulk_params.len();
+                }
+                let set_clause = format!("{} = ?{}", fk_col, param_idx);
                     params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() });
                     param_idx += 1;
                     
@@ -2219,26 +2670,39 @@ mod tests {
     }
 
     #[test]
-    fn test_hydrate_update_many_rejects_relations() {
+    fn test_hydrate_update_many_with_relations() {
         let mut ast = mock_ast();
         ast.models.get_mut("User").unwrap().resolved_fields.push(FieldNode {
             name: "posts".to_string(),
             field_type: AstFieldType::RelationArray("Post".to_string()),
             is_optional: true,
-            attributes: vec![],
+            attributes: vec![FieldAttribute::Relation { name: None, on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["userId".to_string()], references: vec!["__id".to_string()] }],
+        });
+        ast.models.insert("Post".to_string(), ModelNode {
+            name: "Post".to_string(),
+            block_attributes: vec![],
+            extends: vec![],
+            fields: vec![],
+            resolved_bases: std::collections::BTreeSet::new(),
+            resolved_fields: vec![
+                FieldNode { name: "__id".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![FieldAttribute::Id] },
+                FieldNode { name: "title".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: false, attributes: vec![] },
+                FieldNode { name: "userId".to_string(), field_type: AstFieldType::Scalar("String".to_string()), is_optional: true, attributes: vec![] },
+            ]
         });
 
         let payload = json!({
             "data": {
-                "posts": { "create": [] }
+                "posts": { "deleteMany": { "where": { "title": "Old" } } }
             },
             "where": { "name": "Alice" }
         });
         
         let mut alias_counter = 0;
         let res = hydrate_mutation_to_plan(&ast, "User", "updateMany", &payload, &mut alias_counter);
-        assert!(res.is_err());
-        assert!(res.unwrap_err().contains("Nested mutations are not supported"));
+        assert!(res.is_ok(), "Expected Ok, got Err: {:?}", res.err());
+        let plan = res.unwrap();
+        assert_eq!(plan.steps.len(), 2);
     }
 
     #[test]
@@ -2449,7 +2913,7 @@ mod tests {
 
         let mut alias_counter = 0;
         let mut steps = Vec::new();
-        process_deferred_children(&ast, "User", "step_0", deferred_children, &mut steps, &mut alias_counter).unwrap();
+        process_deferred_children(&ast, "User", &ParentConstraint::Singular { step_id: "step_0".to_string() }, deferred_children, &mut steps, &mut alias_counter).unwrap();
         
         assert_eq!(steps.len(), 1);
         if let ExecutionStep::DeleteBranch { id: _, sql, params, parent_ref } = &steps[0] {
@@ -2492,20 +2956,20 @@ mod tests {
 
         let mut alias_counter = 0;
         let mut steps = Vec::new();
-        process_deferred_children(&ast, "User", "step_0", deferred_children, &mut steps, &mut alias_counter).unwrap();
+        process_deferred_children(&ast, "User", &ParentConstraint::Singular { step_id: "step_0".to_string() }, deferred_children, &mut steps, &mut alias_counter).unwrap();
         
         assert_eq!(steps.len(), 1);
-        if let ExecutionStep::DeleteMany { queries, parent_ref, .. } = &steps[0] {
+        if let ExecutionStep::DeleteMany { queries, .. } = &steps[0] {
             assert_eq!(queries.len(), 1);
             let (sql, params) = &queries[0];
             assert!(sql.contains("DELETE FROM User WHERE (User.age = ?1 AND User.dummyId = ?2);"));
-            assert_eq!(params.len(), 1);
+            assert_eq!(params.len(), 2);
             
-            if let Some(Parameter::Reference { step_id, column }) = parent_ref {
+            if let Parameter::Reference { step_id, column } = &params[1] {
                 assert_eq!(step_id, "step_0");
                 assert_eq!(column, "__id");
             } else {
-                panic!("Expected Some(Reference) for parent_ref");
+                panic!("Expected Reference in params");
             }
         } else {
             panic!("Expected DeleteMany step");
@@ -2558,7 +3022,7 @@ mod tests {
             relation_field_name: "items".to_string(),
         }];
 
-        process_deferred_children(&ast, "User", "step_0", deferred_children, &mut steps, &mut alias_counter).unwrap();
+        process_deferred_children(&ast, "User", &ParentConstraint::Singular { step_id: "step_0".to_string() }, deferred_children, &mut steps, &mut alias_counter).unwrap();
         
         assert_eq!(steps.len(), 1);
         if let ExecutionStep::DeleteMany { queries, .. } = &steps[0] {

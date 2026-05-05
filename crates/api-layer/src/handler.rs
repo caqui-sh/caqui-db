@@ -46,7 +46,7 @@ pub async fn api_execution_handler(
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Execution Error: {}", e)).into_response(),
         }
     } else if action == "create" || action == "update" || action == "delete" || action == "upsert" || action == "updateMany" || action == "deleteMany" {
-        if state.ast.bases.contains_key(model) {
+        if state.ast.bases.contains_key(model) && (action == "create" || action == "update" || action == "delete" || action == "upsert") {
             return (StatusCode::METHOD_NOT_ALLOWED, "Security Exception: Cannot mutate abstract bases directly.").into_response();
         }
         let mut alias_idx = 0;

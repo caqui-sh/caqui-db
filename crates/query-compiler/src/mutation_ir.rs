@@ -36,12 +36,10 @@ pub enum ExecutionStep {
     UpdateMany {
         id: String,
         queries: Vec<(String, Vec<Parameter>)>,
-        parent_ref: Option<Parameter>,
     },
     DeleteMany {
         id: String,
         queries: Vec<(String, Vec<Parameter>)>,
-        parent_ref: Option<Parameter>,
     }
 }
 

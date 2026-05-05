@@ -85,6 +85,49 @@ The `upsert` action performs an "Update or Create" operation.
 }
 ```
 
+### Batch Operations (`updateMany`, `deleteMany`)
+
+`caqui` supports high-performance bulk data modifications at the root level.
+
+#### `updateMany`
+Modifies multiple existing records matching a complex `where` filter.
+
+**Supported Capabilities:**
+- **Scalar Updates:** Updating string, int, float, enum, and boolean fields with literal values.
+- **Array Modifications:** Appending or removing items from `ScalarArray` or `EnumArray` using the `push`, `pull`, and `pullIndex` operators.
+- **Infinite Batch Nesting:** Deeply nest `updateMany` and `deleteMany` inside a root `updateMany`. Compiled down into an optimized flat SQL plan via AST subquery interception.
+- **Nested `create`:** Functions as a "create-per-parent". Safely generates distinct child records and links exactly one to each matched parent.
+- **Nested `delete`:** Inherits the bulk scope automatically, turning into a safe relationally-scoped `deleteMany`.
+
+**Rejected Edge-Cases (400 Bad Request):**
+- **Mutating Abstract Bases:** Cannot run `updateMany` directly on an abstract `base` shape. You must target the concrete inheriting model.
+- **Nested `update`:** Explicitly rejected to prevent accidental mass mutations. Developers must use explicit `updateMany` for the inner child scope.
+- **Nested `upsert`:** Explicitly rejected. Parallel unique constraint evaluations in a multi-parent context create structural ambiguity and deadlocks.
+- **Nested `set` / `connect` (when child holds FK):** Explicitly rejected. Since a child can only belong to one parent at a time, allowing multiple parents to simultaneously connect to it would cause endless overwriting of the foreign key and data corruption.
+
+#### `deleteMany`
+Removes multiple existing records matching a complex `where` filter.
+
+**Supported Capabilities:**
+- **Deep Relational Filtering:** Precisely target records to delete using highly complex, deeply nested filtering logic in the `where` block.
+- **Native Cascades:** Properly triggers native SQLite `onDelete: Cascade` operations for standard relations.
+- **Polymorphic Base Cascades:** Performs secure **application-level cascades** when deleting a record extending a Polymorphic Base, ensuring metadata/tracking rows in the Base table are securely cleaned up.
+
+**Rejected Edge-Cases:**
+- **Return Payloads:** Unlike singular `delete`, `deleteMany` **does not** support returning the deleted data via a `select` block. It strictly returns a JSON object containing the `count` of deleted rows.
+- **Abstract Bases:** Cannot target an abstract polymorphic base directly.
+- **Data Block:** Providing a `data` block or nested mutators alongside a `deleteMany` is invalid; it only accepts a `where` block.
+
+*Note: `createMany` for optimized mass-inserts is currently pending implementation.*
+
+```json
+{
+  "model": "User",
+  "action": "updateMany",
+  "where": { "status": "INACTIVE" },
+  "data": { "status": "ARCHIVED" }
+}
+```
 
 ## Nested Mutations
 
@@ -173,6 +216,22 @@ These follow the same logic as root-level actions but are applied to the related
   }
 }
 ```
+
+### Deeply Nested Batch Mutations & Interleaving
+
+The engine supports theoretically infinite deep nesting of `updateMany` and `deleteMany` operations. Under the hood, Caqui uses **AST Subquery Propagation** to compile nested batch mutations into highly optimized, linear Execution Plans using nested `IN (SELECT ...)` structures. This completely bypasses SQLite parameter limits and entirely avoids N+1 query problems.
+
+When interleaving **singular** mutators inside a **bulk** context (e.g., nesting a singular action inside an `updateMany`), the engine enforces strict semantic rules:
+
+#### Supported Singular Actions
+- **`create`**: Acts as a "create-per-parent". If the root `updateMany` matches 10 records, nesting a `create` for a child relationship will generate 10 distinct child records, linking exactly one to each matching parent.
+- **`delete`**: Inherits the bulk scope and effectively acts as a scoped `deleteMany` across all affected parents.
+
+#### Rejected Singular Actions (Semantic Errors)
+To prevent accidental data corruption or ambiguity, the engine explicitly rejects the following singular actions within a bulk context (returning a `400 Bad Request` with a `Semantics Error`):
+- **`update`**: Rejected to prevent accidental mass-mutations when a developer may have only intended to update a single specific child record. You must use an explicit `updateMany` for the child scope.
+- **`upsert`**: Rejected because performing parallel unique constraint evaluations in a multi-parent context causes structural ambiguity and database deadlocks.
+- **`set` / `connect` (when the child holds the Foreign Key)**: A single child record can only belong to one parent at a time in 1:N or 1:1 relationships. Allowing multiple parents to connect to it simultaneously would cause them to continually steal the foreign key from each other, resulting in data corruption.
 
 
 ## Array Modifications

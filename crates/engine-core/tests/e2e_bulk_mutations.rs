@@ -171,28 +171,6 @@ async fn test_bulk_no_match() {
     assert_eq!(json_body["data"]["count"], 0);
 }
 
-#[tokio::test]
-async fn test_bulk_unsupported_nested() {
-    let (app, _pool, _dir) = setup_app().await;
-
-    let payload = serde_json::json!({
-        "model": "User",
-        "action": "updateMany",
-        "where": { "role": "Guest" },
-        "data": { "posts": { "create": [{ "title": "New" }] } }
-    });
-
-    let res = app.clone().oneshot(
-        Request::builder().method(http::Method::POST).uri("/api/v1/query")
-            .header(http::header::CONTENT_TYPE, "application/json")
-            .body(Body::from(payload.to_string())).unwrap()
-    ).await.unwrap();
-    
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-    let body_bytes = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    let body_str = String::from_utf8_lossy(&body_bytes);
-    assert!(body_str.contains("Nested mutations are not supported"));
-}
 
 #[tokio::test]
 async fn test_bulk_relational_filtering() {

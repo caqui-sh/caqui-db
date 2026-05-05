@@ -79,7 +79,7 @@ fn execute_steps(
                 }) {
                     Ok(id_val) => id_val,
                     Err(rusqlite::Error::QueryReturnedNoRows) => {
-                        if id.contains("_disconnect") || id.contains("_set") || id.contains("_cascade") {
+                        if id.contains("_disconnect") || id.contains("_set") || id.contains("_cascade") || sql.trim_start().to_uppercase().starts_with("INSERT") {
                             "".to_string()
                         } else {
                             return Err(rusqlite::Error::ToSqlConversionFailure(
@@ -144,11 +144,12 @@ fn execute_steps(
                 if id == root_step_id { *root_id = returned_id.clone(); }
                 returned_values.insert(id.clone(), returned_id);
             },
-            ExecutionStep::UpdateMany { id, queries, parent_ref } => {
+            ExecutionStep::UpdateMany { id, queries } => {
                 let mut total_affected: usize = 0;
                 for (sql, params) in queries {
+                    println!("DEBUG: UpdateMany SQL: {} with params: {:?}", sql, params);
                     let mut stmt = tx.prepare_cached(sql)?;
-                    let sql_params = resolve_params(params, parent_ref.as_ref(), returned_values)?;
+                    let sql_params = resolve_params(params, None, returned_values)?;
                     let borrowed_params: Vec<&dyn rusqlite::ToSql> = sql_params.iter().map(|b| &**b).collect();
                     total_affected += stmt.execute(&borrowed_params[..])?;
                 }
@@ -156,11 +157,11 @@ fn execute_steps(
                 if id == root_step_id { *root_id = count_str.clone(); }
                 returned_values.insert(id.clone(), count_str);
             },
-            ExecutionStep::DeleteMany { id, queries, parent_ref } => {
+            ExecutionStep::DeleteMany { id, queries } => {
                 let mut total_affected: usize = 0;
                 for (sql, params) in queries {
                     let mut stmt = tx.prepare_cached(sql)?;
-                    let sql_params = resolve_params(params, parent_ref.as_ref(), returned_values)?;
+                    let sql_params = resolve_params(params, None, returned_values)?;
                     let borrowed_params: Vec<&dyn rusqlite::ToSql> = sql_params.iter().map(|b| &**b).collect();
                     total_affected += stmt.execute(&borrowed_params[..])?;
                 }
@@ -280,7 +281,6 @@ mod tests {
             queries: vec![
                 ("UPDATE test SET val = ?1 WHERE id = ?2".to_string(), vec![Parameter::Literal(serde_json::json!("new")), Parameter::Literal(serde_json::json!("non_existent"))])
             ],
-            parent_ref: None,
         };
 
         let mut returned = HashMap::new();
@@ -304,7 +304,6 @@ mod tests {
             queries: vec![
                 ("UPDATE test SET val = ?1 WHERE val = ?2".to_string(), vec![Parameter::Literal(serde_json::json!("new")), Parameter::Literal(serde_json::json!("old"))])
             ],
-            parent_ref: None,
         };
 
         let mut returned = HashMap::new();
@@ -329,7 +328,6 @@ mod tests {
             queries: vec![
                 ("DELETE FROM test WHERE val = ?1".to_string(), vec![Parameter::Literal(serde_json::json!("old"))])
             ],
-            parent_ref: None,
         };
 
         let mut returned = HashMap::new();

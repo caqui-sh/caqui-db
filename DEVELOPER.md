@@ -109,12 +109,14 @@ To maintain feature parity with modern DSLs (like Prisma or GraphQL), the follow
 - **High-Precision Numerics:** Support for `Decimal` and `BigInt` for exact financial calculations or extremely large counters.
 - **Default Values:** Adding `@default(value)` or `@default(now())` to the schema AST to enforce defaults at the API and database levels.
 
-### 6. Batch Operations
+### 6. Batch Operations (Partially Implemented)
 - **Syntax:** `action: "createMany"`, `action: "updateMany"`, `action: "deleteMany"`
-- **Use Case:** High-performance bulk data modifications. `createMany` should implement an optimized `INSERT` sequence for thousands of records in a single transaction, while `updateMany` will support mass-updates using complex `where` filters.
+- **Status:** `updateMany` and `deleteMany` are **fully implemented**, including support for theoretically infinite deep nesting using **AST Subquery Propagation** (compiling relational chains into `IN (SELECT ...)` structures to bypass SQLite parameter limits and avoid N+1 queries).
+- **Pending:** `createMany` implementation for optimized `INSERT` sequences.
 
-### 7. Nested Update and Delete
-- **Use Case:** Expanding the relational mutation capabilities to support `update` and `delete` operations on nested records directly through their parent relationships, ensuring strict scoped safety (e.g., updating a `Post` strictly through the `User` that owns it).
+### 7. Nested Mutators & Deep Relationships (Implemented)
+- **Status:** **Fully Implemented**.
+- **Capabilities:** Caqui supports `create`, `update`, `delete`, `connect`, and `disconnect` on nested records directly through their parent relationships. This includes strict scoped safety and translates into highly optimized linear Execution Plans. It also flawlessly supports deep nesting under bulk contexts (`updateMany` / `deleteMany`) via dynamic AST subquery interception.
 
 ### 8. Polymorphic Update & Delete
 Currently, polymorphic fields only support `create`, `connect`, and `disconnect`. Implementing `update` and `delete` involves a significant architectural decision between two paths:
