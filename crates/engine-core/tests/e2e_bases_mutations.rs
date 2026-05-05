@@ -673,69 +673,6 @@ async fn test_singular_polymorphic_update() {
 }
 
 #[tokio::test]
-async fn test_singular_polymorphic_upsert() {
-    let schema = r#"
-        base Content {  }
-        model Article extends Content { title: String @@id(uuid) }
-        model Video extends Content { duration: Int @@id(uuid) }
-        
-        model User {
-            name: String
-            favorite: Content?
-            @@id(uuid)
-        }
-    "#;
-    let (app, _dir, db_uri) = setup_app(schema).await;
-    let pool = api_layer::db::create_pool(&db_uri);
-    let conn = pool.get().await.unwrap();
-
-    conn.interact(|db| {
-        db.execute("INSERT INTO User (__id, name) VALUES ('uA', 'User A')", []).unwrap();
-        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid2', 10)", []).unwrap();
-        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('uB', 'User B', 'Video', 'vid2')", []).unwrap();
-    }).await.unwrap();
-
-    // 1. Creation Branch
-    let payload_create = json!({
-        "action": "update",
-        "model": "User",
-        "where": { "__id": "uA" },
-        "data": { "favorite": { "upsert": { "__kind": "Video", "create": { "duration": 100 }, "update": { "duration": 200 } } } }
-    });
-
-    let (status_create, response_create) = post_query(&app, payload_create).await;
-    assert_eq!(status_create, StatusCode::OK, "Response: {:?}", response_create);
-
-    conn.interact(|db| {
-        let (fav_type, fav_id): (String, String) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = 'uA'", [], |r| Ok((r.get(0).unwrap(), r.get(1).unwrap()))).unwrap();
-        assert_eq!(fav_type, "Video");
-        
-        let dur: i64 = db.query_row("SELECT duration FROM Video WHERE __id = ?1", [&fav_id], |r| r.get(0)).unwrap();
-        assert_eq!(dur, 100);
-    }).await.unwrap();
-
-    // 2. Update Branch
-    let payload_update = json!({
-        "action": "update",
-        "model": "User",
-        "where": { "__id": "uB" },
-        "data": { "favorite": { "upsert": { "__kind": "Video", "create": { "duration": 100 }, "update": { "duration": 200 } } } }
-    });
-
-    let (status_update, response_update) = post_query(&app, payload_update).await;
-    assert_eq!(status_update, StatusCode::OK, "Response: {:?}", response_update);
-
-    conn.interact(|db| {
-        let (fav_type, fav_id): (String, String) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = 'uB'", [], |r| Ok((r.get(0).unwrap(), r.get(1).unwrap()))).unwrap();
-        assert_eq!(fav_type, "Video");
-        assert_eq!(fav_id, "vid2");
-        
-        let dur: i64 = db.query_row("SELECT duration FROM Video WHERE __id = 'vid2'", [], |r| r.get(0)).unwrap();
-        assert_eq!(dur, 200);
-    }).await.unwrap();
-}
-
-#[tokio::test]
 async fn test_singular_polymorphic_type_mismatch_safety() {
     let schema = r#"
         base Content {  }

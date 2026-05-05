@@ -45,8 +45,8 @@ pub async fn api_execution_handler(
             Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Database Error: {}", e)).into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Execution Error: {}", e)).into_response(),
         }
-    } else if action == "create" || action == "update" || action == "delete" || action == "upsert" || action == "updateMany" || action == "deleteMany" {
-        if state.ast.bases.contains_key(model) && (action == "create" || action == "update" || action == "delete" || action == "upsert") {
+    } else if action == "create" || action == "update" || action == "delete" || action == "updateMany" || action == "deleteMany" {
+        if state.ast.bases.contains_key(model) && (action == "create" || action == "update" || action == "delete") {
             return (StatusCode::METHOD_NOT_ALLOWED, "Security Exception: Cannot mutate abstract bases directly.").into_response();
         }
         let mut alias_idx = 0;
@@ -126,7 +126,7 @@ pub async fn api_execution_handler(
 
         match raw_json_string {
             Ok(Ok(json_payload)) => {
-                let final_data = if action == "create" || action == "update" || action == "delete" || action == "upsert" {
+                let final_data = if action == "create" || action == "update" || action == "delete" {
                     let val: serde_json::Value = serde_json::from_str(&json_payload).unwrap_or(serde_json::Value::Null);
                     if let Some(first) = val.as_array().and_then(|a| a.first()) {
                         serde_json::to_string(first).unwrap_or(json_payload)
@@ -1524,47 +1524,6 @@ mod tests {
         assert_eq!(tags[2].as_str().unwrap(), "new_tag");
     }
 
-    #[tokio::test]
-    async fn test_api_nested_upsert() {
-        let state = build_test_state().await;
-        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
-
-        let request = Request::builder()
-            .method("POST")
-            .uri("/")
-            .header("Content-Type", "application/json")
-            .body(Body::from(
-                r#"{
-                    "model": "User",
-                    "action": "update",
-                    "where": { "__id": "u1" },
-                    "data": {
-                        "profile": {
-                            "upsert": {
-                                "create": { "bio": "New Bio" },
-                                "update": { "data": { "bio": "Updated Bio" } }
-                            }
-                        }
-                    },
-                    "select": { "__id": true, "profile": { "select": { "bio": true } } }
-                }"#
-            ))
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        let status = response.status();
-        if status != StatusCode::OK {
-            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
-        }
-        
-        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
-        let profile = json_body["data"]["profile"].as_object().unwrap();
-        assert_eq!(profile["bio"], "Updated Bio"); // It existed, so it should update
-    }
-
-    #[tokio::test]
     async fn test_api_nested_update_not_found_safety() {
         let state = build_test_state().await;
         let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
@@ -1597,235 +1556,6 @@ mod tests {
         assert!(body_str.contains("Scoped Security Violation"));
     }
 
-    #[tokio::test]
-    async fn test_api_root_upsert() {
-        let state = build_test_state().await;
-        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
-
-        let request = Request::builder()
-            .method("POST")
-            .uri("/")
-            .header("Content-Type", "application/json")
-            .body(Body::from(
-                r#"{
-                    "model": "User",
-                    "action": "upsert",
-                    "where": { "name": "Bob" },
-                    "create": {
-                        "name": "Bob",
-                        "age": 20
-                    },
-                    "update": {
-                        "age": 26
-                    },
-                    "select": { "name": true, "age": true }
-                }"#
-            ))
-            .unwrap();
-
-        let response = app.clone().oneshot(request).await.unwrap();
-        let status = response.status();
-        if status != StatusCode::OK {
-            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
-        }
-        
-        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
-        let data = json_body["data"].as_object().unwrap();
-        assert_eq!(data["name"], "Bob"); 
-        assert_eq!(data["age"], 26); // Should have updated because Bob exists
-
-        // Now test creation branch
-        let request2 = Request::builder()
-            .method("POST")
-            .uri("/")
-            .header("Content-Type", "application/json")
-            .body(Body::from(
-                r#"{
-                    "model": "User",
-                    "action": "upsert",
-                    "where": { "name": "Alice" },
-                    "create": {
-                        "name": "Alice",
-                        "age": 30
-                    },
-                    "update": {
-                        "age": 31
-                    },
-                    "select": { "name": true, "age": true }
-                }"#
-            ))
-            .unwrap();
-
-        let response2 = app.oneshot(request2).await.unwrap();
-        assert_eq!(response2.status(), StatusCode::OK);
-        
-        let body_bytes2 = axum::body::to_bytes(response2.into_body(), usize::MAX).await.unwrap();
-        let json_body2: serde_json::Value = serde_json::from_slice(&body_bytes2).unwrap();
-        let data2 = json_body2["data"].as_object().unwrap();
-        assert_eq!(data2["name"], "Alice"); 
-        assert_eq!(data2["age"], 30); // Should have created because Alice didn't exist
-    }
-
-    #[tokio::test]
-    async fn test_api_root_upsert_nested_mutations() {
-        let state = build_test_state().await;
-        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
-
-        let request = Request::builder()
-            .method("POST")
-            .uri("/")
-            .header("Content-Type", "application/json")
-            .body(Body::from(
-                r#"{
-                    "model": "User",
-                    "action": "upsert",
-                    "where": { "name": "Eve" },
-                    "create": {
-                        "name": "Eve",
-                        "posts": {
-                            "create": [{ "title": "Eve's First Post" }]
-                        }
-                    },
-                    "update": {
-                        "age": 35
-                    },
-                    "select": { "name": true }
-                }"#
-            ))
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        let status = response.status();
-        if status != StatusCode::OK {
-            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
-        }
-        
-        let conn = state.db_pool.get().await.unwrap();
-        let count: i64 = conn.interact(|db| {
-            db.query_row("SELECT COUNT(*) FROM Post JOIN User ON Post.authorId = User.__id WHERE User.name = 'Eve' AND Post.title = 'Eve''s First Post'", [], |row| row.get(0))
-        }).await.unwrap().unwrap();
-        assert_eq!(count, 1, "The nested post should be created for Eve");
-    }
-
-    #[tokio::test]
-    async fn test_api_root_upsert_empty_create() {
-        // Upserting with auto-generated IDs and empty create block.
-        // To do this, we need a model where all fields are optional or have defaults.
-        // 'Profile' has 'id' (Default UUID) and 'bio' (Optional).
-        let state = build_test_state().await;
-        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
-
-        let request = Request::builder()
-            .method("POST")
-            .uri("/")
-            .header("Content-Type", "application/json")
-            .body(Body::from(
-                r#"{
-                    "model": "Profile",
-                    "action": "upsert",
-                    "where": { "__id": "prof_auto" },
-                    "create": {},
-                    "update": {
-                        "bio": "Updated Bio"
-                    },
-                    "select": { "__id": true, "bio": true }
-                }"#
-            ))
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        let status = response.status();
-        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        
-        if status != StatusCode::OK {
-            let body_str = String::from_utf8_lossy(&body_bytes);
-            panic!("Request failed with 500: {}", body_str);
-        }
-        
-        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
-        let data = json_body["data"].as_object().unwrap();
-        // The id will be gen_uuid7() because 'create' is empty
-        assert!(data["__id"].as_str().unwrap() != "prof_auto");
-        assert!(data["bio"].is_null() || data.get("bio").is_none());
-    }
-
-    #[tokio::test]
-    async fn test_api_root_upsert_non_unique_target() {
-        let state = build_test_state().await;
-        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
-
-        let request = Request::builder()
-            .method("POST")
-            .uri("/")
-            .header("Content-Type", "application/json")
-            .body(Body::from(
-                r#"{
-                    "model": "User",
-                    "action": "upsert",
-                    "where": { "age": 25 },
-                    "create": {
-                        "name": "NonUnique",
-                        "age": 25
-                    },
-                    "update": {
-                        "age": 26
-                    },
-                    "select": { "name": true }
-                }"#
-            ))
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        // Should fail gracefully from the Rust translation engine because 'age' is not UNIQUE
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        
-        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let body_str = String::from_utf8_lossy(&body_bytes);
-        assert!(body_str.contains("Security Exception: Upsert target 'age' is not marked as @id or @unique"));
-    }
-
-    #[tokio::test]
-    async fn test_api_root_upsert_update_conflict_target() {
-        let state = build_test_state().await;
-        let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
-
-        let request = Request::builder()
-            .method("POST")
-            .uri("/")
-            .header("Content-Type", "application/json")
-            .body(Body::from(
-                r#"{
-                    "model": "User",
-                    "action": "upsert",
-                    "where": { "name": "Bob" },
-                    "create": {
-                        "name": "Bob"
-                    },
-                    "update": {
-                        "name": "BobNew"
-                    },
-                    "select": { "name": true }
-                }"#
-            ))
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        let status = response.status();
-        if status != StatusCode::OK {
-            let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-            panic!("Request failed with {}: {}", status, String::from_utf8_lossy(&body_bytes));
-        }
-        
-        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
-        let data = json_body["data"].as_object().unwrap();
-        assert_eq!(data["name"], "BobNew"); 
-    }
-
-    #[tokio::test]
     async fn test_api_relational_filtering_some() {
         let state = build_test_state().await;
         let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());

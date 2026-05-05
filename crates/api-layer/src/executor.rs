@@ -169,45 +169,6 @@ fn execute_steps(
                 if id == root_step_id { *root_id = count_str.clone(); }
                 returned_values.insert(id.clone(), count_str);
             },
-            ExecutionStep::UpsertBranch { check_sql, check_params, if_exists, if_not_exists, root_step_id: branch_root_id } => {
-                let mut stmt = tx.prepare_cached(check_sql)?;
-                let sql_params = resolve_params(check_params, None, returned_values)?;
-                let borrowed_params: Vec<&dyn rusqlite::ToSql> = sql_params.iter().map(|b| &**b).collect();
-                
-                let exists_id: Option<String> = match stmt.query_row(&borrowed_params[..], |row| row.get(0)) {
-                    Ok(__id) => Some(__id),
-                    Err(rusqlite::Error::QueryReturnedNoRows) => None,
-                    Err(e) => return Err(e),
-                };
-
-                let execution_target = if exists_id.is_some() {
-                    if_exists
-                } else {
-                    if_not_exists
-                };
-                
-                let mut temp_root_id = String::new();
-                let inner_root_step_id = if let Some(first_step) = execution_target.first() {
-                    match first_step {
-                        ExecutionStep::Query { id, .. } => id.clone(),
-                        ExecutionStep::UpsertBranch { root_step_id, .. } => root_step_id.clone(),
-                        ExecutionStep::UpdateBranch { id, .. } => id.clone(),
-                        ExecutionStep::DeleteBranch { id, .. } => id.clone(),
-                        ExecutionStep::UpdateMany { id, .. } => id.clone(),
-                        ExecutionStep::DeleteMany { id, .. } => id.clone(),
-                    }
-                } else {
-                    String::new()
-                };
-                
-                execute_steps(tx, execution_target, returned_values, &inner_root_step_id, &mut temp_root_id)?;
-                
-                if branch_root_id == root_step_id {
-                    *root_id = temp_root_id.clone();
-                }
-                
-                returned_values.insert(branch_root_id.clone(), temp_root_id);
-            }
         }
     }
     Ok(())

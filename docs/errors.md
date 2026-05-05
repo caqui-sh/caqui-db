@@ -39,7 +39,6 @@ The request payload was malformed, contained invalid types, or violated schema r
   - `Arrays cannot be optional` / `Primary keys cannot be optional`: These constraints are strictly enforced at the API layer.
   - `Security Exception: Maximum query depth exceeded.`: The nested graph traversal exceeds the configured engine limits (default 10 levels).
   - `Validation Error: Value '...' is not a valid variant for enum '...'`: You attempted to insert or update an enum field with an undefined string.
-  - `Security Exception: Upsert target '...' is not marked as @id or @unique`: Nested and root upserts require the `where` block to target a strictly unique identifier.
   - `Unsupported action for polymorphic field '...'. Only 'connect' and 'create' are supported.`: You cannot perform an `update` or `delete` directly through a polymorphic relation; these must be done via root mutations.
 
 ### 405 Method Not Allowed (Security)

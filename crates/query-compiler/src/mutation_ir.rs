@@ -14,13 +14,6 @@ pub enum ExecutionStep {
         sql: String,
         params: Vec<Parameter>,
     },
-    UpsertBranch {
-        check_sql: String,
-        check_params: Vec<Parameter>,
-        if_exists: Vec<ExecutionStep>,
-        if_not_exists: Vec<ExecutionStep>,
-        root_step_id: String,
-    },
     UpdateBranch {
         id: String,
         sql: String,

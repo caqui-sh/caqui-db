@@ -42,7 +42,7 @@ pub fn hydrate_mutation_to_plan(
     payload: &Value,
     alias_counter: &mut usize,
 ) -> Result<ExecutionPlan, String> {
-    if ast.bases.contains_key(model_name) && (action == "create" || action == "update" || action == "delete" || action == "upsert") {
+    if ast.bases.contains_key(model_name) && (action == "create" || action == "update" || action == "delete") {
         return Err("Security Exception: Cannot mutate abstract base shape".to_string());
     }
     let mut steps = Vec::new();
@@ -146,23 +146,7 @@ pub fn hydrate_mutation_to_plan(
                 steps,
             })
         },
-        "upsert" => {
-            let where_obj = payload.get("where").and_then(|v| v.as_object())
-                .ok_or("Missing 'where' block in upsert mutation")?;
-            let create_data = payload.get("create").and_then(|v| v.as_object())
-                .ok_or("Missing 'create' block in upsert mutation")?;
-            let update_data = payload.get("update").and_then(|v| v.as_object())
-                .ok_or("Missing 'update' block in upsert mutation")?;
-
-            let root_step_id = translate_root_upsert_node(ast, model_name, where_obj, create_data, update_data, &mut steps, alias_counter)?;
-            
-            Ok(ExecutionPlan {
-                root_step_id,
-                steps,
-            })
-        },
-        "updateMany" => {
-            let data = payload.get("data").and_then(|v| v.as_object())
+        "updateMany" => {            let data = payload.get("data").and_then(|v| v.as_object())
                 .ok_or("Missing 'data' block in updateMany mutation")?;
             
             let where_obj = payload.get("where").and_then(|v| v.as_object())
@@ -417,7 +401,6 @@ enum DeferredAction {
     Delete(String, serde_json::Map<String, Value>),
     Disconnect(serde_json::Map<String, Value>),
     Set(Vec<serde_json::Map<String, Value>>),
-    Upsert(serde_json::Map<String, Value>, serde_json::Map<String, Value>),
     UpdateMany(String, serde_json::Map<String, Value>, serde_json::Map<String, Value>),
     DeleteMany(String, serde_json::Map<String, Value>),
 }
@@ -707,20 +690,6 @@ fn translate_create_node(
                         } else {
                             deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(Vec::new()), relation_field_name: key.clone() });
                         }
-                    }
-                }
-                
-                if let Some(upsert_payload) = nested_mutations.get("upsert") {
-                    if let Some(arr) = upsert_payload.as_array() {
-                        for item in arr {
-                            let create_data = item.get("create").and_then(|v| v.as_object()).ok_or("Expected 'create' in 'upsert' array")?;
-                            let update_data = item.get("update").and_then(|v| v.as_object()).ok_or("Expected 'update' in 'upsert' array")?;
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(create_data.clone(), update_data.clone()), relation_field_name: key.clone() });
-                        }
-                    } else if let Some(item) = upsert_payload.as_object() {
-                        let create_data = item.get("create").and_then(|v| v.as_object()).ok_or("Expected 'create' in 'upsert'")?;
-                        let update_data = item.get("update").and_then(|v| v.as_object()).ok_or("Expected 'update' in 'upsert'")?;
-                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(create_data.clone(), update_data.clone()), relation_field_name: key.clone() });
                     }
                 }
             },
@@ -1295,77 +1264,6 @@ fn translate_update_node(
     Ok(step_id)
 }
 
-fn translate_root_upsert_node(
-    ast: &SchemaAst,
-    model_name: &str,
-    where_obj: &serde_json::Map<String, Value>,
-    create_data: &serde_json::Map<String, Value>,
-    update_data: &serde_json::Map<String, Value>,
-    steps: &mut Vec<ExecutionStep>,
-    alias_counter: &mut usize,
-) -> Result<String, String> {
-    let model_def = ast.models.get(model_name)
-        .ok_or_else(|| format!("Security Exception: Model '{}' undefined.", model_name))?;
-        
-    let pk_col = model_def.resolved_fields.iter()
-        .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
-        .map(|f| f.name.as_str())
-        .unwrap_or("__id");
-
-    let step_id = format!("step_{}_{}", model_name.to_lowercase(), *alias_counter);
-    *alias_counter += 1;
-    
-    let mut param_idx = 1;
-    let where_clause_ir = parse_where_clause(ast, where_obj, model_def)?;
-    
-    // Safety check: Upserts must target a unique field
-    // In Phase 4, we enforce this at the Rust layer since we don't rely on ON CONFLICT anymore.
-    let conflict_target = where_obj.keys().next().ok_or("Upsert 'where' block must contain at least one key")?.clone();
-    let target_field = model_def.resolved_fields.iter().find(|f| f.name == conflict_target).unwrap();
-    if !target_field.attributes.iter().any(|a| matches!(a, FieldAttribute::Id | FieldAttribute::Unique)) {
-        return Err(format!("Security Exception: Upsert target '{}' is not marked as @id or @unique", conflict_target));
-    }
-    
-    let (where_sql, check_params) = compile_parameterized_where(&where_clause_ir, model_name, &mut param_idx);
-    
-    let check_sql = format!("SELECT {} FROM {} WHERE {}", pk_col, model_name, where_sql);
-    
-    let mut if_not_exists = Vec::new();
-    let _create_step_id = translate_create_node(ast, model_name, create_data, &mut if_not_exists, alias_counter, None)?;
-
-    let mut if_exists = Vec::new();
-    let _update_step_id = translate_update_node(ast, model_name, where_obj, update_data, &mut if_exists, alias_counter, None)?;
-    
-    // We need the executor to return `create_step_id` or `update_step_id` under `step_id`?
-    // Actually, `ExecutionStep::UpsertBranch` currently uses `root_step_id: String` to know what to assign.
-    // In `executor.rs`: `returned_values.insert(__id.clone(), returned_id);`
-    // But for `UpsertBranch`, we didn't insert a return value for the branch itself.
-    // The `executor.rs` evaluates `exists_id` but then delegates to `execute_steps`.
-    // Wait, the children steps will insert THEIR OWN IDs into `returned_values`.
-    // And `execute_steps` also sets `*root_id = returned_id` if it matches `root_step_id`.
-    // We just pass `step_id.clone()` as the `root_step_id` to `UpsertBranch`. 
-    // And wait, we need one of the branches to generate `step_id`. 
-    // But the branches generated `create_step_id` and `update_step_id`. 
-    // This is tricky. Let's fix `executor.rs` or `ExecutionStep::UpsertBranch` to alias the branch root.
-    // Or we can just pass `step_id.clone()` down, but `translate_create_node` already generated its own ID.
-    // Let's modify `ExecutionStep::UpsertBranch` to have `branch_step_id: String, create_step_id: String, update_step_id: String`.
-    // Then in `executor.rs`, after executing `if_exists`, we do `returned_values.insert(branch_step_id, returned_values.get(&update_step_id))`.
-    
-    steps.push(ExecutionStep::UpsertBranch {
-        check_sql,
-        check_params,
-        if_exists,
-        if_not_exists,
-        root_step_id: step_id.clone(),
-    });
-    
-    // The executor.rs currently has `ExecutionStep::UpsertBranch { ..., root_step_id: branch_root_id }`.
-    // If we just use this `step_id` as `branch_root_id`, the executor can alias it. Let's fix executor to do this mapping.
-    // Wait, we need to know the child's root ID. Let's just return `step_id`.
-    
-    Ok(step_id)
-}
-
 fn process_deferred_children(
     ast: &SchemaAst,
     parent_model_name: &str,
@@ -1437,65 +1335,6 @@ fn process_deferred_children(
                         is_forward_polymorphic: true,
                     }))?;
                 },
-                DeferredAction::Upsert(create_data, update_data) => {
-                    let check_sql = format!(
-                        "SELECT {} FROM {} WHERE {} = ?1 AND {} = ?2 AND {} IS NOT NULL", 
-                        parent_pk_col, parent_model_name, parent_pk_col, type_col, id_col
-                    );
-                    let check_params = vec![
-                        match parent_constraint {
-                            ParentConstraint::Singular { step_id } => Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() },
-                            ParentConstraint::Bulk { .. } => panic!("Upsert under bulk constraint not supported"),
-                        },
-                        Parameter::Literal(serde_json::Value::String(child.target_model.clone()))
-                    ];
-                    
-                    let mut if_not_exists = Vec::new();
-                    let child_create_step_id = translate_create_node(ast, &child.target_model, &create_data, &mut if_not_exists, alias_counter, None)?;
-                    
-                    let update_step_id = format!("step_{}_poly_update_{}", parent_model_name.to_lowercase(), *alias_counter);
-                    *alias_counter += 1;
-                    
-                    let sql = format!(
-                        "UPDATE {} SET {} = ?, {} = ? WHERE {} = ? RETURNING {};",
-                        parent_model_name,
-                        type_col,
-                        id_col,
-                        parent_pk_col,
-                        parent_pk_col
-                    );
-                    if_not_exists.push(ExecutionStep::Query {
-                        id: update_step_id,
-                        sql,
-                        params: vec![
-                            Parameter::Literal(serde_json::Value::String(child.target_model.clone())),
-                            Parameter::Reference { step_id: child_create_step_id, column: child_pk_col.to_string() },
-                            match parent_constraint {
-                                ParentConstraint::Singular { step_id } => Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() },
-                                ParentConstraint::Bulk { .. } => panic!("Upsert under bulk constraint not supported"),
-                            }
-                        ],
-                    });
-                    
-                    let mut if_exists = Vec::new();
-                    translate_update_node(ast, &child.target_model, &serde_json::Map::new(), &update_data, &mut if_exists, alias_counter, Some(ParentRel {
-                        constraint: parent_constraint.clone(),
-                        parent_model: parent_model_name.to_string(),
-                        relation_field_name: child.relation_field_name.clone(),
-                        is_forward_polymorphic: true,
-                    }))?;
-                    
-                    let branch_step_id = format!("step_{}_upsert_branch_{}", parent_model_name.to_lowercase(), *alias_counter);
-                    *alias_counter += 1;
-                    
-                    steps.push(ExecutionStep::UpsertBranch {
-                        check_sql,
-                        check_params,
-                        if_exists,
-                        if_not_exists,
-                        root_step_id: branch_step_id,
-                    });
-                },
                 _ => return Err(format!("Unsupported deferred action for polymorphic relation '{}'", child.relation_field_name)),
             }
             continue;
@@ -1504,12 +1343,14 @@ fn process_deferred_children(
         let mut fk_column_name = None;
         let mut target_pk = "__id".to_string();
 
-        // Find the field in the child model that points back to the parent
-        let rel_attr = parent_field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. }));
-        let rel_name = match rel_attr {
-            Some(FieldAttribute::Relation { name, .. }) => name.clone(),
-            _ => None,
-        };
+        if let Some(FieldAttribute::Relation { fields, references, .. }) = parent_field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+            if let (Some(f), Some(r)) = (fields, references) {
+                if !f.is_empty() && !r.is_empty() {
+                    fk_column_name = Some(f[0].clone());
+                    target_pk = r[0].clone();
+                }
+            }
+        }
 
         let mut child_fields: Option<&Vec<schema_parser::ast::FieldNode>> = None;
         if let Some(m) = ast.models.get(&child.target_model) {
@@ -1522,31 +1363,40 @@ fn process_deferred_children(
             fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id")
         } else { "__id" };
 
-        let reverse_field = if let Some(fields) = child_fields {
-            fields.iter().find(|f| {
-                match &f.field_type {
-                    AstFieldType::Relation(rt) | AstFieldType::PolymorphicBase(rt) if rt == parent_model_name || ast.models.get(parent_model_name).map_or(false, |m| m.resolved_bases.contains(rt)) => {
-                        if let Some(FieldAttribute::Relation { name, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
-                            if name == &rel_name { return true; }
-                        } else if rel_name.is_none() {
-                            return true;
+        if fk_column_name.is_none() {
+            // Find the field in the child model that points back to the parent
+            let rel_attr = parent_field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. }));
+            let rel_name = match rel_attr {
+                Some(FieldAttribute::Relation { name, .. }) => name.clone(),
+                _ => None,
+            };
+            
+            let reverse_field = if let Some(fields) = child_fields {
+                fields.iter().find(|f| {
+                    match &f.field_type {
+                        AstFieldType::Relation(rt) | AstFieldType::PolymorphicBase(rt) if rt == parent_model_name || ast.models.get(parent_model_name).map_or(false, |m| m.resolved_bases.contains(rt)) => {
+                            if let Some(FieldAttribute::Relation { name, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                                if name == &rel_name { return true; }
+                            } else if rel_name.is_none() {
+                                return true;
+                            }
+                            false
                         }
-                        false
+                        _ => false
                     }
-                    _ => false
-                }
-            })
-        } else { None };
+                })
+            } else { None };
 
-        if let Some(rev_f) = reverse_field {
-            if let Some(FieldAttribute::InternalRelation { fields, references }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
-                if !fields.is_empty() && !references.is_empty() {
-                    fk_column_name = Some(fields[0].clone());
-                    target_pk = references[0].clone();
+            if let Some(rev_f) = reverse_field {
+                if let Some(FieldAttribute::InternalRelation { fields, references }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+                    if !fields.is_empty() && !references.is_empty() {
+                        fk_column_name = Some(fields[0].clone());
+                        target_pk = references[0].clone();
+                    }
                 }
-            }
-            if fk_column_name.is_none() {
-                fk_column_name = Some(format!("{}Id", rev_f.name));
+                if fk_column_name.is_none() {
+                    fk_column_name = Some(format!("{}Id", rev_f.name));
+                }
             }
         }
 
@@ -1827,19 +1677,6 @@ fn process_deferred_children(
                                                 bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
                                             }
                                         }
-                                        if let Some(upsert_payload) = nested_mutations.get("upsert") {
-                                            if let Some(arr) = upsert_payload.as_array() {
-                                                for item in arr {
-                                                    let c_create = item.get("create").and_then(|v| v.as_object()).unwrap();
-                                                    let c_update = item.get("update").and_then(|v| v.as_object()).unwrap();
-                                                    bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(c_create.clone(), c_update.clone()), relation_field_name: key.clone() });
-                                                }
-                                            } else if let Some(item) = upsert_payload.as_object() {
-                                                let c_create = item.get("create").and_then(|v| v.as_object()).unwrap();
-                                                let c_update = item.get("update").and_then(|v| v.as_object()).unwrap();
-                                                bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(c_create.clone(), c_update.clone()), relation_field_name: key.clone() });
-                                            }
-                                        }
                                         if let Some(set_payload) = nested_mutations.get("set") {
                                             if let Some(arr) = set_payload.as_array() {
                                                 let mut set_wheres = Vec::new();
@@ -2006,6 +1843,8 @@ fn process_deferred_children(
                 steps.push(ExecutionStep::DeleteMany { id: child_step_id, queries });
             },
             DeferredAction::Disconnect(child_where) => {
+                let parent_owns_fk = parent_model_def.resolved_fields.iter().any(|f| f.name == fk_col);
+                
                 let child_step_id = format!("step_{}_disconnect_{}", child.target_model.to_lowercase(), *alias_counter);
                 *alias_counter += 1;
                 
@@ -2013,153 +1852,64 @@ fn process_deferred_children(
                 let mut param_idx = 1;
                 
                 let child_model_def = ast.models.get(&child.target_model).unwrap();
-                let where_clause_ir = parse_where_clause(ast, &child_where, child_model_def)?;
+                let mut cleaned_where = child_where.clone();
+                cleaned_where.retain(|k, _| !k.starts_with("__") || k == "__id");
+                let where_clause_ir = parse_where_clause(ast, &cleaned_where, child_model_def)?;
                 let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &child.target_model, &mut param_idx);
                 params.extend(where_params);
                 
-                let combined_where_sql = match parent_constraint {
-                    ParentConstraint::Singular { step_id } => {
-                        let sql = format!("({} AND {}.{} = ?{})", where_sql, child.target_model, fk_col, param_idx);
-                        params.push(Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() });
-                        param_idx += 1;
-                        sql
-                    },
-                    ParentConstraint::Bulk { sql: bulk_sql, .. } => {
-                        format!("({} AND {}.{} IN ({}))", where_sql, child.target_model, fk_col, bulk_sql)
-                    }
-                };
-                
-                let sql = format!(
-                    "UPDATE {} SET {} = NULL WHERE {} RETURNING {};",
-                    child.target_model,
-                    fk_col,
-                    combined_where_sql,
-                    child_pk_col
-                );
-                
-                steps.push(ExecutionStep::Query {
-                    id: child_step_id,
-                    sql,
-                    params,
-                });
-            },
-            DeferredAction::Upsert(create_data, update_data) => {
-                if let ParentConstraint::Bulk { .. } = parent_constraint {
-                    return Err("Semantics Error: Cannot 'upsert' a child to multiple parents in a bulk update.".to_string());
-                }
-                
-                let mut pfk_col = None;
-                let mut rpk_col = None;
-                if let Some(FieldAttribute::InternalRelation { fields, references }) = ast.models.get(parent_model_name).unwrap().resolved_fields.iter().find(|f| f.name == child.relation_field_name).unwrap().attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
-                    if !fields.is_empty() && !references.is_empty() {
-                        pfk_col = Some(fields[0].clone());
-                        rpk_col = Some(references[0].clone());
-                    }
-                }
-
-                let pfk = pfk_col.unwrap_or_else(|| format!("{}Id", child.relation_field_name));
-                let rpk = rpk_col.unwrap_or_else(|| "__id".to_string());
-                
-                // Determine if parent owns the FK or child owns the FK
-                let parent_owns_fk = parent_model_def.resolved_fields.iter().any(|f| f.name == pfk);
-
-                let child_step_id = format!("step_{}_upsert_{}", child.target_model.to_lowercase(), *alias_counter);
-                *alias_counter += 1;
-
                 if parent_owns_fk {
-                    // Forward Relation (e.g. User has profileId)
-                    let mut columns = Vec::new();
-                    let mut placeholders = Vec::new();
-                    let mut params = Vec::new();
-                    let mut param_idx = 1;
-                    
-                    columns.push(child_pk_col.to_string());
-                    placeholders.push(format!("COALESCE((SELECT {} FROM {} WHERE {} = ?{}), gen_uuid7())", pfk, parent_model_name, parent_pk_col, param_idx));
-                    params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() });
-                    param_idx += 1;
-                    
-                    for (key, val) in create_data {
-                        columns.push(key.clone());
-                        placeholders.push(format!("?{}", param_idx));
-                        params.push(Parameter::Literal(val.clone()));
-                        param_idx += 1;
-                    }
-
-                    let mut update_set_clauses = Vec::new();
-                    if let Some(update_data_obj) = update_data.get("data").and_then(|v| v.as_object()).or(Some(&update_data)) {
-                        for (key, val) in update_data_obj {
-                            update_set_clauses.push(format!("{} = ?{}", key, param_idx));
-                            params.push(Parameter::Literal(val.clone()));
+                    let combined_where_sql = match parent_constraint {
+                        ParentConstraint::Singular { step_id } => {
+                            let sql = format!("({} AND {}.{} IN (SELECT {} FROM {} WHERE {})) AND {}.{} = ?{}", where_sql, parent_model_name, fk_col, child_pk_col, child.target_model, where_sql, parent_model_name, parent_pk_col, param_idx);
+                            params.push(Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() });
                             param_idx += 1;
+                            sql
+                        },
+                        ParentConstraint::Bulk { sql: bulk_sql, .. } => {
+                            format!("({} AND {}.{} IN (SELECT {} FROM {} WHERE {})) AND {}.{} IN ({})", where_sql, parent_model_name, fk_col, child_pk_col, child.target_model, where_sql, parent_model_name, parent_pk_col, bulk_sql)
                         }
-                    }
+                    };
                     
-                    if update_set_clauses.is_empty() {
-                        update_set_clauses.push(format!("{} = excluded.{}", child_pk_col, child_pk_col));
-                    }
-
                     let sql = format!(
-                        "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT({}) DO UPDATE SET {} RETURNING {};",
-                        child.target_model, columns.join(", "), placeholders.join(", "), child_pk_col, update_set_clauses.join(", "), child_pk_col
+                        "UPDATE {} SET {} = NULL WHERE {} RETURNING {};",
+                        parent_model_name,
+                        fk_col,
+                        combined_where_sql,
+                        parent_pk_col
                     );
                     
-                    steps.push(ExecutionStep::Query { id: child_step_id.clone(), sql, params });
-
-                    let link_step_id = format!("step_{}_upsert_link_{}", parent_model_name.to_lowercase(), *alias_counter);
-                    *alias_counter += 1;
-                    let link_sql = format!("UPDATE {} SET {} = ?1 WHERE {} = ?2 RETURNING {};", parent_model_name, pfk, parent_pk_col, parent_pk_col);
                     steps.push(ExecutionStep::Query {
-                        id: link_step_id,
-                        sql: link_sql,
-                        params: vec![
-                            Parameter::Reference { step_id: child_step_id.clone(), column: child_pk_col.to_string() },
-                            Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() },
-                        ],
+                        id: child_step_id,
+                        sql,
+                        params,
                     });
                 } else {
-                    // Reverse Relation (e.g. Profile has userId)
-                    let mut columns = Vec::new();
-                    let mut placeholders = Vec::new();
-                    let mut params = Vec::new();
-                    let mut param_idx = 1;
-                    
-                    // The FK to the parent is required for creation
-                    columns.push(fk_col.clone());
-                    placeholders.push(format!("?{}", param_idx));
-                    params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() });
-                    param_idx += 1;
-
-                    for (key, val) in create_data {
-                        if *key != fk_col {
-                            columns.push(key.clone());
-                            placeholders.push(format!("?{}", param_idx));
-                            params.push(Parameter::Literal(val.clone()));
+                    let combined_where_sql = match parent_constraint {
+                        ParentConstraint::Singular { step_id } => {
+                            let sql = format!("({} AND {}.{} = ?{})", where_sql, child.target_model, fk_col, param_idx);
+                            params.push(Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() });
                             param_idx += 1;
+                            sql
+                        },
+                        ParentConstraint::Bulk { sql: bulk_sql, .. } => {
+                            format!("({} AND {}.{} IN ({}))", where_sql, child.target_model, fk_col, bulk_sql)
                         }
-                    }
-
-                    let mut update_set_clauses = Vec::new();
-                    if let Some(update_data_obj) = update_data.get("data").and_then(|v| v.as_object()).or(Some(&update_data)) {
-                        for (key, val) in update_data_obj {
-                            if *key != fk_col {
-                                update_set_clauses.push(format!("{} = ?{}", key, param_idx));
-                                params.push(Parameter::Literal(val.clone()));
-                                param_idx += 1;
-                            }
-                        }
-                    }
-
-                    if update_set_clauses.is_empty() {
-                        update_set_clauses.push(format!("{} = excluded.{}", pfk, pfk));
-                    }
-
-                    // Conflict target for reverse 1:1 is the FK column itself!
+                    };
+                    
                     let sql = format!(
-                        "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT({}) DO UPDATE SET {} RETURNING {};",
-                        child.target_model, columns.join(", "), placeholders.join(", "), pfk, update_set_clauses.join(", "), child_pk_col
+                        "UPDATE {} SET {} = NULL WHERE {} RETURNING {};",
+                        child.target_model,
+                        fk_col,
+                        combined_where_sql,
+                        child_pk_col
                     );
                     
-                    steps.push(ExecutionStep::Query { id: child_step_id.clone(), sql, params });
+                    steps.push(ExecutionStep::Query {
+                        id: child_step_id,
+                        sql,
+                        params,
+                    });
                 }
             },
             DeferredAction::Set(child_wheres) => {
@@ -2539,19 +2289,6 @@ fn parse_update_data_block(
                             deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(item.clone()), relation_field_name: key.clone() });
                         }
                     }
-                    if let Some(upsert_payload) = nested_mutations.get("upsert") {
-                        if let Some(arr) = upsert_payload.as_array() {
-                            for item in arr {
-                                let u_create = item.get("create").and_then(|v| v.as_object()).unwrap();
-                                let u_update = item.get("update").and_then(|v| v.as_object()).unwrap();
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(u_create.clone(), u_update.clone()), relation_field_name: key.clone() });
-                            }
-                        } else if let Some(item) = upsert_payload.as_object() {
-                            let u_create = item.get("create").and_then(|v| v.as_object()).unwrap();
-                            let u_update = item.get("update").and_then(|v| v.as_object()).unwrap();
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(u_create.clone(), u_update.clone()), relation_field_name: key.clone() });
-                        }
-                    }
                 }
             },
             AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicBase(_) => {
@@ -2591,28 +2328,10 @@ fn parse_update_data_block(
                         return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
                     }
                     
-                    deferred_children.push(DeferredChild { 
-                        target_model: kind_val.to_string(), 
-                        action: DeferredAction::Update(kind_val.to_string(), serde_json::Map::new(), child_data.clone()), 
-                        relation_field_name: key.clone() 
-                    });
-                    continue;
-                }
-                
-                if let Some(upsert_payload) = nested_mutations.get("upsert") {
-                    let child_upsert = upsert_payload.as_object().ok_or("Expected object in 'upsert'")?;
-                    let kind_val = child_upsert.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'upsert' block")?;
-                    let create_data = child_upsert.get("create").and_then(|v| v.as_object()).ok_or("Expected 'create' block in 'upsert'")?;
-                    let update_data = child_upsert.get("update").and_then(|v| v.as_object()).ok_or("Expected 'update' block in 'upsert'")?;
-                    
-                    if !ast.models.contains_key(kind_val) {
-                        return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
-                    }
-                    
-                    deferred_children.push(DeferredChild { 
-                        target_model: kind_val.to_string(), 
-                        action: DeferredAction::Upsert(create_data.clone(), update_data.clone()), 
-                        relation_field_name: key.clone() 
+                    deferred_children.push(DeferredChild {
+                        target_model: kind_val.to_string(),
+                        action: DeferredAction::Update(kind_val.to_string(), serde_json::Map::new(), child_data.clone()),
+                        relation_field_name: key.clone()
                     });
                     continue;
                 }

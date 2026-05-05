@@ -68,56 +68,6 @@ async fn setup_app() -> (axum::Router, deadpool_sqlite::Pool, tempfile::TempDir)
 }
 
 #[tokio::test]
-async fn test_root_upsert() {
-    let (app, pool, _dir) = setup_app().await;
-
-    // 1. Create via Upsert
-    let upsert_create = serde_json::json!({
-        "action": "upsert",
-        "model": "User",
-        "where": { "email": "new@test.com" },
-        "create": { "email": "new@test.com", "name": "Created" },
-        "update": { "name": "Updated" }
-    });
-
-    let res = app.clone().oneshot(
-        Request::builder().method(http::Method::POST).uri("/api/v1/query")
-            .header(http::header::CONTENT_TYPE, "application/json")
-            .body(Body::from(upsert_create.to_string())).unwrap()
-    ).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-
-    let conn = pool.get().await.unwrap();
-    conn.interact(|db| {
-        let name: String = db.query_row("SELECT name FROM User WHERE email = 'new@test.com'", [], |r| r.get(0)).unwrap();
-        assert_eq!(name, "Created");
-    }).await.unwrap();
-
-    // 2. Update via Upsert
-    let upsert_update = serde_json::json!({
-        "action": "upsert",
-        "model": "User",
-        "where": { "email": "new@test.com" },
-        "create": { "email": "new@test.com", "name": "Created Again" },
-        "update": { "name": "Updated" }
-    });
-
-    let res = app.clone().oneshot(
-        Request::builder().method(http::Method::POST).uri("/api/v1/query")
-            .header(http::header::CONTENT_TYPE, "application/json")
-            .body(Body::from(upsert_update.to_string())).unwrap()
-    ).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
-
-    conn.interact(|db| {
-        let name: String = db.query_row("SELECT name FROM User WHERE email = 'new@test.com'", [], |r| r.get(0)).unwrap();
-        assert_eq!(name, "Updated");
-        let count: i64 = db.query_row("SELECT count(*) FROM User", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 1);
-    }).await.unwrap();
-}
-
-#[tokio::test]
 async fn test_nested_connect_disconnect() {
     let (app, pool, _dir) = setup_app().await;
 
@@ -177,7 +127,11 @@ async fn test_nested_connect_disconnect() {
             .header(http::header::CONTENT_TYPE, "application/json")
             .body(Body::from(disconnect_payload.to_string())).unwrap()
     ).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+    let status = res.status();
+    let body_bytes = axum::body::to_bytes(res.into_body(), 10000).await.unwrap();
+    let body_str = String::from_utf8_lossy(&body_bytes);
+    println!("DISCONNECT STATUS: {}, BODY: {}", status, body_str);
+    assert_eq!(status, StatusCode::OK);
 
     conn.interact(|db| {
         let fk: Option<String> = db.query_row("SELECT authorId FROM Post WHERE title = 'Connected Post'", [], |r| r.get(0)).unwrap();

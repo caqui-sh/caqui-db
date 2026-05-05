@@ -425,11 +425,6 @@ async fn test_bulk_nested_singleton_rejections() {
             "model": "User", "action": "updateMany", "where": {},
             "data": { "posts": { "update": { "where": {}, "data": { "title": "New" } } } }
         }),
-        // 2. Nested upsert
-        serde_json::json!({
-            "model": "User", "action": "updateMany", "where": {},
-            "data": { "posts": { "upsert": { "create": { "title": "1" }, "update": { "title": "1" } } } }
-        }),
         // 3. Nested set
         serde_json::json!({
             "model": "User", "action": "updateMany", "where": {},

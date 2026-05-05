@@ -63,28 +63,6 @@ Removes a record from the database.
 }
 ```
 
-### Upserting Records (`upsert`)
-
-The `upsert` action performs an "Update or Create" operation.
-
-**Expert Constraint**: The `where` block **MUST** target a field marked with `@id` or `@unique` in the schema. If the record exists, the `update` block is applied; otherwise, the `create` block is used to insert a new record.
-
-```json
-{
-  "model": "User",
-  "action": "upsert",
-  "where": { "email": "alice@example.com" },
-  "create": {
-    "email": "alice@example.com",
-    "name": "Alice"
-  },
-  "update": {
-    "name": "Alice Updated"
-  },
-  "select": { "__id": true, "name": true }
-}
-```
-
 ### Batch Operations (`updateMany`, `deleteMany`)
 
 `caqui` supports high-performance bulk data modifications at the root level.
@@ -102,7 +80,6 @@ Modifies multiple existing records matching a complex `where` filter.
 **Rejected Edge-Cases (400 Bad Request):**
 - **Mutating Abstract Bases:** Cannot run `updateMany` directly on an abstract `base` shape. You must target the concrete inheriting model.
 - **Nested `update`:** Explicitly rejected to prevent accidental mass mutations. Developers must use explicit `updateMany` for the inner child scope.
-- **Nested `upsert`:** Explicitly rejected. Parallel unique constraint evaluations in a multi-parent context create structural ambiguity and deadlocks.
 - **Nested `set` / `connect` (when child holds FK):** Explicitly rejected. Since a child can only belong to one parent at a time, allowing multiple parents to simultaneously connect to it would cause endless overwriting of the foreign key and data corruption.
 
 #### `deleteMany`
@@ -144,7 +121,7 @@ Nested `update` and `delete` operations are **scoped to the parent relation**.
 The available nested operations depend on the relationship cardinality and which model "owns" the foreign key (FK).
 
 - **1:1 Relations**: If the parent model holds the FK, you can only `create`, `connect`, or `disconnect` a single record.
-- **1:N Relations**: The "Many" side typically holds the FK. When mutating from the "One" side, you can perform bulk `create`, `update`, `delete`, and `upsert` operations.
+- **1:N Relations**: The "Many" side typically holds the FK. When mutating from the "One" side, you can perform bulk `create`, `update`, and `delete` operations.
 
 ### Relationship Management (`connect`, `disconnect`, `set`)
 
@@ -168,30 +145,6 @@ Instead of creating or deleting records, you can manage the links between existi
         { "__id": "tag_1" },
         { "__id": "tag_2" }
       ]
-    }
-  }
-}
-```
-
-### Nested `upsert` (Relation-Aware)
-
-Nested upserts allow you to ensure a related record exists and is linked.
-
-**Expert Detail**: The engine is "Relation-Aware." 
-- For **Forward Relations** (parent holds the FK), it generates a UUID, inserts the child (if missing), and then updates the parent's FK.
-- For **Reverse Relations** (child holds the FK), it uses the parent's ID as the conflict target on the child table, ensuring that each parent has exactly one related record in a 1:1 scenario.
-
-```json
-{
-  "model": "User",
-  "action": "update",
-  "where": { "__id": "user_123" },
-  "data": {
-    "profile": {
-      "upsert": {
-        "create": { "bio": "New bio" },
-        "update": { "bio": "Updated bio" }
-      }
     }
   }
 }
@@ -230,7 +183,6 @@ When interleaving **singular** mutators inside a **bulk** context (e.g., nesting
 #### Rejected Singular Actions (Semantic Errors)
 To prevent accidental data corruption or ambiguity, the engine explicitly rejects the following singular actions within a bulk context (returning a `400 Bad Request` with a `Semantics Error`):
 - **`update`**: Rejected to prevent accidental mass-mutations when a developer may have only intended to update a single specific child record. You must use an explicit `updateMany` for the child scope.
-- **`upsert`**: Rejected because performing parallel unique constraint evaluations in a multi-parent context causes structural ambiguity and database deadlocks.
 - **`set` / `connect` (when the child holds the Foreign Key)**: A single child record can only belong to one parent at a time in 1:N or 1:1 relationships. Allowing multiple parents to connect to it simultaneously would cause them to continually steal the foreign key from each other, resulting in data corruption.
 
 

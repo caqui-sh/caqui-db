@@ -552,66 +552,6 @@ async fn test_nested_update_with_select_projection() {
 }
 
 #[tokio::test]
-async fn test_nested_upsert_operations() {
-    let (app, pool, _dir) = setup_app().await;
-
-    let user_id = create_test_record(&app, "User", serde_json::json!({
-        "email": "upsert@test.com"
-    })).await;
-
-    // 1. Upsert when it DOES NOT exist (should create)
-    let payload_create = serde_json::json!({
-        "action": "update",
-        "model": "User",
-        "where": { "__id": user_id },
-        "data": {
-            "profile": {
-                "upsert": {
-                    "create": { "bio": "Created Bio" },
-                    "update": { "bio": "Updated Bio" }
-                }
-            }
-        }
-    });
-
-    let res1 = app.clone().oneshot(
-        Request::builder().method(http::Method::POST).uri("/api/v1/query")
-            .header(http::header::CONTENT_TYPE, "application/json")
-            .body(Body::from(payload_create.to_string())).unwrap()
-    ).await.unwrap();
-    assert_eq!(res1.status(), StatusCode::OK);
-
-    // 2. Upsert when it DOES exist (should update)
-    let payload_update = serde_json::json!({
-        "action": "update",
-        "model": "User",
-        "where": { "__id": user_id },
-        "data": {
-            "profile": {
-                "upsert": {
-                    "create": { "bio": "Created Bio 2" },
-                    "update": { "bio": "Updated Bio" }
-                }
-            }
-        }
-    });
-
-    let res2 = app.clone().oneshot(
-        Request::builder().method(http::Method::POST).uri("/api/v1/query")
-            .header(http::header::CONTENT_TYPE, "application/json")
-            .body(Body::from(payload_update.to_string())).unwrap()
-    ).await.unwrap();
-    assert_eq!(res2.status(), StatusCode::OK);
-
-    let conn = pool.get().await.unwrap();
-    conn.interact(move |db| {
-        let bio: String = db.query_row("SELECT bio FROM Profile WHERE userId = ?", [&user_id], |r| r.get(0)).unwrap();
-        assert_eq!(bio, "Updated Bio");
-        Ok::<(), rusqlite::Error>(())
-    }).await.unwrap().unwrap();
-}
-
-#[tokio::test]
 async fn test_unique_constraint_violations_in_nested_updates() {
     let (app, _pool, _dir) = setup_app().await;
 

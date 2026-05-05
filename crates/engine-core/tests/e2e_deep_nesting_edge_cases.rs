@@ -266,32 +266,6 @@ async fn test_missing_semantic_rejections() {
     let body_bytes = axum::body::to_bytes(res_set.into_body(), usize::MAX).await.unwrap();
     let body_str = String::from_utf8_lossy(&body_bytes);
     assert!(body_str.contains("Semantics Error: Cannot 'set' a relation to multiple distinct parents in a bulk update"));
-
-    // Test C: Attempt to `upsert` inside a bulk `updateMany`
-    let payload_upsert = serde_json::json!({
-        "model": "User",
-        "action": "updateMany",
-        "where": { "name": "Any" },
-        "data": {
-            "posts": {
-                "upsert": {
-                    "create": { "title": "New" },
-                    "update": { "data": { "title": "Invalid" } }
-                }
-            }
-        }
-    });
-
-    let res_upsert = app.clone().oneshot(
-        Request::builder().method(http::Method::POST).uri("/api/v1/query")
-            .header(http::header::CONTENT_TYPE, "application/json")
-            .body(Body::from(payload_upsert.to_string())).unwrap()
-    ).await.unwrap();
-    
-    assert_eq!(res_upsert.status(), StatusCode::BAD_REQUEST);
-    let body_bytes = axum::body::to_bytes(res_upsert.into_body(), usize::MAX).await.unwrap();
-    let body_str = String::from_utf8_lossy(&body_bytes);
-    assert!(body_str.contains("Semantics Error: Cannot 'upsert' a child to multiple parents in a bulk update"));
 }
 
 #[tokio::test]
