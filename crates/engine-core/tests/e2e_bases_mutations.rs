@@ -619,3 +619,50 @@ async fn test_singular_polymorphic_upsert() {
         assert_eq!(dur, 200);
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn test_singular_polymorphic_type_mismatch_safety() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('collision_id', 120)", []).unwrap();
+        db.execute("INSERT INTO Article (__id, title) VALUES ('collision_id', 'Unrelated Article')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u_test', 'Alice', 'Video', 'collision_id')", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u_test" },
+        "data": { "favorite": { "update": { "__kind": "Article", "data": { "title": "Hacked" } } } }
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    
+    let error_msg = response["error"].as_str().unwrap_or("");
+    assert!(error_msg.contains("Record Not Found") || error_msg.contains("Scoped Security Violation"));
+
+    // Verify NO records were modified
+    conn.interact(|db| {
+        let art_title: String = db.query_row("SELECT title FROM Article WHERE __id = 'collision_id'", [], |r| r.get(0)).unwrap();
+        assert_eq!(art_title, "Unrelated Article"); // Ensure it was NOT modified
+        
+        let (fav_type, fav_id): (String, String) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = 'u_test'", [], |r| Ok((r.get(0).unwrap(), r.get(1).unwrap()))).unwrap();
+        assert_eq!(fav_type, "Video"); // Pointer still points to Video
+        assert_eq!(fav_id, "collision_id");
+    }).await.unwrap();
+}

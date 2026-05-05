@@ -1444,7 +1444,7 @@ fn translate_update_node(
                         return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
                     }
                     
-                    singular_poly_actions.push((kind_val.to_string(), id_col.clone()));
+                    singular_poly_actions.push((kind_val.to_string(), id_col.clone(), type_col.clone()));
                     
                     set_clauses.push(format!("{} = NULL", type_col));
                     set_clauses.push(format!("{} = NULL", id_col));
@@ -1529,16 +1529,19 @@ fn translate_update_node(
     let where_clause_ir = parse_where_clause(ast, where_obj, model_def)?;
     let (mut where_sql, mut where_params) = compile_parameterized_where(&where_clause_ir, model_name, &mut param_idx);
     
-    for (target_model, id_col) in singular_poly_actions {
+    for (target_model, id_col, type_col) in singular_poly_actions {
         let fetch_step_id = format!("step_{}_fetch_poly_id_{}", model_name.to_lowercase(), *alias_counter);
         *alias_counter += 1;
         
         let mut subquery_param_idx = 1;
-        let (sub_where_sql, sub_where_params) = compile_parameterized_where(&where_clause_ir, model_name, &mut subquery_param_idx);
+        let (sub_where_sql, mut sub_where_params) = compile_parameterized_where(&where_clause_ir, model_name, &mut subquery_param_idx);
+        
+        let sql = format!("SELECT {} FROM {} WHERE ({}) AND {} = ?{}", id_col, model_name, sub_where_sql, type_col, subquery_param_idx);
+        sub_where_params.push(Parameter::Literal(serde_json::Value::String(target_model.clone())));
         
         steps.push(ExecutionStep::Query {
             id: fetch_step_id.clone(),
-            sql: format!("SELECT {} FROM {} WHERE {}", id_col, model_name, sub_where_sql),
+            sql,
             params: sub_where_params,
         });
         
@@ -1621,12 +1624,13 @@ fn translate_update_node(
         let mut parent_ref_param = None;
         if rel.is_forward_polymorphic {
             let id_col = format!("{}_id", rel.relation_field_name);
+            let type_col = format!("{}_type", rel.relation_field_name);
             let parent_model_def = ast.models.get(&rel.parent_model).unwrap();
             let parent_pk_col = parent_model_def.resolved_fields.iter()
                 .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
                 .map(|f| f.name.as_str())
                 .unwrap_or("__id");
-            where_sql = format!("({} AND {}.__id = (SELECT {} FROM {} WHERE {} = ?{}))", where_sql, model_name, id_col, rel.parent_model, parent_pk_col, param_idx);
+            where_sql = format!("({} AND {}.__id = (SELECT {} FROM {} WHERE {} = ?{} AND {} = '{}'))", where_sql, model_name, id_col, rel.parent_model, parent_pk_col, param_idx, type_col, model_name);
             match &rel.constraint {
                 ParentConstraint::Singular { step_id } => {
                     parent_ref_param = Some(Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() });
