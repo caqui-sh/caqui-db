@@ -216,136 +216,14 @@ pub fn hydrate_mutation_to_plan(
             for c_model in concrete_models {
                 let child_model_def = ast.models.get(&c_model).unwrap();
 
-                let mut set_clauses = Vec::new();
-                let mut params = Vec::new();
                 let mut param_idx = 1;
-                let mut deferred_children = Vec::new();
 
-                for (key, val) in data {
-                    if key.starts_with("__") { continue; }
-                    
-                    let field_def = child_model_def.resolved_fields.iter().find(|f| &f.name == key)
-                        .ok_or_else(|| format!("Invalid field '{}' for model '{}'.", key, c_model))?;
-
-                    match &field_def.field_type {
-                        AstFieldType::Scalar(type_name) | AstFieldType::Enum(type_name) => {
-                            let is_enum = matches!(&field_def.field_type, AstFieldType::Enum(_));
-                            let normalized_val = validate_and_normalize_scalar(ast, key, type_name, is_enum, val)?;
-                            set_clauses.push(format!("{} = ?{}", key, param_idx));
-                            params.push(Parameter::Literal(normalized_val));
-                            param_idx += 1;
-                        },
-                        AstFieldType::ScalarArray(_) | AstFieldType::EnumArray(_) => {
-                            set_clauses.push(format!("{} = ?{}", key, param_idx));
-                            let json_val = serde_json::to_string(val).unwrap_or_else(|_| "[]".to_string());
-                            params.push(Parameter::Literal(serde_json::Value::String(json_val)));
-                            param_idx += 1;
-                        },
-                        AstFieldType::Relation(target_model) | AstFieldType::RelationArray(target_model) => {
-                            if let Some(nested_mutations) = val.as_object() {
-                                if let Some(um_payload) = nested_mutations.get("updateMany") {
-                                    if let Some(arr) = um_payload.as_array() {
-                                        for item in arr {
-                                            let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
-                                            let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
-                                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::UpdateMany(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
-                                        }
-                                    } else if let Some(item) = um_payload.as_object() {
-                                        let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
-                                        let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
-                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::UpdateMany(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
-                                    }
-                                }
-                                if let Some(dm_payload) = nested_mutations.get("deleteMany") {
-                                    if let Some(arr) = dm_payload.as_array() {
-                                        for item in arr {
-                                            let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
-                                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::DeleteMany(target_model.clone(), c_where.clone()), relation_field_name: key.clone() });
-                                        }
-                                    } else if let Some(item) = dm_payload.as_object() {
-                                        let c_where = item.get("where").and_then(|v| v.as_object()).unwrap_or(item);
-                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::DeleteMany(target_model.clone(), c_where.clone()), relation_field_name: key.clone() });
-                                    }
-                                }
-                                if let Some(update_payload) = nested_mutations.get("update") {
-                                    if let Some(arr) = update_payload.as_array() {
-                                        for item in arr {
-                                            let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
-                                            let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
-                                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
-                                        }
-                                    } else if let Some(item) = update_payload.as_object() {
-                                        let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
-                                        let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
-                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
-                                    }
-                                }
-                                if let Some(delete_payload) = nested_mutations.get("delete") {
-                                    if let Some(arr) = delete_payload.as_array() {
-                                        for item in arr {
-                                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), item.as_object().unwrap().clone()), relation_field_name: key.clone() });
-                                        }
-                                    } else if let Some(item) = delete_payload.as_object() {
-                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), item.clone()), relation_field_name: key.clone() });
-                                    }
-                                }
-                                if let Some(upsert_payload) = nested_mutations.get("upsert") {
-                                    if let Some(arr) = upsert_payload.as_array() {
-                                        for item in arr {
-                                            let c_create = item.get("create").and_then(|v| v.as_object()).unwrap();
-                                            let c_update = item.get("update").and_then(|v| v.as_object()).unwrap();
-                                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(c_create.clone(), c_update.clone()), relation_field_name: key.clone() });
-                                        }
-                                    } else if let Some(item) = upsert_payload.as_object() {
-                                        let c_create = item.get("create").and_then(|v| v.as_object()).unwrap();
-                                        let c_update = item.get("update").and_then(|v| v.as_object()).unwrap();
-                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(c_create.clone(), c_update.clone()), relation_field_name: key.clone() });
-                                    }
-                                }
-                                if let Some(set_payload) = nested_mutations.get("set") {
-                                    if let Some(arr) = set_payload.as_array() {
-                                        let mut set_wheres = Vec::new();
-                                        for item in arr {
-                                            set_wheres.push(item.as_object().unwrap().clone());
-                                        }
-                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(set_wheres), relation_field_name: key.clone() });
-                                    } else {
-                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(Vec::new()), relation_field_name: key.clone() });
-                                    }
-                                }
-                                if let Some(create_payload) = nested_mutations.get("create") {
-                                    if let Some(arr) = create_payload.as_array() {
-                                        for item in arr {
-                                            let c_data = item.as_object().unwrap();
-                                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(c_data.clone()), relation_field_name: key.clone() });
-                                        }
-                                    } else if let Some(item) = create_payload.as_object() {
-                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(item.clone()), relation_field_name: key.clone() });
-                                    }
-                                }
-                                if let Some(connect_payload) = nested_mutations.get("connect") {
-                                    if let Some(arr) = connect_payload.as_array() {
-                                        for item in arr {
-                                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Connect(item.as_object().unwrap().clone()), relation_field_name: key.clone() });
-                                        }
-                                    } else if let Some(item) = connect_payload.as_object() {
-                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Connect(item.clone()), relation_field_name: key.clone() });
-                                    }
-                                }
-                                if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
-                                    if let Some(arr) = disconnect_payload.as_array() {
-                                        for item in arr {
-                                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(item.as_object().unwrap().clone()), relation_field_name: key.clone() });
-                                        }
-                                    } else if let Some(item) = disconnect_payload.as_object() {
-                                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(item.clone()), relation_field_name: key.clone() });
-                                    }
-                                }
-                            }
-                        },
-                        _ => {}
-                    }
-                }
+                let (c_set_clauses, c_params, c_deferred, _) = parse_update_data_block(
+                    ast, child_model_def, model_name, &required_bases, data, &mut param_idx
+                )?;
+                let mut set_clauses = c_set_clauses;
+                let mut params = c_params;
+                let mut deferred_children = c_deferred;
 
                 if set_clauses.is_empty() && deferred_children.is_empty() {
                     continue;
@@ -1232,524 +1110,15 @@ fn translate_update_node(
 
     let mut deferred_children = Vec::new();
     let mut singular_poly_actions = Vec::new();    
-    for (key, val) in data {
-        if key.starts_with("__") { continue; }
-        
-        let field_def = model_def.resolved_fields.iter().find(|f| &f.name == key)
-            .ok_or_else(|| format!("Invalid field '{}' for model '{}'.", key, model_name))?;
+    let (c_set_clauses, c_params, c_deferred, c_singular_poly) = parse_update_data_block(
+        ast, model_def, model_name, &[], data, &mut param_idx
+    )?;
+    set_clauses.extend(c_set_clauses);
+    params.extend(c_params);
+    deferred_children.extend(c_deferred);
+    singular_poly_actions.extend(c_singular_poly);
 
-        match &field_def.field_type {
-            AstFieldType::Scalar(type_name) => {
-                let normalized_val = validate_and_normalize_scalar(ast, key, type_name, false, val)?;
-                set_clauses.push(format!("{} = ?{}", key, param_idx));
-                params.push(Parameter::Literal(normalized_val));
-                param_idx += 1;
-            },
-            AstFieldType::Enum(type_name) => {
-                let normalized_val = validate_and_normalize_scalar(ast, key, type_name, true, val)?;
-                set_clauses.push(format!("{} = ?{}", key, param_idx));
-                params.push(Parameter::Literal(normalized_val));
-                param_idx += 1;
-            },
-            AstFieldType::ScalarArray(type_name) | AstFieldType::EnumArray(type_name) => {
-                let is_enum = matches!(&field_def.field_type, AstFieldType::EnumArray(_));
-                if let Some(obj) = val.as_object() {
-                    if let Some(push_val) = obj.get("push") {
-                        if is_enum {
-                            if let AstFieldType::EnumArray(type_name) = &field_def.field_type {
-                                validate_and_normalize_scalar(ast, key, type_name, true, push_val)?;
-                            }
-                        }
-                        set_clauses.push(format!("{} = json_insert(COALESCE({}, '[]'), '$[#]', ?{})", key, key, param_idx));
-                        let push_str = if push_val.is_string() { push_val.as_str().unwrap().to_string() } else { serde_json::to_string(push_val).unwrap_or_default() };
-                        params.push(Parameter::Literal(serde_json::Value::String(push_str)));
-                        param_idx += 1;
-                    } else if let Some(pull_val) = obj.get("pull") {
-                        let normalized_val = validate_and_normalize_scalar(ast, key, type_name, is_enum, pull_val)?;
-                        set_clauses.push(format!("{} = (SELECT json_group_array(value) FROM json_each({}) WHERE value != ?{})", key, key, param_idx));
-                        params.push(Parameter::Literal(normalized_val));
-                        param_idx += 1;
-                    } else if let Some(pull_index) = obj.get("pullIndex") {
-                        if let Some(idx) = pull_index.as_i64() {
-                            set_clauses.push(format!("{} = json_remove({}, '$[' || ?{} || ']')", key, key, param_idx));
-                            params.push(Parameter::Literal(serde_json::Value::Number(serde_json::Number::from(idx))));
-                            param_idx += 1;
-                        }
-                    }
-                } else if let Some(arr) = val.as_array() {
-                    if is_enum {
-                        if let AstFieldType::EnumArray(type_name) = &field_def.field_type {
-                            for item in arr {
-                                validate_and_normalize_scalar(ast, key, type_name, true, item)?;
-                            }
-                        }
-                    }
-                    set_clauses.push(format!("{} = ?{}", key, param_idx));
-                    let json_val = serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string());
-                    params.push(Parameter::Literal(serde_json::Value::String(json_val)));
-                    param_idx += 1;
-                }
-            },
-            AstFieldType::Relation(target_model) | AstFieldType::RelationArray(target_model) => {
-                let is_array = matches!(&field_def.field_type, AstFieldType::RelationArray(_));
-                
-                let mut we_hold_fk = false;
-                let mut fk_column = None;
-                for attr in &field_def.attributes {
-                    if let FieldAttribute::InternalRelation { fields, .. } = attr {
-                        if !fields.is_empty() {
-                            // Verify that we actually own the column physically AND it's not an array relation
-                            if !is_array && model_def.resolved_fields.iter().any(|f| &f.name == &fields[0]) {
-                                we_hold_fk = true;
-                                fk_column = Some(fields[0].clone());
-                            }
-                        }
-                    }
-                }
-                
-                let nested_mutations = val.as_object().ok_or_else(|| format!("Expected object for nested mutation on '{}'", key))?;
-                
-                if we_hold_fk {
-                    if let Some(create_payload) = nested_mutations.get("create") {
-                        if is_array {
-                            return Err("Unsupported: array creation on a relation where we hold the FK".to_string());
-                        }
-                        let child_data = create_payload.as_object().ok_or("Expected object for 'create'")?;
-                        let child_step_id = translate_create_node(ast, target_model, child_data, steps, alias_counter, None)?;
-                        let child_model_def = ast.models.get(target_model).unwrap();
-                        let child_pk_col = child_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id");
-                        
-                        if let Some(col) = &fk_column {
-                            set_clauses.push(format!("{} = ?{}", col, param_idx));
-                            params.push(Parameter::Reference { step_id: child_step_id, column: child_pk_col.to_string() });
-                            param_idx += 1;
-                        }
-                    }
-                    if let Some(connect_payload) = nested_mutations.get("connect") {
-                        if let Some(connect_id) = connect_payload.as_object().and_then(|o| o.get("__id")) {
-                            if let Some(col) = &fk_column {
-                                set_clauses.push(format!("{} = ?{}", col, param_idx));
-                                params.push(Parameter::Literal(connect_id.clone()));
-                                param_idx += 1;
-                            }
-                        }
-                    }
-                    if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
-                        if disconnect_payload.as_bool().unwrap_or(false) {
-                            if let Some(col) = &fk_column {
-                                set_clauses.push(format!("{} = NULL", col));
-                            }
-                        }
-                    }
-                } else {
-                    if let Some(create_payload) = nested_mutations.get("create") {
-                        if let Some(arr) = create_payload.as_array() {
-                            for item in arr {
-                                let child_data = item.as_object().ok_or("Expected object in 'create' array")?;
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(child_data.clone()), relation_field_name: key.clone() });
-                            }
-                        } else if let Some(child_data) = create_payload.as_object() {
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(child_data.clone()), relation_field_name: key.clone() });
-                        }
-                    }
-                    if let Some(connect_payload) = nested_mutations.get("connect") {
-                        if let Some(arr) = connect_payload.as_array() {
-                            for item in arr {
-                                let child_data = item.as_object().ok_or("Expected object in 'connect' array")?;
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Connect(child_data.clone()), relation_field_name: key.clone() });
-                            }
-                        } else if let Some(child_data) = connect_payload.as_object() {
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Connect(child_data.clone()), relation_field_name: key.clone() });
-                        }
-                    }
-                    if let Some(update_payload) = nested_mutations.get("update") {
-                        if let Some(arr) = update_payload.as_array() {
-                            for item in arr {
-                                let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update' array")?;
-                                let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update' array")?;
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(target_model.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
-                            }
-                        } else if let Some(item) = update_payload.as_object() {
-                            let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update'")?;
-                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update'")?;
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(target_model.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
-                        }
-                    }
-                    if let Some(delete_payload) = nested_mutations.get("delete") {
-                        if let Some(arr) = delete_payload.as_array() {
-                            for item in arr {
-                                let child_where = item.as_object().ok_or("Expected 'where' object in 'delete' array")?;
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), child_where.clone()), relation_field_name: key.clone() });
-                            }
-                        } else if let Some(item) = delete_payload.as_object() {
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), item.clone()), relation_field_name: key.clone() });
-                        }
-                    }
-                    if let Some(update_many_payload) = nested_mutations.get("updateMany") {
-                        if let Some(arr) = update_many_payload.as_array() {
-                            for item in arr {
-                                let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'updateMany' array")?;
-                                let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'updateMany' array")?;
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::UpdateMany(target_model.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
-                            }
-                        } else if let Some(item) = update_many_payload.as_object() {
-                            let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'updateMany'")?;
-                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'updateMany'")?;
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::UpdateMany(target_model.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
-                        }
-                    }
-                    if let Some(delete_many_payload) = nested_mutations.get("deleteMany") {
-                        if let Some(arr) = delete_many_payload.as_array() {
-                            for item in arr {
-                                let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'deleteMany' array element")?;
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::DeleteMany(target_model.clone(), child_where.clone()), relation_field_name: key.clone() });
-                            }
-                        } else if let Some(item) = delete_many_payload.as_object() {
-                            let child_where = item.get("where").and_then(|v| v.as_object()).unwrap_or(item);
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::DeleteMany(target_model.clone(), child_where.clone()), relation_field_name: key.clone() });
-                        }
-                    }
-                    if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
-                        if let Some(arr) = disconnect_payload.as_array() {
-                            for item in arr {
-                                let child_where = item.as_object().ok_or("Expected 'where' object in 'disconnect' array")?;
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(child_where.clone()), relation_field_name: key.clone() });
-                            }
-                        } else if let Some(item) = disconnect_payload.as_object() {
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(item.clone()), relation_field_name: key.clone() });
-                        }
-                    }
-                    if let Some(set_payload) = nested_mutations.get("set") {
-                        if let Some(arr) = set_payload.as_array() {
-                            let mut set_wheres = Vec::new();
-                            for item in arr {
-                                let child_where = item.as_object().ok_or("Expected 'where' object in 'set' array")?;
-                                set_wheres.push(child_where.clone());
-                            }
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(set_wheres), relation_field_name: key.clone() });
-                        } else {
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(Vec::new()), relation_field_name: key.clone() });
-                        }
-                    }
-                }
-                
-                if let Some(upsert_payload) = nested_mutations.get("upsert") {
-                    if let Some(arr) = upsert_payload.as_array() {
-                        for item in arr {
-                            let create_data = item.get("create").and_then(|v| v.as_object()).ok_or("Expected 'create' in 'upsert' array")?;
-                            let update_data = item.get("update").and_then(|v| v.as_object()).ok_or("Expected 'update' in 'upsert' array")?;
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(create_data.clone(), update_data.clone()), relation_field_name: key.clone() });
-                        }
-                    } else if let Some(item) = upsert_payload.as_object() {
-                        let create_data = item.get("create").and_then(|v| v.as_object()).ok_or("Expected 'create' in 'upsert'")?;
-                        let update_data = item.get("update").and_then(|v| v.as_object()).ok_or("Expected 'update' in 'upsert'")?;
-                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(create_data.clone(), update_data.clone()), relation_field_name: key.clone() });
-                    }
-                }
-            },
-            AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {
-                let nested_mutations = val.as_object().ok_or(format!("Expected object for polymorphic field '{}'", key))?;
-                
-                if let Some(create_payload) = nested_mutations.get("create") {
-                    if let Some(arr) = create_payload.as_array() {
-                        for item in arr {
-                            if let Some(item_obj) = item.as_object() {
-                                for (concrete_model_name, child_data_val) in item_obj {
-                                    if !ast.models.contains_key(concrete_model_name) {
-                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
-                                    }
-                                    if let Some(child_data) = child_data_val.as_object() {
-                                        deferred_children.push(DeferredChild {
-                                            target_model: concrete_model_name.clone(),
-                                            action: DeferredAction::Create(child_data.clone()),
-                                            relation_field_name: key.clone()
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                if let Some(connect_payload) = nested_mutations.get("connect") {
-                    if let Some(arr) = connect_payload.as_array() {
-                        for item in arr {
-                            if let Some(item_obj) = item.as_object() {
-                                for (concrete_model_name, child_where_val) in item_obj {
-                                    if !ast.models.contains_key(concrete_model_name) {
-                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
-                                    }
-                                    if let Some(child_where) = child_where_val.as_object() {
-                                        deferred_children.push(DeferredChild {
-                                            target_model: concrete_model_name.clone(),
-                                            action: DeferredAction::Connect(child_where.clone()),
-                                            relation_field_name: key.clone()
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
-                    if let Some(arr) = disconnect_payload.as_array() {
-                        for item in arr {
-                            if let Some(item_obj) = item.as_object() {
-                                for (concrete_model_name, child_where_val) in item_obj {
-                                    if !ast.models.contains_key(concrete_model_name) {
-                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
-                                    }
-                                    if let Some(child_where) = child_where_val.as_object() {
-                                        deferred_children.push(DeferredChild {
-                                            target_model: concrete_model_name.clone(),
-                                            action: DeferredAction::Disconnect(child_where.clone()),
-                                            relation_field_name: key.clone()
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                if let Some(set_payload) = nested_mutations.get("set") {
-                    let base_model_name = match &field_def.field_type {
-                        AstFieldType::PolymorphicUnionArray(n) | AstFieldType::PolymorphicBaseArray(n) => n.clone(),
-                        _ => unreachable!(),
-                    };
-                    
-                    let mut concrete_models = Vec::new();
-                    if let Some(union_models) = ast.unions.get(&base_model_name) {
-                        concrete_models.extend(union_models.clone());
-                    } else if ast.bases.contains_key(&base_model_name) {
-                        for (m_name, m_node) in &ast.models {
-                            if m_node.resolved_bases.contains(&base_model_name) {
-                                concrete_models.push(m_name.clone());
-                            }
-                        }
-                    }
-                    
-                    if let Some(arr) = set_payload.as_array() {
-                        let mut sets_by_model: std::collections::HashMap<String, Vec<serde_json::Map<String, Value>>> = std::collections::HashMap::new();
-                        for item in arr {
-                            if let Some(item_obj) = item.as_object() {
-                                for (concrete_model_name, child_where_val) in item_obj {
-                                    if let Some(child_where) = child_where_val.as_object() {
-                                        sets_by_model.entry(concrete_model_name.clone()).or_default().push(child_where.clone());
-                                    }
-                                }
-                            }
-                        }
-                        
-                        for c_model in concrete_models {
-                            if let Some(wheres) = sets_by_model.remove(&c_model) {
-                                deferred_children.push(DeferredChild {
-                                    target_model: c_model,
-                                    action: DeferredAction::Set(wheres),
-                                    relation_field_name: key.clone()
-                                });
-                            } else {
-                                deferred_children.push(DeferredChild {
-                                    target_model: c_model,
-                                    action: DeferredAction::Set(Vec::new()),
-                                    relation_field_name: key.clone()
-                                });
-                            }
-                        }
-                    } else {
-                        for c_model in concrete_models {
-                            deferred_children.push(DeferredChild {
-                                target_model: c_model,
-                                action: DeferredAction::Set(Vec::new()),
-                                relation_field_name: key.clone()
-                            });
-                        }
-                    }
-                }
-                
-                if let Some(update_payload) = nested_mutations.get("update") {
-                    if let Some(arr) = update_payload.as_array() {
-                        for item in arr {
-                            let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update' array")?;
-                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update' array")?;
-                            let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
-                            if !ast.models.contains_key(kind_val) {
-                                return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
-                            }
-                            let mut cw = child_where.clone();
-                            cw.remove("__kind");
-                            deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Update(kind_val.to_string(), cw, child_data.clone()), relation_field_name: key.clone() });
-                        }
-                    } else if let Some(item) = update_payload.as_object() {
-                        let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update'")?;
-                        let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update'")?;
-                        let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
-                        if !ast.models.contains_key(kind_val) {
-                            return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
-                        }
-                        let mut cw = child_where.clone();
-                        cw.remove("__kind");
-                        deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Update(kind_val.to_string(), cw, child_data.clone()), relation_field_name: key.clone() });
-                    }
-                }
-                
-                if let Some(delete_payload) = nested_mutations.get("delete") {
-                    if let Some(arr) = delete_payload.as_array() {
-                        for item in arr {
-                            let child_where = item.as_object().ok_or("Expected 'where' object in 'delete' array")?;
-                            let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
-                            if !ast.models.contains_key(kind_val) {
-                                return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
-                            }
-                            let mut cw = child_where.clone();
-                            cw.remove("__kind");
-                            deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Delete(kind_val.to_string(), cw), relation_field_name: key.clone() });
-                        }
-                    } else if let Some(item) = delete_payload.as_object() {
-                        let kind_val = item.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
-                        if !ast.models.contains_key(kind_val) {
-                            return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
-                        }
-                        let mut cw = item.clone();
-                        cw.remove("__kind");
-                        deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Delete(kind_val.to_string(), cw), relation_field_name: key.clone() });
-                    }
-                }
-                if let Some(update_many_payload) = nested_mutations.get("updateMany") {
-                    let base_model_name = match &field_def.field_type {
-                        AstFieldType::PolymorphicUnionArray(n) | AstFieldType::PolymorphicBaseArray(n) => n.clone(),
-                        _ => unreachable!(),
-                    };
-                    if let Some(arr) = update_many_payload.as_array() {
-                        for item in arr {
-                            let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'updateMany' array")?;
-                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'updateMany' array")?;
-                            deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::UpdateMany(base_model_name.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
-                        }
-                    } else if let Some(item) = update_many_payload.as_object() {
-                        let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'updateMany'")?;
-                        let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'updateMany'")?;
-                        deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::UpdateMany(base_model_name.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
-                    }
-                }
-                if let Some(delete_many_payload) = nested_mutations.get("deleteMany") {
-                    let base_model_name = match &field_def.field_type {
-                        AstFieldType::PolymorphicUnionArray(n) | AstFieldType::PolymorphicBaseArray(n) => n.clone(),
-                        _ => unreachable!(),
-                    };
-                    if let Some(arr) = delete_many_payload.as_array() {
-                        for item in arr {
-                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'deleteMany' array element")?;
-                            deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::DeleteMany(base_model_name.clone(), child_where.clone()), relation_field_name: key.clone() });
-                        }
-                    } else if let Some(item) = delete_many_payload.as_object() {
-                        let child_where = item.get("where").and_then(|v| v.as_object()).unwrap_or(item);
-                        deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::DeleteMany(base_model_name.clone(), child_where.clone()), relation_field_name: key.clone() });
-                    }
-                }
-            },
-            AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicBase(_) => {
-                let nested_mutations = val.as_object().ok_or(format!("Expected object for polymorphic field '{}'", key))?;
-                
-                let type_col = format!("{}_type", key);
-                let id_col = format!("{}_id", key);
-
-                if let Some(disconnect_val) = nested_mutations.get("disconnect") {
-                    if disconnect_val.as_bool().unwrap_or(false) {
-                        set_clauses.push(format!("{} = NULL", type_col));
-                        set_clauses.push(format!("{} = NULL", id_col));
-                        continue;
-                    }
-                }
-                
-                if let Some(delete_payload) = nested_mutations.get("delete") {
-                    let child_where = delete_payload.as_object().ok_or("Expected 'where' object in 'delete'")?;
-                    let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'delete' block")?;
-                    if !ast.models.contains_key(kind_val) {
-                        return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
-                    }
-                    
-                    singular_poly_actions.push((kind_val.to_string(), id_col.clone(), type_col.clone()));
-                    
-                    set_clauses.push(format!("{} = NULL", type_col));
-                    set_clauses.push(format!("{} = NULL", id_col));
-                    continue;
-                }
-                
-                if let Some(update_payload) = nested_mutations.get("update") {
-                    let child_update = update_payload.as_object().ok_or("Expected object in 'update'")?;
-                    let kind_val = child_update.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'update' block")?;
-                    let child_data = child_update.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' block in 'update'")?;
-                    
-                    if !ast.models.contains_key(kind_val) {
-                        return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
-                    }
-                    
-                    deferred_children.push(DeferredChild { 
-                        target_model: kind_val.to_string(), 
-                        action: DeferredAction::Update(kind_val.to_string(), serde_json::Map::new(), child_data.clone()), 
-                        relation_field_name: key.clone() 
-                    });
-                    continue;
-                }
-                
-                if let Some(upsert_payload) = nested_mutations.get("upsert") {
-                    let child_upsert = upsert_payload.as_object().ok_or("Expected object in 'upsert'")?;
-                    let kind_val = child_upsert.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'upsert' block")?;
-                    let create_data = child_upsert.get("create").and_then(|v| v.as_object()).ok_or("Expected 'create' block in 'upsert'")?;
-                    let update_data = child_upsert.get("update").and_then(|v| v.as_object()).ok_or("Expected 'update' block in 'upsert'")?;
-                    
-                    if !ast.models.contains_key(kind_val) {
-                        return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
-                    }
-                    
-                    deferred_children.push(DeferredChild { 
-                        target_model: kind_val.to_string(), 
-                        action: DeferredAction::Upsert(create_data.clone(), update_data.clone()), 
-                        relation_field_name: key.clone() 
-                    });
-                    continue;
-                }
-
-                // Expecting exactly one target type key (e.g. { "ModelA": { "connect": { "__id": "1" } } })
-                if nested_mutations.len() != 1 {
-                    return Err(format!("Polymorphic field '{}' requires exactly one target type in the mutation payload.", key));
-                }
-                
-                let (target_model, actions) = nested_mutations.iter().next().unwrap();
-                let actions_obj = actions.as_object().ok_or(format!("Expected object for target type '{}' in field '{}'", target_model, key))?;
-
-                // Validate target model exists
-                if !ast.models.contains_key(target_model) {
-                    return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
-                }
-
-                if let Some(connect_payload) = actions_obj.get("connect") {
-                    if let Some(connect_id) = connect_payload.as_object().and_then(|o| o.get("__id")) {
-                        // 1. Set type column
-                        set_clauses.push(format!("{} = ?{}", type_col, param_idx));
-                        params.push(Parameter::Literal(serde_json::Value::String(target_model.clone())));
-                        param_idx += 1;
-                        
-                        // 2. Set id column
-                        set_clauses.push(format!("{} = ?{}", id_col, param_idx));
-                        params.push(Parameter::Literal(connect_id.clone()));
-                        param_idx += 1;
-                    }
-                } else if let Some(create_payload) = actions_obj.get("create") {
-                    if let Some(child_data) = create_payload.as_object() {
-                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(child_data.clone()), relation_field_name: key.clone() });
-                    }
-                } else {
-                    return Err(format!("Unsupported action for polymorphic field '{}'. Only 'connect' and 'create' are supported.", key));
-                }
-            }
-        }
-    }
-    
-    if set_clauses.is_empty() {
-        set_clauses.push(format!("{} = {}", pk_col, pk_col));
+    if set_clauses.is_empty() {        set_clauses.push(format!("{} = {}", pk_col, pk_col));
     }
     
     let where_clause_ir = parse_where_clause(ast, where_obj, model_def)?;
@@ -2993,6 +2362,500 @@ fn compile_parameterized_where(
         },
         WhereClause::AlwaysTrue => ("1=1".to_string(), params),
     }
+}
+
+fn parse_update_data_block(
+    ast: &SchemaAst,
+    model_def: &schema_parser::ast::ModelNode,
+    target_name: &str, // The explicit target for error reporting (Base, Union, or Model)
+    required_bases: &[String], // The dynamic intersection bases
+    data: &serde_json::Map<String, serde_json::Value>,
+    param_idx: &mut usize,
+) -> Result<(Vec<String>, Vec<Parameter>, Vec<DeferredChild>, Vec<(String, String, String)>), String> {
+    let mut set_clauses = Vec::new();
+    let mut params = Vec::new();
+    let mut deferred_children = Vec::new();
+    let mut singular_poly_actions = Vec::new();
+
+    for (key, val) in data {
+        if key.starts_with("__") { continue; }
+        
+        let field_def = model_def.resolved_fields.iter().find(|f| &f.name == key)
+            .ok_or_else(|| {
+                if !required_bases.is_empty() {
+                    format!("Invalid field '{}' for target '{}'. This field does not match/exist on the resolved bases in the where clause: [{}].", key, target_name, required_bases.join(", "))
+                } else {
+                    format!("Invalid field '{}' for target '{}'.", key, target_name)
+                }
+            })?;
+
+        match &field_def.field_type {
+            AstFieldType::Scalar(type_name) | AstFieldType::Enum(type_name) => {
+                let is_enum = matches!(&field_def.field_type, AstFieldType::Enum(_));
+                let normalized_val = validate_and_normalize_scalar(ast, key, type_name, is_enum, val)?;
+                set_clauses.push(format!("{} = ?{}", key, *param_idx));
+                params.push(Parameter::Literal(normalized_val));
+                *param_idx += 1;
+            },
+            AstFieldType::ScalarArray(type_name) | AstFieldType::EnumArray(type_name) => {
+                let is_enum = matches!(&field_def.field_type, AstFieldType::EnumArray(_));
+                if let Some(obj) = val.as_object() {
+                    if let Some(push_val) = obj.get("push") {
+                        if is_enum {
+                            if let AstFieldType::EnumArray(t_name) = &field_def.field_type {
+                                validate_and_normalize_scalar(ast, key, t_name, true, push_val)?;
+                            }
+                        }
+                        set_clauses.push(format!("{} = json_insert(COALESCE({}, '[]'), '$[#]', ?{})", key, key, *param_idx));
+                        let push_str = if push_val.is_string() { push_val.as_str().unwrap().to_string() } else { serde_json::to_string(push_val).unwrap_or_default() };
+                        params.push(Parameter::Literal(serde_json::Value::String(push_str)));
+                        *param_idx += 1;
+                    } else if let Some(pull_val) = obj.get("pull") {
+                        let normalized_val = validate_and_normalize_scalar(ast, key, type_name, is_enum, pull_val)?;
+                        set_clauses.push(format!("{} = (SELECT json_group_array(value) FROM json_each({}) WHERE value != ?{})", key, key, *param_idx));
+                        params.push(Parameter::Literal(normalized_val));
+                        *param_idx += 1;
+                    } else if let Some(pull_index) = obj.get("pullIndex") {
+                        if let Some(idx) = pull_index.as_i64() {
+                            set_clauses.push(format!("{} = json_remove({}, '$[' || ?{} || ']')", key, key, *param_idx));
+                            params.push(Parameter::Literal(serde_json::Value::Number(serde_json::Number::from(idx))));
+                            *param_idx += 1;
+                        }
+                    }
+                } else if let Some(arr) = val.as_array() {
+                    if is_enum {
+                        if let AstFieldType::EnumArray(t_name) = &field_def.field_type {
+                            for item in arr {
+                                validate_and_normalize_scalar(ast, key, t_name, true, item)?;
+                            }
+                        }
+                    }
+                    set_clauses.push(format!("{} = ?{}", key, *param_idx));
+                    let json_val = serde_json::to_string(arr).unwrap_or_else(|_| "[]".to_string());
+                    params.push(Parameter::Literal(serde_json::Value::String(json_val)));
+                    *param_idx += 1;
+                }
+            },
+            AstFieldType::Relation(target_model) | AstFieldType::RelationArray(target_model) => {
+                if let Some(nested_mutations) = val.as_object() {
+                    if let Some(um_payload) = nested_mutations.get("updateMany") {
+                        if let Some(arr) = um_payload.as_array() {
+                            for item in arr {
+                                let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
+                                let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::UpdateMany(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
+                            }
+                        } else if let Some(item) = um_payload.as_object() {
+                            let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
+                            let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::UpdateMany(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
+                        }
+                    }
+                    if let Some(dm_payload) = nested_mutations.get("deleteMany") {
+                        if let Some(arr) = dm_payload.as_array() {
+                            for item in arr {
+                                let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::DeleteMany(target_model.clone(), c_where.clone()), relation_field_name: key.clone() });
+                            }
+                        } else if let Some(item) = dm_payload.as_object() {
+                            let c_where = item.get("where").and_then(|v| v.as_object()).unwrap_or(item);
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::DeleteMany(target_model.clone(), c_where.clone()), relation_field_name: key.clone() });
+                        }
+                    }
+                    if let Some(update_payload) = nested_mutations.get("update") {
+                        if let Some(arr) = update_payload.as_array() {
+                            for item in arr {
+                                let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
+                                let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
+                            }
+                        } else if let Some(item) = update_payload.as_object() {
+                            let c_data = item.get("data").and_then(|v| v.as_object()).unwrap();
+                            let c_where = item.get("where").and_then(|v| v.as_object()).unwrap();
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Update(target_model.clone(), c_where.clone(), c_data.clone()), relation_field_name: key.clone() });
+                        }
+                    }
+                    if let Some(del_payload) = nested_mutations.get("delete") {
+                        if let Some(arr) = del_payload.as_array() {
+                            for item in arr {
+                                let c_where = item.as_object().unwrap();
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), c_where.clone()), relation_field_name: key.clone() });
+                            }
+                        } else if let Some(item) = del_payload.as_object() {
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), item.clone()), relation_field_name: key.clone() });
+                        } else if let Some(item) = del_payload.as_bool() {
+                            if item {
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), serde_json::Map::new()), relation_field_name: key.clone() });
+                            }
+                        }
+                    }
+                    if let Some(connect_payload) = nested_mutations.get("connect") {
+                        if let Some(arr) = connect_payload.as_array() {
+                            for item in arr {
+                                let c_where = item.as_object().unwrap();
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Connect(c_where.clone()), relation_field_name: key.clone() });
+                            }
+                        } else if let Some(item) = connect_payload.as_object() {
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Connect(item.clone()), relation_field_name: key.clone() });
+                        }
+                    }
+                    if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
+                        if let Some(arr) = disconnect_payload.as_array() {
+                            for item in arr {
+                                let c_where = item.as_object().unwrap();
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(c_where.clone()), relation_field_name: key.clone() });
+                            }
+                        } else if let Some(item) = disconnect_payload.as_object() {
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(item.clone()), relation_field_name: key.clone() });
+                        } else if let Some(item) = disconnect_payload.as_bool() {
+                            if item {
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(serde_json::Map::new()), relation_field_name: key.clone() });
+                            }
+                        }
+                    }
+                    if let Some(set_payload) = nested_mutations.get("set") {
+                        if let Some(arr) = set_payload.as_array() {
+                            let mut set_wheres = Vec::new();
+                            for item in arr {
+                                let c_where = item.as_object().unwrap();
+                                set_wheres.push(c_where.clone());
+                            }
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(set_wheres), relation_field_name: key.clone() });
+                        } else if let Some(item) = set_payload.as_object() {
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(vec![item.clone()]), relation_field_name: key.clone() });
+                        } else if let Some(arr) = set_payload.as_array() {
+                            if arr.is_empty() {
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(Vec::new()), relation_field_name: key.clone() });
+                            }
+                        }
+                    }
+                    if let Some(create_payload) = nested_mutations.get("create") {
+                        if let Some(arr) = create_payload.as_array() {
+                            for item in arr {
+                                let c_data = item.as_object().unwrap();
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(c_data.clone()), relation_field_name: key.clone() });
+                            }
+                        } else if let Some(item) = create_payload.as_object() {
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(item.clone()), relation_field_name: key.clone() });
+                        }
+                    }
+                    if let Some(upsert_payload) = nested_mutations.get("upsert") {
+                        if let Some(arr) = upsert_payload.as_array() {
+                            for item in arr {
+                                let u_create = item.get("create").and_then(|v| v.as_object()).unwrap();
+                                let u_update = item.get("update").and_then(|v| v.as_object()).unwrap();
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(u_create.clone(), u_update.clone()), relation_field_name: key.clone() });
+                            }
+                        } else if let Some(item) = upsert_payload.as_object() {
+                            let u_create = item.get("create").and_then(|v| v.as_object()).unwrap();
+                            let u_update = item.get("update").and_then(|v| v.as_object()).unwrap();
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Upsert(u_create.clone(), u_update.clone()), relation_field_name: key.clone() });
+                        }
+                    }
+                }
+            },
+            AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicBase(_) => {
+                let nested_mutations = val.as_object().ok_or(format!("Expected object for polymorphic field '{}'", key))?;
+                
+                let type_col = format!("{}_type", key);
+                let id_col = format!("{}_id", key);
+
+                if let Some(disconnect_val) = nested_mutations.get("disconnect") {
+                    if disconnect_val.as_bool().unwrap_or(false) {
+                        set_clauses.push(format!("{} = NULL", type_col));
+                        set_clauses.push(format!("{} = NULL", id_col));
+                        continue;
+                    }
+                }
+                
+                if let Some(delete_payload) = nested_mutations.get("delete") {
+                    let child_where = delete_payload.as_object().ok_or("Expected 'where' object in 'delete'")?;
+                    let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'delete' block")?;
+                    if !ast.models.contains_key(kind_val) {
+                        return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                    }
+                    
+                    singular_poly_actions.push((kind_val.to_string(), id_col.clone(), type_col.clone()));
+                    
+                    set_clauses.push(format!("{} = NULL", type_col));
+                    set_clauses.push(format!("{} = NULL", id_col));
+                    continue;
+                }
+                
+                if let Some(update_payload) = nested_mutations.get("update") {
+                    let child_update = update_payload.as_object().ok_or("Expected object in 'update'")?;
+                    let kind_val = child_update.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'update' block")?;
+                    let child_data = child_update.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' block in 'update'")?;
+                    
+                    if !ast.models.contains_key(kind_val) {
+                        return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                    }
+                    
+                    deferred_children.push(DeferredChild { 
+                        target_model: kind_val.to_string(), 
+                        action: DeferredAction::Update(kind_val.to_string(), serde_json::Map::new(), child_data.clone()), 
+                        relation_field_name: key.clone() 
+                    });
+                    continue;
+                }
+                
+                if let Some(upsert_payload) = nested_mutations.get("upsert") {
+                    let child_upsert = upsert_payload.as_object().ok_or("Expected object in 'upsert'")?;
+                    let kind_val = child_upsert.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'upsert' block")?;
+                    let create_data = child_upsert.get("create").and_then(|v| v.as_object()).ok_or("Expected 'create' block in 'upsert'")?;
+                    let update_data = child_upsert.get("update").and_then(|v| v.as_object()).ok_or("Expected 'update' block in 'upsert'")?;
+                    
+                    if !ast.models.contains_key(kind_val) {
+                        return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                    }
+                    
+                    deferred_children.push(DeferredChild { 
+                        target_model: kind_val.to_string(), 
+                        action: DeferredAction::Upsert(create_data.clone(), update_data.clone()), 
+                        relation_field_name: key.clone() 
+                    });
+                    continue;
+                }
+
+                // Expecting exactly one target type key (e.g. { "ModelA": { "connect": { "__id": "1" } } })
+                if nested_mutations.len() != 1 {
+                    return Err(format!("Polymorphic field '{}' requires exactly one target type in the mutation payload.", key));
+                }
+                
+                let (target_model, actions) = nested_mutations.iter().next().unwrap();
+                let actions_obj = actions.as_object().ok_or(format!("Expected object for target type '{}' in field '{}'", target_model, key))?;
+
+                // Validate target model exists
+                if !ast.models.contains_key(target_model) {
+                    return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
+                }
+
+                if let Some(connect_payload) = actions_obj.get("connect") {
+                    if let Some(connect_id) = connect_payload.as_object().and_then(|o| o.get("__id")) {
+                        // 1. Set type column
+                        set_clauses.push(format!("{} = ?{}", type_col, *param_idx));
+                        params.push(Parameter::Literal(serde_json::Value::String(target_model.clone())));
+                        *param_idx += 1;
+                        
+                        // 2. Set id column
+                        set_clauses.push(format!("{} = ?{}", id_col, *param_idx));
+                        params.push(Parameter::Literal(connect_id.clone()));
+                        *param_idx += 1;
+                    }
+                } else if let Some(create_payload) = actions_obj.get("create") {
+                    if let Some(child_data) = create_payload.as_object() {
+                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(child_data.clone()), relation_field_name: key.clone() });
+                    }
+                } else {
+                    return Err(format!("Unsupported action for polymorphic field '{}'. Only 'connect' and 'create' are supported.", key));
+                }
+            },
+            AstFieldType::PolymorphicUnionArray(_) | AstFieldType::PolymorphicBaseArray(_) => {
+                let nested_mutations = val.as_object().ok_or(format!("Expected object for polymorphic field '{}'", key))?;
+                
+                if let Some(create_payload) = nested_mutations.get("create") {
+                    if let Some(arr) = create_payload.as_array() {
+                        for item in arr {
+                            if let Some(item_obj) = item.as_object() {
+                                for (concrete_model_name, child_data_val) in item_obj {
+                                    if !ast.models.contains_key(concrete_model_name) {
+                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
+                                    }
+                                    if let Some(child_data) = child_data_val.as_object() {
+                                        deferred_children.push(DeferredChild {
+                                            target_model: concrete_model_name.clone(),
+                                            action: DeferredAction::Create(child_data.clone()),
+                                            relation_field_name: key.clone()
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if let Some(connect_payload) = nested_mutations.get("connect") {
+                    if let Some(arr) = connect_payload.as_array() {
+                        for item in arr {
+                            if let Some(item_obj) = item.as_object() {
+                                for (concrete_model_name, child_where_val) in item_obj {
+                                    if !ast.models.contains_key(concrete_model_name) {
+                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
+                                    }
+                                    if let Some(child_where) = child_where_val.as_object() {
+                                        deferred_children.push(DeferredChild {
+                                            target_model: concrete_model_name.clone(),
+                                            action: DeferredAction::Connect(child_where.clone()),
+                                            relation_field_name: key.clone()
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
+                    if let Some(arr) = disconnect_payload.as_array() {
+                        for item in arr {
+                            if let Some(item_obj) = item.as_object() {
+                                for (concrete_model_name, child_where_val) in item_obj {
+                                    if !ast.models.contains_key(concrete_model_name) {
+                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
+                                    }
+                                    if let Some(child_where) = child_where_val.as_object() {
+                                        deferred_children.push(DeferredChild {
+                                            target_model: concrete_model_name.clone(),
+                                            action: DeferredAction::Disconnect(child_where.clone()),
+                                            relation_field_name: key.clone()
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if let Some(set_payload) = nested_mutations.get("set") {
+                    let base_model_name = match &field_def.field_type {
+                        AstFieldType::PolymorphicUnionArray(n) | AstFieldType::PolymorphicBaseArray(n) => n.clone(),
+                        _ => unreachable!(),
+                    };
+                    
+                    let mut concrete_models = Vec::new();
+                    if let Some(union_models) = ast.unions.get(&base_model_name) {
+                        concrete_models.extend(union_models.clone());
+                    } else if ast.bases.contains_key(&base_model_name) {
+                        for (m_name, m_node) in &ast.models {
+                            if m_node.resolved_bases.contains(&base_model_name) {
+                                concrete_models.push(m_name.clone());
+                            }
+                        }
+                    }
+                    
+                    if let Some(arr) = set_payload.as_array() {
+                        let mut sets_by_model: std::collections::HashMap<String, Vec<serde_json::Map<String, Value>>> = std::collections::HashMap::new();
+                        for item in arr {
+                            if let Some(item_obj) = item.as_object() {
+                                for (concrete_model_name, child_where_val) in item_obj {
+                                    if let Some(child_where) = child_where_val.as_object() {
+                                        sets_by_model.entry(concrete_model_name.clone()).or_default().push(child_where.clone());
+                                    }
+                                }
+                            }
+                        }
+                        
+                        for c_model in concrete_models {
+                            if let Some(wheres) = sets_by_model.remove(&c_model) {
+                                deferred_children.push(DeferredChild {
+                                    target_model: c_model,
+                                    action: DeferredAction::Set(wheres),
+                                    relation_field_name: key.clone()
+                                });
+                            } else {
+                                deferred_children.push(DeferredChild {
+                                    target_model: c_model,
+                                    action: DeferredAction::Set(Vec::new()),
+                                    relation_field_name: key.clone()
+                                });
+                            }
+                        }
+                    } else {
+                        for c_model in concrete_models {
+                            deferred_children.push(DeferredChild {
+                                target_model: c_model,
+                                action: DeferredAction::Set(Vec::new()),
+                                relation_field_name: key.clone()
+                            });
+                        }
+                    }
+                }
+                
+                if let Some(update_payload) = nested_mutations.get("update") {
+                    if let Some(arr) = update_payload.as_array() {
+                        for item in arr {
+                            let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update' array")?;
+                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update' array")?;
+                            let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
+                            if !ast.models.contains_key(kind_val) {
+                                return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                            }
+                            let mut cw = child_where.clone();
+                            cw.remove("__kind");
+                            deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Update(kind_val.to_string(), cw, child_data.clone()), relation_field_name: key.clone() });
+                        }
+                    } else if let Some(item) = update_payload.as_object() {
+                        let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update'")?;
+                        let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update'")?;
+                        let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
+                        if !ast.models.contains_key(kind_val) {
+                            return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                        }
+                        let mut cw = child_where.clone();
+                        cw.remove("__kind");
+                        deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Update(kind_val.to_string(), cw, child_data.clone()), relation_field_name: key.clone() });
+                    }
+                }
+                
+                if let Some(delete_payload) = nested_mutations.get("delete") {
+                    if let Some(arr) = delete_payload.as_array() {
+                        for item in arr {
+                            let child_where = item.as_object().ok_or("Expected 'where' object in 'delete' array")?;
+                            let kind_val = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
+                            if !ast.models.contains_key(kind_val) {
+                                return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                            }
+                            let mut cw = child_where.clone();
+                            cw.remove("__kind");
+                            deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Delete(kind_val.to_string(), cw), relation_field_name: key.clone() });
+                        }
+                    } else if let Some(item) = delete_payload.as_object() {
+                        let kind_val = item.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic nested mutation requires '__kind' in 'where' block")?;
+                        if !ast.models.contains_key(kind_val) {
+                            return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
+                        }
+                        let mut cw = item.clone();
+                        cw.remove("__kind");
+                        deferred_children.push(DeferredChild { target_model: kind_val.to_string(), action: DeferredAction::Delete(kind_val.to_string(), cw), relation_field_name: key.clone() });
+                    }
+                }
+                if let Some(update_many_payload) = nested_mutations.get("updateMany") {
+                    let base_model_name = match &field_def.field_type {
+                        AstFieldType::PolymorphicUnionArray(n) | AstFieldType::PolymorphicBaseArray(n) => n.clone(),
+                        _ => unreachable!(),
+                    };
+                    if let Some(arr) = update_many_payload.as_array() {
+                        for item in arr {
+                            let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'updateMany' array")?;
+                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'updateMany' array")?;
+                            deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::UpdateMany(base_model_name.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
+                        }
+                    } else if let Some(item) = update_many_payload.as_object() {
+                        let child_data = item.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'updateMany'")?;
+                        let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'updateMany'")?;
+                        deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::UpdateMany(base_model_name.clone(), child_where.clone(), child_data.clone()), relation_field_name: key.clone() });
+                    }
+                }
+                if let Some(delete_many_payload) = nested_mutations.get("deleteMany") {
+                    let base_model_name = match &field_def.field_type {
+                        AstFieldType::PolymorphicUnionArray(n) | AstFieldType::PolymorphicBaseArray(n) => n.clone(),
+                        _ => unreachable!(),
+                    };
+                    if let Some(arr) = delete_many_payload.as_array() {
+                        for item in arr {
+                            let child_where = item.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'deleteMany' array element")?;
+                            deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::DeleteMany(base_model_name.clone(), child_where.clone()), relation_field_name: key.clone() });
+                        }
+                    } else if let Some(item) = delete_many_payload.as_object() {
+                        let child_where = item.get("where").and_then(|v| v.as_object()).unwrap_or(item);
+                        deferred_children.push(DeferredChild { target_model: base_model_name.clone(), action: DeferredAction::DeleteMany(base_model_name.clone(), child_where.clone()), relation_field_name: key.clone() });
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok((set_clauses, params, deferred_children, singular_poly_actions))
 }
 
 #[cfg(test)]
