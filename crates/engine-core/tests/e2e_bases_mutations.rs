@@ -666,3 +666,86 @@ async fn test_singular_polymorphic_type_mismatch_safety() {
         assert_eq!(fav_id, "collision_id");
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn test_singular_polymorphic_root_create_nested_create() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, _db_uri) = setup_app(schema).await;
+
+    let payload = json!({
+        "action": "create",
+        "model": "User",
+        "data": {
+            "name": "New User",
+            "favorite": { "Article": { "create": { "title": "Brand New Article" } } }
+        }
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    let user_id = response["data"]["__id"].as_str().unwrap().to_string();
+
+    let pool = api_layer::db::create_pool(&_db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(move |db| {
+        let (fav_type, fav_id): (String, String) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = ?1", [&user_id], |r| Ok((r.get(0).unwrap(), r.get(1).unwrap()))).unwrap();
+        assert_eq!(fav_type, "Article");
+        
+        let title: String = db.query_row("SELECT title FROM Article WHERE __id = ?1", [&fav_id], |r| r.get(0)).unwrap();
+        assert_eq!(title, "Brand New Article");
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_singular_polymorphic_root_create_nested_connect() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid_connect_1', 404)", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "create",
+        "model": "User",
+        "data": {
+            "name": "Connecting User",
+            "favorite": { "Video": { "connect": { "__id": "vid_connect_1" } } }
+        }
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    let user_id = response["data"]["__id"].as_str().unwrap().to_string();
+
+    conn.interact(move |db| {
+        let (fav_type, fav_id): (String, String) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = ?1", [&user_id], |r| Ok((r.get(0).unwrap(), r.get(1).unwrap()))).unwrap();
+        assert_eq!(fav_type, "Video");
+        assert_eq!(fav_id, "vid_connect_1");
+    }).await.unwrap();
+}
