@@ -150,7 +150,7 @@ async fn test_e2e_polymorphic_mutations() {
             "__id": "c1",
             "text": "Great article!",
             "parent": {
-                "Article": { "create": { "__id": "a1", "title": "Polymorphic Writes" } }
+                "create": { "__kind": "Article", "__id": "a1", "title": "Polymorphic Writes" }
             }
         }
     });
@@ -166,7 +166,7 @@ async fn test_e2e_polymorphic_mutations() {
             "__id": "c2",
             "text": "Also great!",
             "parent": {
-                "Article": { "connect": { "__id": "a1" } }
+                "connect": { "__kind": "Article", "__id": "a1" }
             }
         }
     });
@@ -352,7 +352,7 @@ async fn test_e2e_polymorphic_reparent_and_disconnect() {
             "__id": "c1",
             "text": "Initial comment",
             "parent": {
-                "Article": { "create": { "__id": "a1", "title": "Polymorphic Writes" } }
+                "create": { "__kind": "Article", "__id": "a1", "title": "Polymorphic Writes" }
             }
         }
     });
@@ -739,7 +739,7 @@ async fn test_singular_polymorphic_root_create_nested_create() {
         "model": "User",
         "data": {
             "name": "New User",
-            "favorite": { "Article": { "create": { "title": "Brand New Article" } } }
+            "favorite": { "create": { "__kind": "Article", "title": "Brand New Article" } }
         }
     });
 
@@ -786,7 +786,7 @@ async fn test_singular_polymorphic_root_create_nested_connect() {
         "model": "User",
         "data": {
             "name": "Connecting User",
-            "favorite": { "Video": { "connect": { "__id": "vid_connect_1" } } }
+            "favorite": { "connect": { "__kind": "Video", "__id": "vid_connect_1" } }
         }
     });
 
@@ -1388,5 +1388,159 @@ async fn test_deeply_nested_polymorphic_disconnect() {
         let (fav_id,): (Option<String>,) = db.query_row("SELECT favorite_id FROM User WHERE __id = 'u1'", [], |r| Ok((r.get(0).ok().flatten(),))).unwrap();
         assert_eq!(fav_id, None);
     }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_polymorphic_missing_kind_rejection() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, _db_uri) = setup_app(schema).await;
+
+    let payload = json!({
+        "action": "create",
+        "model": "User",
+        "data": {
+            "name": "Alice",
+            "favorite": { "create": { "title": "Missing Kind" } }
+        }
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    
+    let error_msg = response["error"].as_str().unwrap_or("");
+    assert!(error_msg.contains("requires '__kind'"), "Actual error: {}", error_msg);
+}
+
+#[tokio::test]
+async fn test_polymorphic_misplaced_kind_rejection() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Article (__id, title) VALUES ('a1', 'Title')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'Article', 'a1')", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": {
+            "favorite": {
+                "update": {
+                    "__kind": "Article", // Misplaced! Should be in 'where'
+                    "where": {},
+                    "data": { "title": "New Title" }
+                }
+            }
+        }
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    
+    let error_msg = response["error"].as_str().unwrap_or("");
+    assert!(error_msg.contains("requires '__kind' in 'where' block"), "Actual error: {}", error_msg);
+}
+
+#[tokio::test]
+async fn test_polymorphic_heterogeneous_array_fanout() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) user: User? }
+        model Video extends Content { duration: Int @@id(uuid) user: User? }
+        
+        model User {
+            name: String
+            favorites: Content[]
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    
+    let payload = json!({
+        "action": "create",
+        "model": "User",
+        "data": {
+            "name": "Alice",
+            "favorites": {
+                "create": [
+                    { "__kind": "Article", "title": "First Article" },
+                    { "__kind": "Video", "duration": 120 }
+                ]
+            }
+        }
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    let user_id = response["data"]["__id"].as_str().unwrap().to_string();
+
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(move |db| {
+        let count_art: i64 = db.query_row("SELECT count(*) FROM Article WHERE title = 'First Article' AND userId = ?1", [&user_id], |r| r.get(0)).unwrap();
+        assert_eq!(count_art, 1);
+
+        let count_vid: i64 = db.query_row("SELECT count(*) FROM Video WHERE duration = 120 AND userId = ?1", [&user_id], |r| r.get(0)).unwrap();
+        assert_eq!(count_vid, 1);
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_polymorphic_invalid_kind_rejection() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        
+        model Organization {
+            name: String
+            @@id(uuid)
+        }
+
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, _db_uri) = setup_app(schema).await;
+
+    // Test non-existent model
+    let payload_missing = json!({
+        "action": "create",
+        "model": "User",
+        "data": {
+            "name": "Alice",
+            "favorite": { "create": { "__kind": "NotAModel", "title": "Missing" } }
+        }
+    });
+
+    let (status_missing, response_missing) = post_query(&app, payload_missing).await;
+    assert_eq!(status_missing, StatusCode::BAD_REQUEST);
+    let error_msg = response_missing["error"].as_str().unwrap_or("");
+    assert!(error_msg.contains("undefined"), "Actual error: {}", error_msg);
 }
 
