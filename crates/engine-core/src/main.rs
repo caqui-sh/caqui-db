@@ -59,7 +59,7 @@ async fn main() {
 model Post {
   title: String
   authorId: String
-  author: User @relation(fields: [authorId], references: [__id])
+  author: User @relation
   @@id(uuid)
 }
 

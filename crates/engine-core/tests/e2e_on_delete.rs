@@ -280,7 +280,7 @@ async fn test_e2e_polymorphic_cascade_delete() {
         "data": {
             "text": "Great article!",
             "parent": {
-                "Article": { "create": { "title": "Polymorphic Writes" } }
+                "create": { "__kind": "Article", "title": "Polymorphic Writes" }
             }
         }
     });

@@ -105,9 +105,7 @@ async fn test_reparenting_and_type_swapping() {
         "where": { "__id": "u1" },
         "data": { 
             "favorite": { 
-                "Article": { 
-                    "create": { "title": "New Article" } 
-                } 
+                "create": { "__kind": "Article", "title": "New Article" } 
             } 
         }
     });
@@ -160,14 +158,12 @@ async fn test_multi_level_deep_nesting() {
         "where": { "__id": "u1" },
         "data": { 
             "favorite": { 
-                "Article": { 
-                    "update": { 
-                        "where": {},
-                        "data": {
-                            "title": "Nested Update",
-                            "tags": { "push": ["deep"] }
-                        }
-                    } 
+                "update": { 
+                    "where": { "__kind": "Article" },
+                    "data": {
+                        "title": "Nested Update",
+                        "tags": { "push": ["deep"] }
+                    }
                 } 
             } 
         }
@@ -198,22 +194,6 @@ async fn test_payload_structure_validations_and_rejections() {
     "#;
     let (app, _dir, _db_uri) = setup_app(schema).await;
 
-    // 1. Multiple Target Wrappers
-    let payload = json!({
-        "action": "update",
-        "model": "User",
-        "where": { "__id": "u1" },
-        "data": { 
-            "favorite": { 
-                "Article": { "disconnect": true },
-                "Video": { "disconnect": true }
-            } 
-        }
-    });
-    let (status, response) = post_query(&app, payload).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(response["error"].as_str().unwrap().contains("requires exactly one target type"));
-
     // 2. Unsupported Batch Actions
     let payload = json!({
         "action": "update",
@@ -221,7 +201,7 @@ async fn test_payload_structure_validations_and_rejections() {
         "where": { "__id": "u1" },
         "data": { 
             "favorite": { 
-                "Article": { "updateMany": { "where": {}, "data": { "title": "Nope" } } }
+                "updateMany": { "where": { "__kind": "Article" }, "data": { "title": "Nope" } }
             } 
         }
     });
@@ -236,7 +216,7 @@ async fn test_payload_structure_validations_and_rejections() {
         "where": { "__id": "u1" },
         "data": { 
             "favorite": { 
-                "Article": { "update": { "title": "Missed Data Block" } }
+                "update": { "__kind": "Article", "title": "Missed Data Block" }
             } 
         }
     });
@@ -274,7 +254,7 @@ async fn test_null_state_interactions() {
         "where": { "__id": "u_null" },
         "data": { 
             "favorite": { 
-                "Article": { "disconnect": true }
+                "disconnect": true
             } 
         }
     });
@@ -288,13 +268,13 @@ async fn test_null_state_interactions() {
         "where": { "__id": "u_null" },
         "data": { 
             "favorite": { 
-                "Article": { "update": { "where": {}, "data": { "title": "Ghost" } } }
+                "update": { "where": { "__kind": "Article" }, "data": { "title": "Ghost" } }
             } 
         }
     });
     let (status, response) = post_query(&app, payload).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(response["error"].as_str().unwrap().contains("Record Not Found"));
+    assert!(response["error"].as_str().unwrap().contains("Record Not Found"), "Got error: {:?}", response);
 
     // 3. Deleting a Null Relation (should fail securely due to zero rows affected)
     let payload = json!({
@@ -303,13 +283,13 @@ async fn test_null_state_interactions() {
         "where": { "__id": "u_null" },
         "data": { 
             "favorite": { 
-                "Article": { "delete": { "where": {} } }
+                "delete": { "where": { "__kind": "Article" } }
             } 
         }
     });
     let (status, response) = post_query(&app, payload).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(response["error"].as_str().unwrap().contains("Record Not Found"));
+    assert!(response["error"].as_str().unwrap().contains("Record Not Found"), "Got error: {:?}", response);
 }
 
 #[tokio::test]
@@ -341,7 +321,7 @@ async fn test_conditional_scoped_deletions() {
         "where": { "__id": "u1" },
         "data": { 
             "favorite": { 
-                "Video": { "delete": { "where": { "duration": 999 } } }
+                "delete": { "where": { "__kind": "Video", "duration": 999 } }
             } 
         }
     });
@@ -386,7 +366,7 @@ async fn test_cross_type_deletion_rejections() {
         "where": { "__id": "u1" },
         "data": { 
             "favorite": { 
-                "Article": { "delete": { "where": {} } }
+                "delete": { "where": { "__kind": "Article" } }
             } 
         }
     });
@@ -432,12 +412,12 @@ async fn test_dangling_pointer_read_safety() {
         "where": { "__id": "u1" },
         "data": { 
             "favorite": { 
-                "Video": { "delete": { "where": {} } }
+                "delete": { "where": { "__kind": "Video" } }
             } 
         }
     });
-    let (status, _) = post_query(&app, payload).await;
-    assert_eq!(status, StatusCode::OK);
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
 
     // Read the user, fetching the favorite. Should safely return null without panicking on FK missing.
     let payload = json!({
@@ -492,12 +472,12 @@ async fn test_nested_deletes_under_batch_operations() {
         "where": { "name": "Alice" }, // Targets only u1
         "data": { 
             "favorite": { 
-                "Video": { "delete": { "where": {} } }
+                "delete": { "where": { "__kind": "Video" } }
             } 
         }
     });
-    let (status, _) = post_query(&app, payload).await;
-    assert_eq!(status, StatusCode::OK);
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
 
     // Verify vid1 is gone, vid2 is perfectly safe
     conn.interact(|db| {
