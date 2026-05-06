@@ -45,21 +45,21 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir) {
         model Profile {
             bio: String
             userId: String
-            user: User @relation(fields: [userId], references: [__id])
+            user: User 
             @@id(uuid)
         }
         model Post {
             title: String
             published: Boolean
             authorId: String
-            author: User @relation(fields: [authorId], references: [__id])
+            author: User 
             comments: Comment[]
             @@id(uuid)
         }
         model Comment {
             text: String
             postId: String
-            post: Post @relation(fields: [postId], references: [__id])
+            post: Post 
             @@id(uuid)
         }
         union SearchResult = User | Post

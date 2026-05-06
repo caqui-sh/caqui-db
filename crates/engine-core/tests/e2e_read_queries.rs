@@ -44,7 +44,7 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir) {
             title: String
             published: Boolean
             authorId: String
-            author: User @relation(fields: [authorId], references: [__id])
+            author: User 
             @@id(uuid)
         }
     "#;

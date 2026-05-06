@@ -47,30 +47,30 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir) {
         model Profile {
             bio: String
             userId: String
-            user: User @relation(fields: [userId], references: [__id])
+            user: User 
             @@id(uuid)
         }
         model Post {
             title: String
             published: Boolean
             authorId: String
-            author: User @relation(fields: [authorId], references: [__id])
+            author: User 
             comments: Comment[]
             tag_ids: String[]
-            tags: Tag[] @relation(fields: [tag_ids], references: [__id])
+            tags: Tag[] 
             @@id(uuid)
         }
         model Comment {
             text: String
             postId: String
-            post: Post @relation(fields: [postId], references: [__id])
+            post: Post 
             score: Int
             @@id(uuid)
         }
         model Video {
             title: String
             authorId: String
-            author: User @relation(fields: [authorId], references: [__id])
+            author: User 
             @@id(uuid)
         }
         model Tag {

@@ -581,7 +581,7 @@ fn test_e2e_field_level_track_edge_cases() {
             bio: String @track
             
             authorId: String?
-            author: User? @relation(fields: [authorId], references: [__id]) @track
+            author: User?  @track
         }
     ";
     fs::write(workspace.join("schema.cq"), schema).unwrap();

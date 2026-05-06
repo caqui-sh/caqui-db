@@ -90,21 +90,21 @@ async fn test_e2e_on_delete() {
         model Post {
             title: String
             userId: String
-            user: User @relation(fields: [userId], references: [__id], onDelete: Cascade)
+            user: User @relation(onDelete: Cascade)
             @@id(uuid)
         }
         
         model Profile {
             bio: String
             userId: String?
-            user: User? @relation(fields: [userId], references: [__id], onDelete: SetNull)
+            user: User? @relation(onDelete: SetNull)
             @@id(uuid)
         }
         
         model Comment {
             text: String
             userId: String
-            user: User @relation(fields: [userId], references: [__id], onDelete: Restrict)
+            user: User @relation(onDelete: Restrict)
             @@id(uuid)
         }
     "#;
@@ -204,7 +204,7 @@ async fn test_e2e_self_referential_cascade() {
         model Employee {
             name: String
             managerId: String?
-            manager: Employee? @relation("Management", fields: [managerId], references: [__id], onDelete: Cascade)
+            manager: Employee? @relation("Management", onDelete: Cascade)
             subordinates: Employee[] @relation("Management")
             @@id(uuid)
         }
@@ -318,7 +318,7 @@ async fn test_e2e_on_delete_no_action() {
         
         model Child {
             parentId: String
-            parent: Parent @relation(fields: [parentId], references: [__id], onDelete: NoAction)
+            parent: Parent @relation(onDelete: NoAction)
             @@id(uuid)
         }
     "#;

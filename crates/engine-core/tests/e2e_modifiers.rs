@@ -43,7 +43,7 @@ async fn setup_app() -> (axum::Router, deadpool_sqlite::Pool, tempfile::TempDir)
             title: String
             authorId: String?
             tags: String[]
-            author: User? @relation(fields: [authorId], references: [__id])
+            author: User? 
             @@id(uuid)
         }
     "#;

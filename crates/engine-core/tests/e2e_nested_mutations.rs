@@ -42,28 +42,28 @@ async fn setup_app() -> (axum::Router, deadpool_sqlite::Pool, tempfile::TempDir)
         model Profile {
             bio: String
             userId: String? @unique
-            user: User? @relation(fields: [userId], references: [__id])
+            user: User? 
             @@id(uuid)
         }
         model Post {
             title: String
             published: Boolean @default(false)
             authorId: String?
-            author: User? @relation(fields: [authorId], references: [__id])
+            author: User? 
             comments: Comment[]
             @@id(uuid)
         }
         model Comment {
             body: String
             postId: String?
-            post: Post? @relation(fields: [postId], references: [__id])
+            post: Post? 
             @@id(uuid)
         }
         
         base Content {
             body: String
             collectionId: String?
-            collection: Collection? @relation(fields: [collectionId], references: [__id])
+            collection: Collection? 
         }
         base Viewable {
             views: Int @default(0)

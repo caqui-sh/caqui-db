@@ -41,7 +41,7 @@ async fn setup_app() -> (axum::Router, deadpool_sqlite::Pool, tempfile::TempDir)
         model Profile {
             bio: String
             userId: String
-            user: User @relation(fields: [userId], references: [__id])
+            user: User 
             @@id(uuid)
         }
     "#;

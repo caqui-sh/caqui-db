@@ -34,21 +34,21 @@ async fn test_e2e_deferrable() {
     let schema = "
         model User {
             profileId: String
-            profile: Profile @relation(fields: [profileId], references: [__id])
+            profile: Profile 
             comments: Comment[]
             @@id(uuid)
         }
         
         model Profile {
             userId: String
-            user: User @relation(fields: [userId], references: [__id])
+            user: User 
             @@id(uuid)
         }
         
         model Comment {
             text: String
             userId: String
-            user: User @relation(fields: [userId], references: [__id])
+            user: User 
             @@id(uuid)
         }
     ";

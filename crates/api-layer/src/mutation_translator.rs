@@ -496,11 +496,6 @@ fn translate_create_node(
             if let Some(FieldAttribute::InternalRelation { fields, references }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
                 rel_fields = Some(fields);
                 rel_refs = Some(references);
-            } else if let Some(FieldAttribute::Relation { fields, references, .. }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
-                if let (Some(f), Some(r)) = (fields, references) {
-                    rel_fields = Some(f);
-                    rel_refs = Some(r);
-                }
             }
             if let (Some(fields), Some(references)) = (rel_fields, rel_refs) {
                 if !fields.is_empty() && !references.is_empty() {
@@ -1030,11 +1025,6 @@ fn translate_create_node(
             if let Some(FieldAttribute::InternalRelation { fields, references }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
                 rel_fields = Some(fields);
                 rel_refs = Some(references);
-            } else if let Some(FieldAttribute::Relation { fields, references, .. }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
-                if let (Some(f), Some(r)) = (fields, references) {
-                    rel_fields = Some(f);
-                    rel_refs = Some(r);
-                }
             }
             if let (Some(fields), Some(references)) = (rel_fields, rel_refs) {
                 if !fields.is_empty() && !references.is_empty() {
@@ -1216,13 +1206,9 @@ fn translate_update_node(
                 if let Some(FieldAttribute::InternalRelation { fields, references }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
                     rel_fields = Some(fields);
                     rel_refs = Some(references);
-                } else if let Some(FieldAttribute::Relation { fields, references, .. }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
-                    if let (Some(f), Some(r)) = (fields, references) {
-                        rel_fields = Some(f);
-                        rel_refs = Some(r);
-                    }
-                }
-                if let (Some(fields), Some(references)) = (rel_fields, rel_refs) {
+                } else if let Some(FieldAttribute::Relation { .. }) = rev_f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                    // Ignore.
+                }                if let (Some(fields), Some(references)) = (rel_fields, rel_refs) {
                     if !fields.is_empty() && !references.is_empty() {
                         fk_col = Some(fields[0].clone());
                         target_pk = references[0].clone();
@@ -1458,12 +1444,10 @@ fn process_deferred_children(
         let mut fk_column_name = None;
         let mut target_pk = "__id".to_string();
 
-        if let Some(FieldAttribute::Relation { fields, references, .. }) = parent_field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
-            if let (Some(f), Some(r)) = (fields, references) {
-                if !f.is_empty() && !r.is_empty() {
-                    fk_column_name = Some(f[0].clone());
-                    target_pk = r[0].clone();
-                }
+        if let Some(FieldAttribute::InternalRelation { fields, references }) = parent_field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+            if !fields.is_empty() && !references.is_empty() {
+                fk_column_name = Some(fields[0].clone());
+                target_pk = references[0].clone();
             }
         }
 
@@ -2937,7 +2921,7 @@ mod tests {
             name: "posts".to_string(),
             field_type: AstFieldType::RelationArray("Post".to_string()),
             is_optional: true,
-            attributes: vec![FieldAttribute::Relation { name: None, on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["userId".to_string()], references: vec!["__id".to_string()] }],
+            attributes: vec![FieldAttribute::Relation { name: None, on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["userId".to_string()], references: vec!["__id".to_string()] }],
         });
         ast.models.insert("Post".to_string(), ModelNode {
             name: "Post".to_string(),
@@ -3161,7 +3145,7 @@ mod tests {
             name: "dummy".to_string(),
             field_type: AstFieldType::Relation("User".to_string()),
             is_optional: true,
-            attributes: vec![FieldAttribute::Relation { name: None, on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["dummyId".to_string()], references: vec!["__id".to_string()] }],
+            attributes: vec![FieldAttribute::Relation { name: None, on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["dummyId".to_string()], references: vec!["__id".to_string()] }],
         });
 
         let child_where = json!({"__id": "user_2"}).as_object().unwrap().clone();
@@ -3204,7 +3188,7 @@ mod tests {
             name: "dummy".to_string(),
             field_type: AstFieldType::Relation("User".to_string()),
             is_optional: true,
-            attributes: vec![FieldAttribute::Relation { name: None, on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["dummyId".to_string()], references: vec!["__id".to_string()] }],
+            attributes: vec![FieldAttribute::Relation { name: None, on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["dummyId".to_string()], references: vec!["__id".to_string()] }],
         });
 
         let child_where = json!({"age": 99}).as_object().unwrap().clone();
@@ -3272,7 +3256,7 @@ mod tests {
             name: "items".to_string(),
             field_type: AstFieldType::PolymorphicBaseArray("Content".to_string()),
             is_optional: false,
-            attributes: vec![FieldAttribute::Relation { name: None, on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["itemsId".to_string()], references: vec!["__id".to_string()] }],
+            attributes: vec![FieldAttribute::Relation { name: None, on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["itemsId".to_string()], references: vec!["__id".to_string()] }],
         });
 
         let child_where = json!({"__Viewable": true}).as_object().unwrap().clone();
@@ -3321,7 +3305,7 @@ mod tests {
             name: "items".to_string(),
             field_type: AstFieldType::PolymorphicBaseArray("Content".to_string()),
             is_optional: false,
-            attributes: vec![FieldAttribute::Relation { name: None, on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["itemsId".to_string()], references: vec!["__id".to_string()] }],
+            attributes: vec![FieldAttribute::Relation { name: None, on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["itemsId".to_string()], references: vec!["__id".to_string()] }],
         });
 
         let payload_delete = json!({
@@ -3334,7 +3318,8 @@ mod tests {
         
         assert_eq!(steps.len(), 2);
         if let ExecutionStep::DeleteBranch { sql, params, .. } = &steps[1] {
-            assert!(sql.contains("DELETE FROM Article WHERE (Article.__id = ?1 AND Article.userId = ?2) RETURNING __id;"));
+            println!("DEBUG SQL: {}", sql);
+            assert!(sql.contains("DELETE FROM Article WHERE (Article.__id = ?1 AND Article.itemsId = ?2) RETURNING __id;"));
             assert_eq!(params.len(), 1); 
             
             if let Parameter::Literal(serde_json::Value::String(s)) = &params[0] {

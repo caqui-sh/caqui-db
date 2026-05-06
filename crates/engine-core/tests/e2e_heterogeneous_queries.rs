@@ -139,7 +139,7 @@ async fn test_e2e_nested_polymorphic_relations() {
         
         model Team {
             name: String
-            members: Employee[] @relation(fields: [teamId], references: [__id])
+            members: Employee[] 
             @@id(uuid)
         }
     "#;

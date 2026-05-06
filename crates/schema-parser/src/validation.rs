@@ -501,14 +501,11 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
         }
     }
 
-    // Map of (Model, FieldName) -> (fields, references) if explicit
-    let mut explicit_mappings = std::collections::HashSet::new();
+    // explicit_mappings removed.
     for model in ast.models.values() {
         for field in &model.resolved_fields {
-            if let Some(FieldAttribute::Relation { fields, references, .. }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
-                if fields.is_some() && references.is_some() {
-                    explicit_mappings.insert((model.name.clone(), field.name.clone()));
-                }
+            if let Some(FieldAttribute::Relation { .. }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                // ignore
             }
         }
     }
@@ -536,73 +533,49 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                         field.attributes.push(FieldAttribute::Relation {
                             name: None,
                             on_delete: None,
-                            fields: None,
-                            references: None,
                         });
                         relation_attr_idx = Some(field.attributes.len() - 1);
                     }
 
-                    let (rel_name, rel_fields, rel_refs) = match &field.attributes[relation_attr_idx.unwrap()] {
-                        FieldAttribute::Relation { name, fields, references, .. } => (name.clone(), fields.clone(), references.clone()),
+                    let rel_name = match &field.attributes[relation_attr_idx.unwrap()] {
+                        FieldAttribute::Relation { name, .. } => name.clone(),
                         _ => unreachable!(),
                     };
 
-                    let mut is_owning = false;
+                    let mut is_owning = true;
                     let mut fk_name = format!("{}Id", field.name);
-                    let mut pk_name = "__id".to_string();
+                    let pk_name = "__id".to_string();
 
-                    if let (Some(f), Some(r)) = (rel_fields, rel_refs) {
-                        if !f.is_empty() && !r.is_empty() {
-                            is_owning = true;
-                            fk_name = f[0].clone();
-                            pk_name = r[0].clone();
-                        }
-                    }
+                    if let Some(target_model) = ast.models.get(target_name) {
+                        let mut found_reverse = false;
+                        for f in &target_model.resolved_fields {
+                            let (rev_is_match, rev_is_array) = match &f.field_type {
+                                AstFieldType::Relation(rt) if rt == &model_name_str => (true, false),
+                                AstFieldType::RelationArray(rt) if rt == &model_name_str => (true, true),
+                                _ => (false, false),
+                            };
 
-                    if !is_owning {
-                        if let Some(target_model) = ast.models.get(target_name) {
-                            let mut found_reverse = false;
-                            for f in &target_model.resolved_fields {
-                                let (rev_is_match, rev_is_array) = match &f.field_type {
-                                    AstFieldType::Relation(rt) if rt == &model_name_str => (true, false),
-                                    AstFieldType::RelationArray(rt) if rt == &model_name_str => (true, true),
-                                    _ => (false, false),
-                                };
-
-                                if rev_is_match {
-                                    if let Some(FieldAttribute::Relation { name, fields, references, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
-                                        if name == &rel_name {
-                                            found_reverse = true;
-                                            if let (Some(ff), Some(rr)) = (fields, references) {
-                                                if !ff.is_empty() && !rr.is_empty() {
-                                                    fk_name = ff[0].clone();
-                                                    pk_name = rr[0].clone();
-                                                    is_owning = false;
-                                                    break;
-                                                }
-                                            }
-                                            
-                                            if rev_is_array {
-                                                is_owning = true; // 1:N. We are the 'N' side (singular field), so we own.
+                            if rev_is_match {
+                                if let Some(FieldAttribute::Relation { name, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                                    if name == &rel_name {
+                                        found_reverse = true;
+                                        if rev_is_array {
+                                            is_owning = true;
+                                        } else {
+                                            if model_name_str <= target_model.name {
+                                                is_owning = true;
                                             } else {
-                                                // 1:1 Tie-break
-                                                if model_name_str <= target_model.name {
-                                                    is_owning = true;
-                                                } else {
-                                                    // Target owns by tie-break
-                                                    fk_name = format!("{}Id", f.name);
-                                                    is_owning = false;
-                                                }
+                                                fk_name = format!("{}Id", f.name);
+                                                is_owning = false;
                                             }
-                                            break;
                                         }
+                                        break;
                                     }
                                 }
                             }
-                            
-                            if !found_reverse {
-                                is_owning = true;
-                            }
+                        }
+                        if !found_reverse {
+                            is_owning = true;
                         }
                     }
 
@@ -635,16 +608,10 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                         for f in &target_model.resolved_fields {
                             if let AstFieldType::Relation(rev_target) = &f.field_type {
                                 if rev_target == &model_name_str {
-                                    if let Some(FieldAttribute::Relation { name, fields, references, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                                    if let Some(FieldAttribute::Relation { name, .. }) = f.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
                                         if name == &rel_name {
-                                            let mut fk = format!("{}Id", f.name);
-                                            let mut pk = "__id".to_string();
-                                            if let (Some(ff), Some(rr)) = (fields, references) {
-                                                if !ff.is_empty() && !rr.is_empty() {
-                                                    fk = ff[0].clone();
-                                                    pk = rr[0].clone();
-                                                }
-                                            }
+                                            let fk = format!("{}Id", f.name);
+                                            let pk = "__id".to_string();
                                             field.attributes.push(FieldAttribute::InternalRelation {
                                                 fields: vec![fk],
                                                 references: vec![pk],
@@ -935,10 +902,10 @@ mod tests {
         assert_eq!(reviewer_id_field.field_type, AstFieldType::Scalar("String".to_string()));
         
         let author_rel = post.resolved_fields.iter().find(|f| f.name == "author").unwrap();
-        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: Some("AuthorToPost".to_string()), on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: Some("AuthorToPost".to_string()), on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
 
         let reviewer_rel = post.resolved_fields.iter().find(|f| f.name == "reviewer").unwrap();
-        assert_eq!(reviewer_rel.attributes, vec![FieldAttribute::Relation { name: Some("ReviewerToPost".to_string()), on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["reviewerId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(reviewer_rel.attributes, vec![FieldAttribute::Relation { name: Some("ReviewerToPost".to_string()), on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["reviewerId".to_string()], references: vec!["__id".to_string()] }]);
     }
 
     #[test]
@@ -960,7 +927,7 @@ mod tests {
         assert_eq!(post.resolved_fields.len(), 5);
         
         let author_rel = post.resolved_fields.iter().find(|f| f.name == "author").unwrap();
-        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: None, on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: None, on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
     }
 
     #[test]
@@ -1013,7 +980,7 @@ mod tests {
         assert_eq!(manager_id_field.field_type, AstFieldType::Scalar("String".to_string()));
         
         let manager_rel = employee.resolved_fields.iter().find(|f| f.name == "manager").unwrap();
-        assert_eq!(manager_rel.attributes, vec![FieldAttribute::Relation { name: Some("Management".to_string()), on_delete: None, fields: None, references: None }, FieldAttribute::InternalRelation { fields: vec!["managerId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(manager_rel.attributes, vec![FieldAttribute::Relation { name: Some("Management".to_string()), on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["managerId".to_string()], references: vec!["__id".to_string()] }]);
     }
 #[test]
 fn test_explicit_at_id_rejected() {

@@ -71,10 +71,7 @@ pub enum FieldAttribute {
     Relation { 
         name: Option<String>, 
         on_delete: Option<String>,
-        fields: Option<Vec<String>>,
-        references: Option<Vec<String>>,
-    },
-    InternalRelation { fields: Vec<String>, references: Vec<String> },
+    },    InternalRelation { fields: Vec<String>, references: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

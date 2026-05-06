@@ -88,9 +88,9 @@ async fn test_e2e_relation_names() {
         model Post {
             title: String
             authorId: String
-            author: User @relation("AuthorToPost", fields: [authorId], references: [__id])
+            author: User @relation("AuthorToPost")
             reviewerId: String?
-            reviewer: User? @relation("ReviewerToPost", fields: [reviewerId], references: [__id])
+            reviewer: User? @relation("ReviewerToPost")
             @@id(uuid)
         }
     "#;
@@ -158,7 +158,7 @@ async fn test_e2e_self_referential_relations() {
         model Employee {
             name: String
             managerId: String?
-            manager: Employee? @relation("ManagerToEmployee", fields: [managerId], references: [__id])
+            manager: Employee? @relation("ManagerToEmployee")
             directReports: Employee[] @relation("ManagerToEmployee")
             @@id(uuid)
         }

@@ -1010,7 +1010,7 @@ async fn test_implicit_cross_base_intersection_filtering() {
         model Campaign extends Identifiable, Measurable {
             name: String
             dashboardId: String?
-            dashboard: Dashboard? @relation(fields: [dashboardId], references: [__id])
+            dashboard: Dashboard? 
             @@id(uuid)
         }
 
@@ -1018,7 +1018,7 @@ async fn test_implicit_cross_base_intersection_filtering() {
         model UserProfile extends Identifiable {
             bio: String
             dashboardId: String?
-            dashboard: Dashboard? @relation(fields: [dashboardId], references: [__id])
+            dashboard: Dashboard? 
             @@id(uuid)
         }
 
@@ -1026,7 +1026,7 @@ async fn test_implicit_cross_base_intersection_filtering() {
         model Sensor extends Measurable {
             status: String
             dashboardId: String?
-            dashboard: Dashboard? @relation(fields: [dashboardId], references: [__id])
+            dashboard: Dashboard? 
             @@id(uuid)
         }
 
@@ -1350,7 +1350,7 @@ async fn test_deeply_nested_polymorphic_disconnect() {
         model User {
             name: String
             orgId: String
-            org: Organization @relation(fields: [orgId], references: [__id])
+            org: Organization 
             favorite: Content?
             @@id(uuid)
         }

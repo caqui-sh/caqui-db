@@ -241,21 +241,21 @@ async fn test_polymorphic_union_base_shape_filtering() {
         model Article extends Timestamped, Viewable {
             body: String
             collectionId: String?
-            collection: Collection? @relation(fields: [collectionId], references: [__id])
+            collection: Collection? 
             @@id(uuid)
         }
 
         model Video extends Viewable {
             url: String
             collectionId: String?
-            collection: Collection? @relation(fields: [collectionId], references: [__id])
+            collection: Collection? 
             @@id(uuid)
         }
 
         model User extends Timestamped {
             name: String
             collectionId: String?
-            collection: Collection? @relation(fields: [collectionId], references: [__id])
+            collection: Collection? 
             @@id(uuid)
         }
 

@@ -17,7 +17,7 @@ fn parse_extends_clause(pair: pest::iterators::Pair<Rule>) -> Vec<String> {
     extends
 }
 
-fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> FieldNode {
+fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> Result<FieldNode, pest::error::Error<Rule>> {
     let mut field_inner = field_rule.into_inner();
     let field_name = field_inner.next().unwrap().as_str().to_string();
     let field_type_rule = field_inner.next().unwrap();
@@ -65,14 +65,12 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> FieldNode {
                 "relation" => {
                     let mut name = None;
                     let mut on_delete = None;
-                    let mut fields = None;
-                    let mut references = None;
                     
                     if let Some(args_rule) = attr_inner.next() {
                         for param_rule in args_rule.into_inner() {
                             let actual_param = param_rule.into_inner().next().unwrap();
                             if actual_param.as_rule() == Rule::named_arg {
-                                let mut param_inner = actual_param.into_inner();
+                                let mut param_inner = actual_param.clone().into_inner();
                                 let key = param_inner.next().unwrap().as_str();
                                 let val_pair = param_inner.next().unwrap();
                                 
@@ -84,28 +82,13 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> FieldNode {
                                 } else if key == "onDelete" {
                                     let val_rule = val_pair.into_inner().next().unwrap();
                                     on_delete = Some(val_rule.as_str().to_string());
-                                } else if key == "fields" {
-                                    let val_rule = val_pair.into_inner().next().unwrap();
-                                    if val_rule.as_rule() == Rule::attr_array {
-                                        let mut f_names = Vec::new();
-                                        for id_rule in val_rule.into_inner() {
-                                            if id_rule.as_rule() == Rule::ident {
-                                                f_names.push(id_rule.as_str().to_string());
-                                            }
-                                        }
-                                        fields = Some(f_names);
-                                    }
-                                } else if key == "references" {
-                                    let val_rule = val_pair.into_inner().next().unwrap();
-                                    if val_rule.as_rule() == Rule::attr_array {
-                                        let mut r_names = Vec::new();
-                                        for id_rule in val_rule.into_inner() {
-                                            if id_rule.as_rule() == Rule::ident {
-                                                r_names.push(id_rule.as_str().to_string());
-                                            }
-                                        }
-                                        references = Some(r_names);
-                                    }
+                                } else {
+                                    return Err(pest::error::Error::new_from_span(
+                                        pest::error::ErrorVariant::CustomError {
+                                            message: format!("Unsupported property '{}' in @relation attribute. Use implicit relation bindings instead.", key)
+                                        },
+                                        actual_param.as_span()
+                                    ));
                                 }
                             } else if actual_param.as_rule() == Rule::attr_val {
                                 let val_rule = actual_param.into_inner().next().unwrap();
@@ -115,19 +98,19 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> FieldNode {
                             }
                         }
                     }
-                    attributes.push(FieldAttribute::Relation { name, on_delete, fields, references });
+                    attributes.push(FieldAttribute::Relation { name, on_delete });
                 },
                 _ => {}
             }
         }
     }
 
-    FieldNode {
+    Ok(FieldNode {
         name: field_name,
         field_type: ast_field_type,
         is_optional,
         attributes,
-    }
+    })
 }
 
 pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> {
@@ -164,7 +147,7 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                 for inner in inner_rules {
                     match inner.as_rule() {
                         Rule::extends_clause => extends = parse_extends_clause(inner),
-                        Rule::field_def => fields.push(parse_field_def(inner)),
+                        Rule::field_def => fields.push(parse_field_def(inner)?),
                         Rule::block_attr => {
                             let mut attr_inner = inner.into_inner();
                             let attr_name = attr_inner.next().unwrap().as_str();
@@ -209,7 +192,7 @@ pub fn parse_schema(input: &str) -> Result<SchemaAst, pest::error::Error<Rule>> 
                 for inner in inner_rules {
                     match inner.as_rule() {
                         Rule::extends_clause => extends = parse_extends_clause(inner),
-                        Rule::field_def => fields.push(parse_field_def(inner)),
+                        Rule::field_def => fields.push(parse_field_def(inner)?),
                         Rule::block_attr => {
                             let mut attr_inner = inner.into_inner();
                             let attr_name = attr_inner.next().unwrap().as_str();
@@ -394,13 +377,10 @@ mod tests {
         
         // @relation
         let posts_field = user.fields.iter().find(|f| f.name == "posts").unwrap();
-        assert_eq!(posts_field.attributes, vec![FieldAttribute::Relation { 
-            name: None, 
-            on_delete: Some("Cascade".to_string()), 
-            fields: Some(vec!["__id".to_string()]), 
-            references: Some(vec!["authorId".to_string()]) 
-        }]);
-    }
+        assert_eq!(posts_field.attributes, vec![FieldAttribute::Relation {
+            name: None,
+            on_delete: Some("Cascade".to_string()),
+        }]);    }
 
     #[test]
     fn test_parse_fulltext_attribute() {
@@ -426,20 +406,18 @@ mod tests {
 
     #[test]
     fn test_parse_relation_names() {
-        let input = "
+        let input = r#"
             model Post {
-
                 authorId: String
                 reviewerId: String
-                author: User @relation(\"AuthorToPost\", fields: [authorId], references: [__id])
-                reviewer: User @relation(\"ReviewerToPost\", fields: [reviewerId], references: [__id])
-    @@id(uuid)
+                author: User @relation("AuthorToPost")
+                reviewer: User @relation("ReviewerToPost")
+                @@id(uuid)
             }
             model User {
-    @@id(uuid)
-
+                @@id(uuid)
             }
-        ";
+        "#;
         
         let ast = parse_schema(input).unwrap();
         let post = ast.models.get("Post").unwrap();
@@ -448,16 +426,12 @@ mod tests {
         assert_eq!(author_field.attributes, vec![FieldAttribute::Relation { 
             name: Some("AuthorToPost".to_string()), 
             on_delete: None, 
-            fields: Some(vec!["authorId".to_string()]), 
-            references: Some(vec!["__id".to_string()]) 
         }]);
 
         let reviewer_field = post.fields.iter().find(|f| f.name == "reviewer").unwrap();
         assert_eq!(reviewer_field.attributes, vec![FieldAttribute::Relation { 
             name: Some("ReviewerToPost".to_string()), 
             on_delete: None, 
-            fields: Some(vec!["reviewerId".to_string()]), 
-            references: Some(vec!["__id".to_string()]) 
         }]);
     }
 
@@ -587,5 +561,16 @@ mod tests {
         assert!(parse_schema(schema_str).is_err());
     }
 
-
+    #[test]
+    fn test_parse_relation_unsupported_properties() {
+        let input = r#"
+            model User {
+                posts: Post[] @relation(fields: [__id])
+            }
+        "#;
+        let result = parse_schema(input);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Unsupported property \"fields\" in @relation attribute. Use implicit relation bindings instead."));
+    }
 }
