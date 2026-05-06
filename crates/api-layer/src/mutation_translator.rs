@@ -1125,6 +1125,13 @@ fn translate_update_node(
     let mut params = Vec::new();
     let mut param_idx = 1;
 
+    if let Some(rel) = &parent_rel {
+        if let ParentConstraint::Bulk { params: bulk_params, .. } = &rel.constraint {
+            params.extend(bulk_params.clone());
+            param_idx += bulk_params.len();
+        }
+    }
+
     let mut deferred_children = Vec::new();
     let mut singular_poly_actions = Vec::new();    
     let (c_set_clauses, c_params, c_deferred, c_singular_poly) = parse_update_data_block(
@@ -1238,23 +1245,46 @@ fn translate_update_node(
                 .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
                 .map(|f| f.name.as_str())
                 .unwrap_or("__id");
-            where_sql = format!("({} AND {}.__id = (SELECT {} FROM {} WHERE {} = ?{} AND {} = '{}'))", where_sql, model_name, id_col, rel.parent_model, parent_pk_col, param_idx, type_col, model_name);
             match &rel.constraint {
                 ParentConstraint::Singular { step_id } => {
+                    where_sql = format!("({} AND {}.__id = (SELECT {} FROM {} WHERE {} = ?{} AND {} = '{}'))", where_sql, model_name, id_col, rel.parent_model, parent_pk_col, param_idx, type_col, model_name);
                     parent_ref_param = Some(Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() });
+                },
+                ParentConstraint::Bulk { sql: bulk_sql, .. } => {
+                    where_sql = format!("({} AND {}.__id IN (SELECT {} FROM {} WHERE {} IN ({}) AND {} = '{}'))", where_sql, model_name, id_col, rel.parent_model, parent_pk_col, bulk_sql, type_col, model_name);
+                }
+            }
+        } else if let Some(col) = fk_col {
+            match &rel.constraint {
+                ParentConstraint::Singular { step_id } => {
+                    where_sql = format!("({} AND {}.{} = ?{})", where_sql, model_name, col, param_idx);
+                    parent_ref_param = Some(Parameter::Reference { step_id: step_id.clone(), column: target_pk });
                 },
                 ParentConstraint::Bulk { .. } => {
                     return Err("Semantics Error: Cannot execute singular 'update' nested under a bulk operation. Use 'updateMany' instead.".to_string());
                 }
             }
-        } else if let Some(col) = fk_col {
-            where_sql = format!("({} AND {}.{} = ?{})", where_sql, model_name, col, param_idx);
+        } else {
+            let parent_model_def = ast.models.get(&rel.parent_model).unwrap();
+            let parent_pk_col = parent_model_def.resolved_fields.iter()
+                .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
+                .map(|f| f.name.as_str())
+                .unwrap_or("__id");
+            let mut parent_fk_col = format!("{}Id", rel.relation_field_name);
+            if let Some(field) = parent_model_def.resolved_fields.iter().find(|f| f.name == rel.relation_field_name) {
+                if let Some(FieldAttribute::InternalRelation { fields, .. }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+                    if !fields.is_empty() {
+                        parent_fk_col = fields[0].clone();
+                    }
+                }
+            }
             match &rel.constraint {
                 ParentConstraint::Singular { step_id } => {
-                    parent_ref_param = Some(Parameter::Reference { step_id: step_id.clone(), column: target_pk });
+                    where_sql = format!("({} AND {}.__id = (SELECT {} FROM {} WHERE {} = ?{}))", where_sql, model_name, parent_fk_col, rel.parent_model, parent_pk_col, param_idx);
+                    parent_ref_param = Some(Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() });
                 },
-                ParentConstraint::Bulk { .. } => {
-                    return Err("Semantics Error: Cannot execute singular 'update' nested under a bulk operation. Use 'updateMany' instead.".to_string());
+                ParentConstraint::Bulk { sql: bulk_sql, .. } => {
+                    where_sql = format!("({} AND {}.__id IN (SELECT {} FROM {} WHERE {} IN ({})))", where_sql, model_name, parent_fk_col, rel.parent_model, parent_pk_col, bulk_sql);
                 }
             }
         }
@@ -1314,11 +1344,6 @@ fn process_deferred_children(
     steps: &mut Vec<ExecutionStep>,
     alias_counter: &mut usize,
 ) -> Result<(), String> {
-    let parent_step_id = match parent_constraint {
-        ParentConstraint::Singular { step_id } => step_id.clone(),
-        ParentConstraint::Bulk { .. } => "UNIMPLEMENTED_BULK".to_string(), // Phase 3 will handle this
-    };
-
     let parent_model_def = ast.models.get(parent_model_name).unwrap();
     let parent_pk_col = parent_model_def.resolved_fields.iter().find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id))).map(|f| f.name.as_str()).unwrap_or("__id");
 
@@ -1350,23 +1375,43 @@ fn process_deferred_children(
                     let update_step_id = format!("step_{}_poly_update_{}", parent_model_name.to_lowercase(), *alias_counter);
                     *alias_counter += 1;
                     
+                    let mut update_params = Vec::new();
+                    let mut param_idx = 1;
+
+                    let where_clause = match parent_constraint {
+                        ParentConstraint::Singular { step_id } => {
+                            update_params.push(Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() });
+                            let sql = format!("{} = ?{}", parent_pk_col, param_idx);
+                            param_idx += 1;
+                            sql
+                        },
+                        ParentConstraint::Bulk { sql, params: bulk_params } => {
+                            update_params.extend(bulk_params.clone());
+                            param_idx += bulk_params.len();
+                            format!("{} IN ({})", parent_pk_col, sql)
+                        }
+                    };
+
+                    let type_set = format!("{} = ?{}", type_col, param_idx);
+                    update_params.push(Parameter::Literal(serde_json::Value::String(child.target_model.clone())));
+                    param_idx += 1;
+                    
+                    let id_set = format!("{} = ?{}", id_col, param_idx);
+                    update_params.push(Parameter::Reference { step_id: child_create_step_id, column: child_pk_col.to_string() });
+
                     let sql = format!(
-                        "UPDATE {} SET {} = ?, {} = ? WHERE {} = ? RETURNING {};",
+                        "UPDATE {} SET {}, {} WHERE {} RETURNING {};",
                         parent_model_name,
-                        type_col,
-                        id_col,
-                        parent_pk_col,
+                        type_set,
+                        id_set,
+                        where_clause,
                         parent_pk_col
                     );
                     
                     steps.push(ExecutionStep::Query {
                         id: update_step_id,
                         sql,
-                        params: vec![
-                            Parameter::Literal(serde_json::Value::String(child.target_model.clone())),
-                            Parameter::Reference { step_id: child_create_step_id, column: child_pk_col.to_string() },
-                            Parameter::Reference { step_id: parent_step_id.to_string(), column: parent_pk_col.to_string() }
-                        ],
+                        params: update_params,
                     });
                 },
                 DeferredAction::Update(concrete_target_model, child_where, child_data) => {
@@ -1498,20 +1543,74 @@ fn process_deferred_children(
         }
 
         let fk_col = fk_column_name.unwrap_or_else(|| format!("{}Id", parent_model_name.to_lowercase()));
+        let mut parent_holds_fk = false;
+        if let Some(FieldAttribute::InternalRelation { fields, .. }) = parent_field_def.attributes.iter().find(|a| matches!(a, FieldAttribute::InternalRelation { .. })) {
+            if !fields.is_empty() {
+                if !matches!(parent_field_def.field_type, AstFieldType::RelationArray(_)) && parent_model_def.resolved_fields.iter().any(|f| &f.name == &fields[0]) {
+                    parent_holds_fk = true;
+                }
+            }
+        }
 
         match child.action {
             DeferredAction::Create(child_data) => {
-                translate_create_node(ast, &child.target_model, &child_data, steps, alias_counter, Some(ParentRel {
-                    constraint: parent_constraint.clone(),
-                    parent_model: parent_model_name.to_string(),
-                    relation_field_name: child.relation_field_name,
-                    is_forward_polymorphic: false,
-                }))?;
+                if parent_holds_fk {
+                    let child_create_step_id = translate_create_node(ast, &child.target_model, &child_data, steps, alias_counter, None)?;
+                    
+                    let update_step_id = format!("step_{}_update_fk_{}", parent_model_name.to_lowercase(), *alias_counter);
+                    *alias_counter += 1;
+                    
+                    let mut update_params = Vec::new();
+                    let mut param_idx = 1;
+
+                    let where_clause = match parent_constraint {
+                        ParentConstraint::Singular { step_id } => {
+                            update_params.push(Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() });
+                            let sql = format!("{} = ?{}", parent_pk_col, param_idx);
+                            param_idx += 1;
+                            sql
+                        },
+                        ParentConstraint::Bulk { sql, params: bulk_params } => {
+                            update_params.extend(bulk_params.clone());
+                            param_idx += bulk_params.len();
+                            format!("{} IN ({})", parent_pk_col, sql)
+                        }
+                    };
+
+                    let set_clause = format!("{} = ?{}", fk_col, param_idx);
+                    update_params.push(Parameter::Reference { step_id: child_create_step_id, column: child_pk_col.to_string() });
+
+                    let sql = format!(
+                        "UPDATE {} SET {} WHERE {} RETURNING {};",
+                        parent_model_name,
+                        set_clause,
+                        where_clause,
+                        parent_pk_col
+                    );
+                    
+                    steps.push(ExecutionStep::Query {
+                        id: update_step_id,
+                        sql,
+                        params: update_params,
+                    });
+                } else {
+                    translate_create_node(ast, &child.target_model, &child_data, steps, alias_counter, Some(ParentRel {
+                        constraint: parent_constraint.clone(),
+                        parent_model: parent_model_name.to_string(),
+                        relation_field_name: child.relation_field_name,
+                        is_forward_polymorphic: false,
+                    }))?;
+                }
             },
             DeferredAction::Connect(connect_where) => {
                 if let ParentConstraint::Bulk { .. } = parent_constraint {
                     return Err("Semantics Error: Cannot 'connect' a child to multiple parents in a bulk update when the child holds the foreign key.".to_string());
                 }
+
+                let parent_step_id = match parent_constraint {
+                    ParentConstraint::Singular { step_id } => step_id.clone(),
+                    _ => unreachable!(),
+                };
                 
                 let child_step_id = format!("step_{}_connect_{}", child.target_model.to_lowercase(), *alias_counter);
                 *alias_counter += 1;
@@ -1570,11 +1669,22 @@ fn process_deferred_children(
                 
                 let combined_where_sql = match parent_constraint {
                     ParentConstraint::Singular { step_id: _ } => {
-                        let sql = format!("({} AND {}.{} = ?{})", where_sql, concrete_target_model, fk_col, param_idx);
-                        sql
+                        if parent_holds_fk {
+                            let sql = format!("({} AND {}.{} = (SELECT {} FROM {} WHERE {} = ?{} AND {} IS NOT NULL))", 
+                                where_sql, concrete_target_model, child_pk_col, fk_col, parent_model_name, parent_pk_col, param_idx, fk_col);
+                            sql
+                        } else {
+                            let sql = format!("({} AND {}.{} = ?{})", where_sql, concrete_target_model, fk_col, param_idx);
+                            sql
+                        }
                     },
                     ParentConstraint::Bulk { sql: bulk_sql, .. } => {
-                        format!("({} AND {}.{} IN ({}))", where_sql, concrete_target_model, fk_col, bulk_sql)
+                        if parent_holds_fk {
+                            format!("({} AND {}.{} IN (SELECT {} FROM {} WHERE {} IN ({}) AND {} IS NOT NULL))", 
+                                where_sql, concrete_target_model, child_pk_col, fk_col, parent_model_name, parent_pk_col, bulk_sql, fk_col)
+                        } else {
+                            format!("({} AND {}.{} IN ({}))", where_sql, concrete_target_model, fk_col, bulk_sql)
+                        }
                     }
                 };
                 match parent_constraint {
@@ -2052,6 +2162,11 @@ fn process_deferred_children(
                 if let ParentConstraint::Bulk { .. } = parent_constraint {
                     return Err("Semantics Error: Cannot 'set' a relation to multiple distinct parents in a bulk update.".to_string());
                 }
+
+                let parent_step_id = match parent_constraint {
+                    ParentConstraint::Singular { step_id } => step_id.clone(),
+                    _ => unreachable!(),
+                };
                 
                 // First disconnect all existing
                 let disconnect_step_id = format!("step_{}_set_disconnect_{}", child.target_model.to_lowercase(), *alias_counter);

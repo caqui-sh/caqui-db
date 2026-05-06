@@ -64,14 +64,16 @@ For "to-many" relationships, an additional modifier is available:
 
 While the Mutations API is highly flexible, it does enforce certain structural and execution constraints to guarantee performance and predictability:
 
-### No Singular Actions Inside Batch Actions
-You **cannot** nest singular update actions (such as `update`, `create`, `connect`, or `disconnect`) inside the `data` block of a batch update action (`updateMany`). 
+### Relational Constraints Inside Batch Actions
+When performing a batch update action (`updateMany`), the engine applies specific restrictions to nested relational mutations to guarantee execution predictability and prevent ambiguous semantics.
 
-Batch actions are designed to broadcast a uniform state change across multiple records simultaneously. Nesting a singular action within a batch action would introduce ambiguous execution semantics (e.g., attempting to singularly connect/update the exact same related record multiple times concurrently), which the engine prevents. 
+For **forward relations** (where the child schema physically holds the foreign key, often the "many" side of a 1-to-many relationship):
+- You **cannot** nest `connect` or `set` actions inside an `updateMany`. Attempting to connect a single child record to multiple distinct parents in a single bulk operation violates relational integrity (as a foreign key can only point to one parent at a time). The engine will reject this with a Semantics Error.
+- You **can** nest a `create` action. The engine will safely generate exactly *one* standalone child record and broadcast its ID, linking all matched parents to that single new child.
 
-If you need to perform relational mutations alongside batch updates, you should either:
-1. Use a nested batch action (e.g., nesting an `updateMany` inside another `updateMany`).
-2. Perform the singular relational mutations in a separate transaction or root-level API call.
+For **reverse relations** (where the parent being updated holds the foreign key, often the "1" side of a 1-to-many relationship):
+- You **cannot** nest singular actions like `update`, `connect`, or `disconnect` as they would introduce race conditions or conflicting single-target writes.
+- If you need to perform relational mutations alongside batch updates on reverse relations, you must use nested batch actions (e.g., nesting an `updateMany` inside another `updateMany`) or perform them in a separate API call.
 
 ### Polymorphic Field Actions
 When performing a nested mutation directly on a polymorphic relation (a field typed as a Union or Base Shape), the engine restricts the available inline actions. 
