@@ -1326,7 +1326,7 @@ async fn test_disconnect_boolean_rejection() {
     });
 
     let (status_invalid, _) = post_query(&app, payload_invalid).await;
-    assert_eq!(status_invalid, StatusCode::OK); // In current translator design, non-bool unwraps to false, resulting in no-op.
+    assert_eq!(status_invalid, StatusCode::BAD_REQUEST);
     
     conn.interact(|db| {
         let (fav_id,): (String,) = db.query_row("SELECT favorite_id FROM User WHERE __id = 'u1'", [], |r| Ok((r.get(0).unwrap(),))).unwrap();

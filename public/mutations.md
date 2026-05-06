@@ -68,7 +68,7 @@ While the Mutations API is highly flexible, it does enforce certain structural a
 When performing a batch update action (`updateMany`), the engine applies specific restrictions to nested relational mutations to guarantee execution predictability and prevent ambiguous semantics.
 
 For **forward relations** (where the child schema physically holds the foreign key, often the "many" side of a 1-to-many relationship):
-- You **cannot** nest `connect` or `set` actions inside an `updateMany`. Attempting to connect a single child record to multiple distinct parents in a single bulk operation violates relational integrity (as a foreign key can only point to one parent at a time). The engine will reject this with a Semantics Error.
+- You **cannot** nest `connect` or `set` actions inside an `updateMany`. Attempting to connect a single child record to multiple distinct parents in a single bulk operation violates relational integrity (as a single scalar foreign key can only point to one parent at a time). Note: Even in Many-to-Many (M:N) relationships—where connecting multiple parents and children is structurally possible via a join table—Caqui's execution engine currently applies this same restriction at the bulk processing layer. If you need to batch connect or set in M:N scenarios, you must iterate with singular `update` mutations or update the target children directly. The engine will reject these bulk operations with a Semantics Error.
 - You **can** nest a `create` action. The engine will safely generate exactly *one* standalone child record and broadcast its ID, linking all matched parents to that single new child.
 
 For **reverse relations** (where the parent being updated holds the foreign key, often the "1" side of a 1-to-many relationship):

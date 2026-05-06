@@ -650,3 +650,160 @@ async fn test_restrict_constraint_rollback_from_singular_polymorphic() {
         assert_eq!(fid, "vid1");
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn test_conditional_singular_polymorphic_disconnect() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid1', 120)", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'Video', 'vid1')", []).unwrap();
+    }).await.unwrap();
+
+    // 1. Attempt to disconnect with mismatched condition (should fail silently or not disconnect)
+    let payload1 = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": { 
+            "favorite": { 
+                "disconnect": { "where": { "__kind": "Article" } }
+            } 
+        }
+    });
+    let (status, _) = post_query(&app, payload1).await;
+    assert_eq!(status, StatusCode::OK); // Update itself might succeed but disconnect doesn't happen because where clause doesn't match
+
+    conn.interact(|db| {
+        let count: i64 = db.query_row("SELECT count(*) FROM User WHERE favorite_id IS NOT NULL", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1); // Still connected
+    }).await.unwrap();
+
+    // 2. Attempt to disconnect with matching condition
+    let payload2 = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": { 
+            "favorite": { 
+                "disconnect": { "where": { "__kind": "Video", "duration": 120 } }
+            } 
+        }
+    });
+    
+    let (status, response) = post_query(&app, payload2).await;
+    println!("DEBUG: Response: {:?}", response);
+    assert_eq!(status, StatusCode::OK);
+
+    conn.interact(|db| {
+        let count: i64 = db.query_row("SELECT count(*) FROM User WHERE favorite_id IS NOT NULL", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 0); // Disconnected
+        let vid_count: i64 = db.query_row("SELECT count(*) FROM Video WHERE __id = 'vid1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(vid_count, 1); // Not deleted!
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_singular_polymorphic_type_swapping_via_connect() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid1', 120)", []).unwrap();
+        db.execute("INSERT INTO Article (__id, title) VALUES ('art1', 'New News')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'Video', 'vid1')", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": { 
+            "favorite": { 
+                "connect": { "__kind": "Article", "__id": "art1" }
+            } 
+        }
+    });
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    conn.interact(|db| {
+        let (ftype, fid): (String, String) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = 'u1'", [], |r| Ok((r.get(0).unwrap(), r.get(1).unwrap()))).unwrap();
+        assert_eq!(ftype, "Article");
+        assert_eq!(fid, "art1");
+
+        let vid_count: i64 = db.query_row("SELECT count(*) FROM Video WHERE __id = 'vid1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(vid_count, 1); // Unharmed
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_singular_polymorphic_connect_overwrites_existing_without_deletion() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid1', 120)", []).unwrap();
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid2', 300)", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'Video', 'vid1')", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": { 
+            "favorite": { 
+                "connect": { "__kind": "Video", "__id": "vid2" }
+            } 
+        }
+    });
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    conn.interact(|db| {
+        let (ftype, fid): (String, String) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = 'u1'", [], |r| Ok((r.get(0).unwrap(), r.get(1).unwrap()))).unwrap();
+        assert_eq!(ftype, "Video");
+        assert_eq!(fid, "vid2");
+
+        let vid_count: i64 = db.query_row("SELECT count(*) FROM Video", [], |r| r.get(0)).unwrap();
+        assert_eq!(vid_count, 2); // Both videos remain intact
+    }).await.unwrap();
+}

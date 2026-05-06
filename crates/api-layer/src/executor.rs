@@ -147,6 +147,7 @@ fn execute_steps(
             ExecutionStep::UpdateMany { id, queries } => {
                 let mut total_affected: usize = 0;
                 for (sql, params) in queries {
+                    println!("DEBUG: UpdateMany SQL: {} with params {:?}", sql, params);
                     let mut stmt = tx.prepare_cached(sql)?;
                     let sql_params = resolve_params(params, None, returned_values)?;
                     let borrowed_params: Vec<&dyn rusqlite::ToSql> = sql_params.iter().map(|b| &**b).collect();

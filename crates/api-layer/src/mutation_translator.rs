@@ -922,19 +922,9 @@ fn translate_create_node(
                     if !ast.models.contains_key(target_model) {
                         return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
                     }
-                    if let Some(connect_id) = connect_obj.get("__id") {
-                        // 1. Set type column
-                        columns.push(type_col.clone());
-                        placeholders.push(format!("?{}", param_idx));
-                        params.push(Parameter::Literal(serde_json::Value::String(target_model.to_string())));
-                        param_idx += 1;
-                        
-                        // 2. Set id column
-                        columns.push(id_col.clone());
-                        placeholders.push(format!("?{}", param_idx));
-                        params.push(Parameter::Literal(connect_id.clone()));
-                        param_idx += 1;
-                    }
+                    let mut cw = connect_obj.clone();
+                    cw.remove("__kind");
+                    deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Connect(cw), relation_field_name: key.clone() });
                 } else if let Some(create_payload) = nested_mutations.get("create") {
                     if let Some(child_data) = create_payload.as_object() {
                         let target_model = child_data.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic create requires '__kind'")?;
@@ -946,16 +936,29 @@ fn translate_create_node(
                         deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Create(cw), relation_field_name: key.clone() });
                     }
                 } else if let Some(disconnect_val) = nested_mutations.get("disconnect") {
-                    if disconnect_val.as_bool().unwrap_or(false) {
-                        columns.push(type_col.clone());
-                        placeholders.push(format!("?{}", param_idx));
-                        params.push(Parameter::Literal(serde_json::Value::Null));
-                        param_idx += 1;
+                    if let Some(b) = disconnect_val.as_bool() {
+                        if b {
+                            columns.push(type_col.clone());
+                            placeholders.push(format!("?{}", param_idx));
+                            params.push(Parameter::Literal(serde_json::Value::Null));
+                            param_idx += 1;
 
-                        columns.push(id_col.clone());
-                        placeholders.push(format!("?{}", param_idx));
-                        params.push(Parameter::Literal(serde_json::Value::Null));
-                        param_idx += 1;
+                            columns.push(id_col.clone());
+                            placeholders.push(format!("?{}", param_idx));
+                            params.push(Parameter::Literal(serde_json::Value::Null));
+                            param_idx += 1;
+                        }
+                    } else if let Some(disconnect_obj) = disconnect_val.as_object() {
+                        let disconnect_where = disconnect_obj.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'disconnect'")?;
+                        let target_model = disconnect_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic disconnect requires '__kind' in 'where' block")?;
+                        if !ast.models.contains_key(target_model) {
+                            return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
+                        }
+                        let mut cw = disconnect_where.clone();
+                        cw.remove("__kind");
+                        deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Disconnect(cw), relation_field_name: key.clone() });
+                    } else {
+                        return Err(format!("Unsupported payload for polymorphic disconnect on field '{}'.", key));
                     }
                 } else if let Some(update_payload) = nested_mutations.get("update") {
                     let child_update = update_payload.as_object().ok_or("Expected object in 'update'")?;
@@ -1566,21 +1569,26 @@ fn process_deferred_children(
                     let parent_where = match &parent_constraint {
                         ParentConstraint::Singular { step_id } => {
                             update_params.push(Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() });
-                            format!("{} = ?{}", parent_pk_col, param_idx)
+                            let sql = format!("{} = ?{}", parent_pk_col, param_idx);
+                            param_idx += 1;
+                            sql
                         },
                         ParentConstraint::Bulk { sql, params: bulk_params } => {
                             update_params.extend(bulk_params.clone());
+                            param_idx += bulk_params.len();
                             format!("{} IN ({})", parent_pk_col, sql)
                         }
                     };
                     
                     if disconnect_where.is_empty() {
                         let sql = format!(
-                            "UPDATE {} SET {} = NULL, {} = NULL WHERE {};",
+                            "UPDATE {} SET {} = NULL, {} = NULL WHERE {} AND {} = '{}';",
                             parent_model_name,
                             type_col,
                             id_col,
-                            parent_where
+                            parent_where,
+                            type_col,
+                            child.target_model
                         );
                         steps.push(ExecutionStep::UpdateMany { id: update_step_id, queries: vec![(sql, update_params)] });
                     } else {
@@ -2706,17 +2714,9 @@ fn parse_update_data_block(
                     if !ast.models.contains_key(target_model) {
                         return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
                     }
-                    if let Some(connect_id) = connect_obj.get("__id") {
-                        // 1. Set type column
-                        set_clauses.push(format!("{} = ?{}", type_col, *param_idx));
-                        params.push(Parameter::Literal(serde_json::Value::String(target_model.to_string())));
-                        *param_idx += 1;
-                        
-                        // 2. Set id column
-                        set_clauses.push(format!("{} = ?{}", id_col, *param_idx));
-                        params.push(Parameter::Literal(connect_id.clone()));
-                        *param_idx += 1;
-                    }
+                    let mut cw = connect_obj.clone();
+                    cw.remove("__kind");
+                    deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Connect(cw), relation_field_name: key.clone() });
                 } else if let Some(create_payload) = nested_mutations.get("create") {
                     if let Some(child_data) = create_payload.as_object() {
                         let target_model = child_data.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic create requires '__kind'")?;
@@ -2728,14 +2728,27 @@ fn parse_update_data_block(
                         deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Create(cw), relation_field_name: key.clone() });
                     }
                 } else if let Some(disconnect_val) = nested_mutations.get("disconnect") {
-                    if disconnect_val.as_bool().unwrap_or(false) {
-                        set_clauses.push(format!("{} = ?{}", type_col, *param_idx));
-                        params.push(Parameter::Literal(serde_json::Value::Null));
-                        *param_idx += 1;
+                    if let Some(b) = disconnect_val.as_bool() {
+                        if b {
+                            set_clauses.push(format!("{} = ?{}", type_col, *param_idx));
+                            params.push(Parameter::Literal(serde_json::Value::Null));
+                            *param_idx += 1;
 
-                        set_clauses.push(format!("{} = ?{}", id_col, *param_idx));
-                        params.push(Parameter::Literal(serde_json::Value::Null));
-                        *param_idx += 1;
+                            set_clauses.push(format!("{} = ?{}", id_col, *param_idx));
+                            params.push(Parameter::Literal(serde_json::Value::Null));
+                            *param_idx += 1;
+                        }
+                    } else if let Some(disconnect_obj) = disconnect_val.as_object() {
+                        let disconnect_where = disconnect_obj.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'disconnect'")?;
+                        let target_model = disconnect_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic disconnect requires '__kind' in 'where' block")?;
+                        if !ast.models.contains_key(target_model) {
+                            return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
+                        }
+                        let mut cw = disconnect_where.clone();
+                        cw.remove("__kind");
+                        deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Disconnect(cw), relation_field_name: key.clone() });
+                    } else {
+                        return Err(format!("Unsupported payload for polymorphic disconnect on field '{}'.", key));
                     }
                 } else if let Some(update_payload) = nested_mutations.get("update") {
                     let child_update = update_payload.as_object().ok_or("Expected object in 'update'")?;
