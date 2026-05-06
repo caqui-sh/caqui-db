@@ -3406,7 +3406,7 @@ mod tests {
         assert_eq!(steps.len(), 1);
         if let ExecutionStep::DeleteBranch { id: _, sql, params, parent_ref } = &steps[0] {
             println!("DEBUG: {}", sql);
-            assert!(sql.contains("DELETE FROM User WHERE (User.__id = ?1 AND User.dummyId = ?2) RETURNING __id;"));
+            assert!(sql.contains("DELETE FROM User WHERE (User.__id = ?1 AND User.__id = (SELECT dummyId FROM User WHERE __id = ?2 AND dummyId IS NOT NULL)) RETURNING __id;"));
             assert_eq!(params.len(), 1);
             if let Parameter::Reference { step_id, column } = parent_ref {
                 assert_eq!(step_id, "step_0");
@@ -3563,7 +3563,7 @@ mod tests {
         assert_eq!(steps.len(), 2);
         if let ExecutionStep::DeleteBranch { sql, params, .. } = &steps[1] {
             println!("DEBUG SQL: {}", sql);
-            assert!(sql.contains("DELETE FROM Article WHERE (Article.__id = ?1 AND Article.itemsId = ?2) RETURNING __id;"));
+            assert!(sql.contains("DELETE FROM Article WHERE (Article.__id = ?1 AND Article.__id = (SELECT itemsId FROM User WHERE __id = ?2 AND itemsId IS NOT NULL)) RETURNING __id;"));
             assert_eq!(params.len(), 1); 
             
             if let Parameter::Literal(serde_json::Value::String(s)) = &params[0] {
