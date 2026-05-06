@@ -508,7 +508,7 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                 if !field.attributes.iter().any(|a| matches!(a, FieldAttribute::Relation { .. })) {
                     field.attributes.push(FieldAttribute::Relation {
                         name: None,
-                        on_delete: None,
+                        on_delete: None, on_disconnect: None,
                     });
                 }
             }
@@ -537,7 +537,7 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                     if relation_attr_idx.is_none() {
                         field.attributes.push(FieldAttribute::Relation {
                             name: None,
-                            on_delete: None,
+                            on_delete: None, on_disconnect: None,
                         });
                         relation_attr_idx = Some(field.attributes.len() - 1);
                     }
@@ -638,6 +638,29 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
         for added_field in added_fields {
             if !model.resolved_fields.iter().any(|f| f.name == added_field.name) {
                 model.resolved_fields.push(added_field);
+            }
+        }
+    }
+
+    // Pass 5: Validate Relation Constraints
+    for model in ast.models.values() {
+        for field in &model.resolved_fields {
+            if let Some(FieldAttribute::Relation { on_disconnect, .. }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                if let Some(od) = on_disconnect {
+                    if od != "Delete" && od != "SetNull" && od != "Restrict" {
+                        return Err(ValidationError(format!(
+                            "Invalid onDisconnect value '{}' for field '{}' in model '{}'. Allowed values are: 'Delete', 'SetNull', 'Restrict'.",
+                            od, field.name, model.name
+                        )));
+                    }
+
+                    if od == "Delete" && matches!(field.field_type, AstFieldType::Relation(_)) && !field.is_optional {
+                        return Err(ValidationError(format!(
+                            "Field '{}' in model '{}' cannot have onDisconnect: Delete because it is a strict 1:1 required relationship.",
+                            field.name, model.name
+                        )));
+                    }
+                }
             }
         }
     }
@@ -907,10 +930,10 @@ mod tests {
         assert_eq!(reviewer_id_field.field_type, AstFieldType::Scalar("String".to_string()));
         
         let author_rel = post.resolved_fields.iter().find(|f| f.name == "author").unwrap();
-        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: Some("AuthorToPost".to_string()), on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: Some("AuthorToPost".to_string()), on_delete: None, on_disconnect: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
 
         let reviewer_rel = post.resolved_fields.iter().find(|f| f.name == "reviewer").unwrap();
-        assert_eq!(reviewer_rel.attributes, vec![FieldAttribute::Relation { name: Some("ReviewerToPost".to_string()), on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["reviewerId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(reviewer_rel.attributes, vec![FieldAttribute::Relation { name: Some("ReviewerToPost".to_string()), on_delete: None, on_disconnect: None }, FieldAttribute::InternalRelation { fields: vec!["reviewerId".to_string()], references: vec!["__id".to_string()] }]);
     }
 
     #[test]
@@ -932,7 +955,7 @@ mod tests {
         assert_eq!(post.resolved_fields.len(), 5);
         
         let author_rel = post.resolved_fields.iter().find(|f| f.name == "author").unwrap();
-        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: None, on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: None, on_delete: None, on_disconnect: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
     }
 
     #[test]
@@ -985,7 +1008,7 @@ mod tests {
         assert_eq!(manager_id_field.field_type, AstFieldType::Scalar("String".to_string()));
         
         let manager_rel = employee.resolved_fields.iter().find(|f| f.name == "manager").unwrap();
-        assert_eq!(manager_rel.attributes, vec![FieldAttribute::Relation { name: Some("Management".to_string()), on_delete: None }, FieldAttribute::InternalRelation { fields: vec!["managerId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(manager_rel.attributes, vec![FieldAttribute::Relation { name: Some("Management".to_string()), on_delete: None, on_disconnect: None }, FieldAttribute::InternalRelation { fields: vec!["managerId".to_string()], references: vec!["__id".to_string()] }]);
     }
 #[test]
 fn test_explicit_at_id_rejected() {
@@ -1257,7 +1280,7 @@ fn test_explicit_at_id_rejected() {
         let user_model = validated_ast.models.get("User").unwrap();
         let primary_field = user_model.resolved_fields.iter().find(|f| f.name == "primary").unwrap();
         
-        assert!(primary_field.attributes.iter().any(|a| matches!(a, FieldAttribute::Relation { name: Some(n), on_delete: None, .. } if n == "PrimaryContent")));
+        assert!(primary_field.attributes.iter().any(|a| matches!(a, FieldAttribute::Relation { name: Some(n), on_delete: None, on_disconnect: None, .. } if n == "PrimaryContent")));
     }
 
     #[test]

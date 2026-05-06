@@ -421,7 +421,7 @@ enum DeferredAction {
     Update(String, serde_json::Map<String, Value>, serde_json::Map<String, Value>),
     Delete(String, serde_json::Map<String, Value>),
     Disconnect(serde_json::Map<String, Value>),
-    Set(Vec<serde_json::Map<String, Value>>),
+    Set(Vec<serde_json::Map<String, Value>>, bool),
     UpdateMany(String, serde_json::Map<String, Value>, serde_json::Map<String, Value>),
     DeleteMany(String, serde_json::Map<String, Value>),
 }
@@ -685,26 +685,46 @@ fn translate_create_node(
                             deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::DeleteMany(target_model.clone(), child_where.clone()), relation_field_name: key.clone() });
                         }
                     }
+                    let on_disconnect = field_def.attributes.iter().find_map(|a| if let FieldAttribute::Relation { on_disconnect: Some(od), .. } = a { Some(od.as_str()) } else { None });
+                    
                     if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
+                        if on_disconnect == Some("Restrict") {
+                            return Err(format!("Semantics Error: Cannot disconnect field '{}' because it is restricted by onDisconnect: Restrict.", key));
+                        }
+                        let is_delete = on_disconnect == Some("Delete");
+                        
                         if let Some(arr) = disconnect_payload.as_array() {
                             for item in arr {
                                 let child_where = item.as_object().ok_or("Expected 'where' object in 'disconnect' array")?;
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(child_where.clone()), relation_field_name: key.clone() });
+                                if is_delete {
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), child_where.clone()), relation_field_name: key.clone() });
+                                } else {
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(child_where.clone()), relation_field_name: key.clone() });
+                                }
                             }
                         } else if let Some(item) = disconnect_payload.as_object() {
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(item.clone()), relation_field_name: key.clone() });
+                            if is_delete {
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), item.clone()), relation_field_name: key.clone() });
+                            } else {
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(item.clone()), relation_field_name: key.clone() });
+                            }
                         }
                     }
                     if let Some(set_payload) = nested_mutations.get("set") {
+                        if on_disconnect == Some("Restrict") {
+                            return Err(format!("Semantics Error: Cannot use 'set' on field '{}' because it implies disconnecting existing relations, which is restricted by onDisconnect: Restrict.", key));
+                        }
+                        let schema_delete_dropped = on_disconnect == Some("Delete");
+                        let delete_dropped = nested_mutations.get("deleteDropped").and_then(|v| v.as_bool()).unwrap_or(schema_delete_dropped);
                         if let Some(arr) = set_payload.as_array() {
                             let mut set_wheres = Vec::new();
                             for item in arr {
                                 let child_where = item.as_object().ok_or("Expected 'where' object in 'set' array")?;
                                 set_wheres.push(child_where.clone());
                             }
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(set_wheres), relation_field_name: key.clone() });
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(set_wheres, delete_dropped), relation_field_name: key.clone() });
                         } else {
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(Vec::new()), relation_field_name: key.clone() });
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(Vec::new(), delete_dropped), relation_field_name: key.clone() });
                         }
                     }
                 }
@@ -752,7 +772,13 @@ fn translate_create_node(
                     }
                 }
                 
+                let on_disconnect = field_def.attributes.iter().find_map(|a| if let FieldAttribute::Relation { on_disconnect: Some(od), .. } = a { Some(od.as_str()) } else { None });
+                
                 if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
+                    if on_disconnect == Some("Restrict") {
+                        return Err(format!("Semantics Error: Cannot disconnect field '{}' because it is restricted by onDisconnect: Restrict.", key));
+                    }
+                    let is_delete = on_disconnect == Some("Delete");
                     if let Some(arr) = disconnect_payload.as_array() {
                         for item in arr {
                             if let Some(item_obj) = item.as_object() {
@@ -762,17 +788,30 @@ fn translate_create_node(
                                 }
                                 let mut child_where = item_obj.clone();
                                 child_where.remove("__kind");
-                                deferred_children.push(DeferredChild {
-                                    target_model: kind_val.to_string(),
-                                    action: DeferredAction::Disconnect(child_where),
-                                    relation_field_name: key.clone()
-                                });
+                                if is_delete {
+                                    deferred_children.push(DeferredChild {
+                                        target_model: kind_val.to_string(),
+                                        action: DeferredAction::Delete(kind_val.to_string(), child_where),
+                                        relation_field_name: key.clone()
+                                    });
+                                } else {
+                                    deferred_children.push(DeferredChild {
+                                        target_model: kind_val.to_string(),
+                                        action: DeferredAction::Disconnect(child_where),
+                                        relation_field_name: key.clone()
+                                    });
+                                }
                             }
                         }
                     }
                 }
                 
                 if let Some(set_payload) = nested_mutations.get("set") {
+                    if on_disconnect == Some("Restrict") {
+                        return Err(format!("Semantics Error: Cannot use 'set' on field '{}' because it implies disconnecting existing relations, which is restricted by onDisconnect: Restrict.", key));
+                    }
+                    let schema_delete_dropped = on_disconnect == Some("Delete");
+                    let delete_dropped = nested_mutations.get("deleteDropped").and_then(|v| v.as_bool()).unwrap_or(schema_delete_dropped);
                     let base_model_name = match &field_def.field_type {
                         AstFieldType::PolymorphicUnionArray(n) | AstFieldType::PolymorphicBaseArray(n) => n.clone(),
                         _ => unreachable!(),
@@ -807,13 +846,13 @@ fn translate_create_node(
                             if let Some(wheres) = sets_by_model.remove(&c_model) {
                                 deferred_children.push(DeferredChild {
                                     target_model: c_model,
-                                    action: DeferredAction::Set(wheres),
+                                    action: DeferredAction::Set(wheres, delete_dropped),
                                     relation_field_name: key.clone()
                                 });
                             } else {
                                 deferred_children.push(DeferredChild {
                                     target_model: c_model,
-                                    action: DeferredAction::Set(Vec::new()),
+                                    action: DeferredAction::Set(Vec::new(), delete_dropped),
                                     relation_field_name: key.clone()
                                 });
                             }
@@ -822,7 +861,7 @@ fn translate_create_node(
                         for c_model in concrete_models {
                             deferred_children.push(DeferredChild {
                                 target_model: c_model,
-                                action: DeferredAction::Set(Vec::new()),
+                                action: DeferredAction::Set(Vec::new(), delete_dropped),
                                 relation_field_name: key.clone()
                             });
                         }
@@ -936,8 +975,17 @@ fn translate_create_node(
                         deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Create(cw), relation_field_name: key.clone() });
                     }
                 } else if let Some(disconnect_val) = nested_mutations.get("disconnect") {
+                    let on_disconnect = field_def.attributes.iter().find_map(|a| if let FieldAttribute::Relation { on_disconnect: Some(od), .. } = a { Some(od.as_str()) } else { None });
+                    if on_disconnect == Some("Restrict") {
+                        return Err(format!("Semantics Error: Cannot disconnect field '{}' because it is restricted by onDisconnect: Restrict.", key));
+                    }
+                    let is_delete = on_disconnect == Some("Delete");
+
                     if let Some(b) = disconnect_val.as_bool() {
                         if b {
+                            if is_delete {
+                                return Err(format!("Semantics Error: Cannot use 'disconnect: true' on polymorphic field '{}' with onDisconnect: Delete. You must provide the '__kind' in a where block to explicitly delete the target.", key));
+                            }
                             columns.push(type_col.clone());
                             placeholders.push(format!("?{}", param_idx));
                             params.push(Parameter::Literal(serde_json::Value::Null));
@@ -956,7 +1004,11 @@ fn translate_create_node(
                         }
                         let mut cw = disconnect_where.clone();
                         cw.remove("__kind");
-                        deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Disconnect(cw), relation_field_name: key.clone() });
+                        if is_delete {
+                            deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Delete(target_model.to_string(), cw), relation_field_name: key.clone() });
+                        } else {
+                            deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Disconnect(cw), relation_field_name: key.clone() });
+                        }
                     } else {
                         return Err(format!("Unsupported payload for polymorphic disconnect on field '{}'.", key));
                     }
@@ -2062,14 +2114,16 @@ fn process_deferred_children(
                                             }
                                         }
                                         if let Some(set_payload) = nested_mutations.get("set") {
+                                            let schema_delete_dropped = field_def.attributes.iter().any(|a| matches!(a, FieldAttribute::Relation { on_disconnect: Some(od), .. } if od == "Delete"));
+                    let delete_dropped = schema_delete_dropped || nested_mutations.get("deleteDropped").and_then(|v| v.as_bool()).unwrap_or(false);
                                             if let Some(arr) = set_payload.as_array() {
                                                 let mut set_wheres = Vec::new();
                                                 for item in arr {
                                                     set_wheres.push(item.as_object().unwrap().clone());
                                                 }
-                                                bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(set_wheres), relation_field_name: key.clone() });
+                                                bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(set_wheres, delete_dropped), relation_field_name: key.clone() });
                                             } else {
-                                                bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(Vec::new()), relation_field_name: key.clone() });
+                                                bulk_deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(Vec::new(), delete_dropped), relation_field_name: key.clone() });
                                             }
                                         }
                                     }
@@ -2292,7 +2346,7 @@ fn process_deferred_children(
                     });
                 }
             },
-            DeferredAction::Set(child_wheres) => {
+            DeferredAction::Set(child_wheres, delete_dropped) => {
                 if let ParentConstraint::Bulk { .. } = parent_constraint {
                     return Err("Semantics Error: Cannot 'set' a relation to multiple distinct parents in a bulk update.".to_string());
                 }
@@ -2301,23 +2355,73 @@ fn process_deferred_children(
                     ParentConstraint::Singular { step_id } => step_id.clone(),
                     _ => unreachable!(),
                 };
-                
-                // First disconnect all existing
+
                 let disconnect_step_id = format!("step_{}_set_disconnect_{}", child.target_model.to_lowercase(), *alias_counter);
                 *alias_counter += 1;
-                
-                let sql = format!("UPDATE {} SET {} = NULL WHERE {} = ?1 RETURNING {};", child.target_model, fk_col, fk_col, child_pk_col);
-                steps.push(ExecutionStep::Query {
-                    id: disconnect_step_id,
-                    sql,
-                    params: vec![Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() }],
-                });
-                
+
+                if delete_dropped {
+                    let mut retained_ids = Vec::new();
+                    let mut use_json_each = true;
+                    for cw in &child_wheres {
+                        if let Some(id_val) = cw.get("__id") {
+                            retained_ids.push(id_val.clone());
+                        } else {
+                            use_json_each = false;
+                            break;
+                        }
+                    }
+
+                    if use_json_each && !retained_ids.is_empty() {
+                        let json_str = serde_json::to_string(&retained_ids).unwrap();
+                        let sql = format!("DELETE FROM {} WHERE {} = ?1 AND {} NOT IN (SELECT value FROM json_each(?2));", child.target_model, fk_col, child_pk_col);
+                        steps.push(ExecutionStep::Query {
+                            id: disconnect_step_id,
+                            sql,
+                            params: vec![Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() }, Parameter::Literal(serde_json::Value::String(json_str))],
+                        });
+                    } else if use_json_each && retained_ids.is_empty() {
+                        let sql = format!("DELETE FROM {} WHERE {} = ?1;", child.target_model, fk_col);
+                        steps.push(ExecutionStep::Query {
+                            id: disconnect_step_id,
+                            sql,
+                            params: vec![Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() }],
+                        });
+                    } else {
+                        let mut sub_sqls = Vec::new();
+                        let mut sub_params = vec![Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() }];
+                        let mut param_idx = 2;
+                        let child_model_def = ast.models.get(&child.target_model).unwrap();
+                        for cw in &child_wheres {
+                            let where_clause_ir = parse_where_clause(ast, cw, child_model_def)?;
+                            let (w_sql, w_params) = compile_parameterized_where(&where_clause_ir, &child.target_model, &mut param_idx);
+                            sub_sqls.push(w_sql);
+                            sub_params.extend(w_params);
+                        }
+                        let sql = if sub_sqls.is_empty() {
+                            format!("DELETE FROM {} WHERE {} = ?1;", child.target_model, fk_col)
+                        } else {
+                            format!("DELETE FROM {} WHERE {} = ?1 AND NOT ({});", child.target_model, fk_col, sub_sqls.join(" OR "))
+                        };
+                        steps.push(ExecutionStep::Query {
+                            id: disconnect_step_id,
+                            sql,
+                            params: sub_params,
+                        });
+                    }
+                } else {
+                    let sql = format!("UPDATE {} SET {} = NULL WHERE {} = ?1 RETURNING {};", child.target_model, fk_col, fk_col, child_pk_col);
+                    steps.push(ExecutionStep::Query {
+                        id: disconnect_step_id,
+                        sql,
+                        params: vec![Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() }],
+                    });
+                }
+
                 // Then connect each child
                 for connect_where in child_wheres {
                     let child_step_id = format!("step_{}_set_connect_{}", child.target_model.to_lowercase(), *alias_counter);
                     *alias_counter += 1;
-                    
+
                     let mut params = Vec::new();
                 let mut param_idx = 1;
                 if let ParentConstraint::Bulk { params: bulk_params, .. } = parent_constraint {
@@ -2327,27 +2431,26 @@ fn process_deferred_children(
                 let set_clause = format!("{} = ?{}", fk_col, param_idx);
                     params.push(Parameter::Reference { step_id: parent_step_id.to_string(), column: target_pk.clone() });
                     param_idx += 1;
-                    
+
                     let child_model_def = ast.models.get(&child.target_model).unwrap();
                     let where_clause_ir = parse_where_clause(ast, &connect_where, child_model_def)?;
                     let (where_sql, where_params) = compile_parameterized_where(&where_clause_ir, &child.target_model, &mut param_idx);
                     params.extend(where_params);
-                    
+
                     let sql = format!(
                         "UPDATE {} SET {} WHERE {} RETURNING __id;",
                         child.target_model,
                         set_clause,
                         where_sql
                     );
-                    
+
                     steps.push(ExecutionStep::Query {
                         id: child_step_id,
                         sql,
                         params,
                     });
                 }
-            }
-        }
+            }        }
     }
     Ok(())
 }
@@ -2660,33 +2763,57 @@ fn parse_update_data_block(
                             deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Connect(item.clone()), relation_field_name: key.clone() });
                         }
                     }
+                    let on_disconnect = field_def.attributes.iter().find_map(|a| if let FieldAttribute::Relation { on_disconnect: Some(od), .. } = a { Some(od.as_str()) } else { None });
+                    
                     if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
+                        if on_disconnect == Some("Restrict") {
+                            return Err(format!("Semantics Error: Cannot disconnect field '{}' because it is restricted by onDisconnect: Restrict.", key));
+                        }
+                        let is_delete = on_disconnect == Some("Delete");
+                        
                         if let Some(arr) = disconnect_payload.as_array() {
                             for item in arr {
                                 let c_where = item.as_object().unwrap();
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(c_where.clone()), relation_field_name: key.clone() });
+                                if is_delete {
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), c_where.clone()), relation_field_name: key.clone() });
+                                } else {
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(c_where.clone()), relation_field_name: key.clone() });
+                                }
                             }
                         } else if let Some(item) = disconnect_payload.as_object() {
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(item.clone()), relation_field_name: key.clone() });
+                            if is_delete {
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), item.clone()), relation_field_name: key.clone() });
+                            } else {
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(item.clone()), relation_field_name: key.clone() });
+                            }
                         } else if let Some(item) = disconnect_payload.as_bool() {
                             if item {
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(serde_json::Map::new()), relation_field_name: key.clone() });
+                                if is_delete {
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Delete(target_model.clone(), serde_json::Map::new()), relation_field_name: key.clone() });
+                                } else {
+                                    deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Disconnect(serde_json::Map::new()), relation_field_name: key.clone() });
+                                }
                             }
                         }
                     }
                     if let Some(set_payload) = nested_mutations.get("set") {
+                        if on_disconnect == Some("Restrict") {
+                            return Err(format!("Semantics Error: Cannot use 'set' on field '{}' because it implies disconnecting existing relations, which is restricted by onDisconnect: Restrict.", key));
+                        }
+                        let schema_delete_dropped = on_disconnect == Some("Delete");
+                        let delete_dropped = nested_mutations.get("deleteDropped").and_then(|v| v.as_bool()).unwrap_or(schema_delete_dropped);
                         if let Some(arr) = set_payload.as_array() {
                             let mut set_wheres = Vec::new();
                             for item in arr {
                                 let c_where = item.as_object().unwrap();
                                 set_wheres.push(c_where.clone());
                             }
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(set_wheres), relation_field_name: key.clone() });
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(set_wheres, delete_dropped), relation_field_name: key.clone() });
                         } else if let Some(item) = set_payload.as_object() {
-                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(vec![item.clone()]), relation_field_name: key.clone() });
+                            deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(vec![item.clone()], delete_dropped), relation_field_name: key.clone() });
                         } else if let Some(arr) = set_payload.as_array() {
                             if arr.is_empty() {
-                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(Vec::new()), relation_field_name: key.clone() });
+                                deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Set(Vec::new(), delete_dropped), relation_field_name: key.clone() });
                             }
                         }
                     }
@@ -2728,8 +2855,17 @@ fn parse_update_data_block(
                         deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Create(cw), relation_field_name: key.clone() });
                     }
                 } else if let Some(disconnect_val) = nested_mutations.get("disconnect") {
+                    let on_disconnect = field_def.attributes.iter().find_map(|a| if let FieldAttribute::Relation { on_disconnect: Some(od), .. } = a { Some(od.as_str()) } else { None });
+                    if on_disconnect == Some("Restrict") {
+                        return Err(format!("Semantics Error: Cannot disconnect field '{}' because it is restricted by onDisconnect: Restrict.", key));
+                    }
+                    let is_delete = on_disconnect == Some("Delete");
+
                     if let Some(b) = disconnect_val.as_bool() {
                         if b {
+                            if is_delete {
+                                return Err(format!("Semantics Error: Cannot use 'disconnect: true' on polymorphic field '{}' with onDisconnect: Delete. You must provide the '__kind' in a where block to explicitly delete the target.", key));
+                            }
                             set_clauses.push(format!("{} = ?{}", type_col, *param_idx));
                             params.push(Parameter::Literal(serde_json::Value::Null));
                             *param_idx += 1;
@@ -2746,7 +2882,11 @@ fn parse_update_data_block(
                         }
                         let mut cw = disconnect_where.clone();
                         cw.remove("__kind");
-                        deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Disconnect(cw), relation_field_name: key.clone() });
+                        if is_delete {
+                            deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Delete(target_model.to_string(), cw), relation_field_name: key.clone() });
+                        } else {
+                            deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Disconnect(cw), relation_field_name: key.clone() });
+                        }
                     } else {
                         return Err(format!("Unsupported payload for polymorphic disconnect on field '{}'.", key));
                     }
@@ -2825,7 +2965,13 @@ fn parse_update_data_block(
                     }
                 }
                 
+                let on_disconnect = field_def.attributes.iter().find_map(|a| if let FieldAttribute::Relation { on_disconnect: Some(od), .. } = a { Some(od.as_str()) } else { None });
+                
                 if let Some(disconnect_payload) = nested_mutations.get("disconnect") {
+                    if on_disconnect == Some("Restrict") {
+                        return Err(format!("Semantics Error: Cannot disconnect field '{}' because it is restricted by onDisconnect: Restrict.", key));
+                    }
+                    let is_delete = on_disconnect == Some("Delete");
                     if let Some(arr) = disconnect_payload.as_array() {
                         for item in arr {
                             if let Some(item_obj) = item.as_object() {
@@ -2835,17 +2981,30 @@ fn parse_update_data_block(
                                 }
                                 let mut child_where = item_obj.clone();
                                 child_where.remove("__kind");
-                                deferred_children.push(DeferredChild {
-                                    target_model: kind_val.to_string(),
-                                    action: DeferredAction::Disconnect(child_where),
-                                    relation_field_name: key.clone()
-                                });
+                                if is_delete {
+                                    deferred_children.push(DeferredChild {
+                                        target_model: kind_val.to_string(),
+                                        action: DeferredAction::Delete(kind_val.to_string(), child_where),
+                                        relation_field_name: key.clone()
+                                    });
+                                } else {
+                                    deferred_children.push(DeferredChild {
+                                        target_model: kind_val.to_string(),
+                                        action: DeferredAction::Disconnect(child_where),
+                                        relation_field_name: key.clone()
+                                    });
+                                }
                             }
                         }
                     }
                 }
                 
                 if let Some(set_payload) = nested_mutations.get("set") {
+                    if on_disconnect == Some("Restrict") {
+                        return Err(format!("Semantics Error: Cannot use 'set' on field '{}' because it implies disconnecting existing relations, which is restricted by onDisconnect: Restrict.", key));
+                    }
+                    let schema_delete_dropped = on_disconnect == Some("Delete");
+                    let delete_dropped = nested_mutations.get("deleteDropped").and_then(|v| v.as_bool()).unwrap_or(schema_delete_dropped);
                     let base_model_name = match &field_def.field_type {
                         AstFieldType::PolymorphicUnionArray(n) | AstFieldType::PolymorphicBaseArray(n) => n.clone(),
                         _ => unreachable!(),
@@ -2880,13 +3039,13 @@ fn parse_update_data_block(
                             if let Some(wheres) = sets_by_model.remove(&c_model) {
                                 deferred_children.push(DeferredChild {
                                     target_model: c_model,
-                                    action: DeferredAction::Set(wheres),
+                                    action: DeferredAction::Set(wheres, delete_dropped),
                                     relation_field_name: key.clone()
                                 });
                             } else {
                                 deferred_children.push(DeferredChild {
                                     target_model: c_model,
-                                    action: DeferredAction::Set(Vec::new()),
+                                    action: DeferredAction::Set(Vec::new(), delete_dropped),
                                     relation_field_name: key.clone()
                                 });
                             }
@@ -2895,7 +3054,7 @@ fn parse_update_data_block(
                         for c_model in concrete_models {
                             deferred_children.push(DeferredChild {
                                 target_model: c_model,
-                                action: DeferredAction::Set(Vec::new()),
+                                action: DeferredAction::Set(Vec::new(), delete_dropped),
                                 relation_field_name: key.clone()
                             });
                         }

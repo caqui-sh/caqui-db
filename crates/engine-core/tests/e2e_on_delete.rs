@@ -339,3 +339,325 @@ async fn test_e2e_on_delete_no_action() {
     let err_msg = response["error"].as_str().or(response["message"].as_str()).unwrap_or("");
     assert!(err_msg.contains("FOREIGN KEY constraint failed"), "Got error: {}", err_msg);
 }
+
+#[tokio::test]
+async fn test_delete_dropped_foreign_key_constraint_rollback() {
+    let schema = r#"
+        model User {
+            name: String
+            posts: Post[]
+            @@id(uuid)
+        }
+        
+        model Post {
+            title: String
+            userId: String
+            user: User 
+            comments: Comment[]
+            @@id(uuid)
+        }
+
+        model Comment {
+            text: String
+            postId: String
+            post: Post @relation(onDelete: Restrict)
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+
+    // 1. Create User -> Post -> Comment
+    let (s, r) = post_query(&app, json!({
+        "action": "create",
+        "model": "User",
+        "data": {
+            "name": "Bob",
+            "posts": {
+                "create": [{
+                    "title": "Post 1",
+                    "comments": {
+                        "create": [{ "text": "First comment" }]
+                    }
+                }]
+            }
+        }
+    })).await;
+    assert_eq!(s, StatusCode::OK, "Failed to create nested structure: {:?}", r);
+    let bob_id = r["data"]["__id"].as_str().unwrap().to_string();
+
+    let conn = pool.get().await.unwrap();
+    let initial_post_count: i64 = conn.interact(|db| db.query_row("SELECT count(*) FROM Post", [], |r| r.get(0))).await.unwrap().unwrap();
+    assert_eq!(initial_post_count, 1);
+
+    // 2. Try to update User, replacing posts with a new one, using deleteDropped: true
+    // This will try to delete "Post 1", which should fail because "First comment" restricts it.
+    let (status, response) = post_query(&app, json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": bob_id },
+        "data": {
+            "name": "Bob Updated",
+            "posts": {
+                "set": [],
+                "create": [{ "title": "Post 2" }],
+                "deleteDropped": true
+            }
+        }
+    })).await;
+    
+    assert_ne!(status, StatusCode::OK, "Update should have failed due to foreign key restriction");
+    let err_msg = response["error"].as_str().unwrap_or("");
+    assert!(err_msg.contains("FOREIGN KEY constraint failed"), "Error should mention foreign key, got: {}", err_msg);
+
+    // 3. Verify Rollback: User name should not be updated, Post 1 should still exist, Post 2 should not exist
+    conn.interact(move |db| {
+        let name: String = db.query_row("SELECT name FROM User WHERE __id = ?1", [&bob_id], |r| r.get(0)).unwrap();
+        assert_eq!(name, "Bob", "User update should have rolled back");
+
+        let post_count: i64 = db.query_row("SELECT count(*) FROM Post", [], |r| r.get(0)).unwrap();
+        assert_eq!(post_count, 1, "Post table should remain unchanged");
+
+        let comment_count: i64 = db.query_row("SELECT count(*) FROM Comment", [], |r| r.get(0)).unwrap();
+        assert_eq!(comment_count, 1, "Comment should still exist");
+    }).await.unwrap();
+}
+
+
+#[tokio::test]
+async fn test_schema_on_disconnect_delete() {
+    let schema = r#"
+        model User {
+            name: String
+            posts: Post[] @relation(onDisconnect: Delete)
+            @@id(uuid)
+        }
+        
+        model Post {
+            title: String
+            userId: String?
+            user: User?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+
+    // 1. Create User with 2 Posts
+    let (s, r) = post_query(&app, json!({
+        "action": "create",
+        "model": "User",
+        "data": {
+            "name": "Bob",
+            "posts": {
+                "create": [{ "title": "Post 1" }, { "title": "Post 2" }]
+            }
+        }
+    })).await;
+    assert_eq!(s, StatusCode::OK);
+    let bob_id = r["data"]["__id"].as_str().unwrap().to_string();
+
+    let conn = pool.get().await.unwrap();
+    let initial_post_count: i64 = conn.interact(|db| db.query_row("SELECT count(*) FROM Post", [], |r| r.get(0))).await.unwrap().unwrap();
+    assert_eq!(initial_post_count, 2);
+
+    let p2_id: String = conn.interact(|db| db.query_row("SELECT __id FROM Post WHERE title = 'Post 2'", [], |r| r.get(0))).await.unwrap().unwrap();
+
+    // 2. Set User's posts to only Post 2. Post 1 should be automatically deleted because of onDisconnect: Delete
+    let (s, r) = post_query(&app, json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": bob_id },
+        "data": {
+            "posts": {
+                "set": [{ "__id": p2_id }]
+            }
+        }
+    })).await;
+    assert_eq!(s, StatusCode::OK, "Failed to update posts: {:?}", r);
+
+    // 3. Verify Post 1 is deleted
+    conn.interact(move |db| {
+        let post_count: i64 = db.query_row("SELECT count(*) FROM Post", [], |r| r.get(0)).unwrap();
+        assert_eq!(post_count, 1, "Post 1 should be deleted");
+
+        let p2_exists: i64 = db.query_row("SELECT count(*) FROM Post WHERE title = 'Post 2'", [], |r| r.get(0)).unwrap();
+        assert_eq!(p2_exists, 1, "Post 2 should still exist");
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_schema_on_disconnect_explicit_disconnect() {
+    let schema = r#"
+        model User {
+            name: String
+            posts: Post[] @relation(onDisconnect: Delete)
+            @@id(uuid)
+        }
+        
+        model Post {
+            title: String
+            userId: String?
+            user: User?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+
+    // 1. Create User with 1 Post
+    let (s, r) = post_query(&app, json!({
+        "action": "create",
+        "model": "User",
+        "data": {
+            "name": "Bob",
+            "posts": {
+                "create": [{ "title": "Post 1" }]
+            }
+        }
+    })).await;
+    assert_eq!(s, StatusCode::OK);
+    let bob_id = r["data"]["__id"].as_str().unwrap().to_string();
+
+    let conn = pool.get().await.unwrap();
+    let p1_id: String = conn.interact(|db| db.query_row("SELECT __id FROM Post", [], |r| r.get(0))).await.unwrap().unwrap();
+
+    // 2. Explicitly disconnect Post 1
+    let (s, r) = post_query(&app, json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": bob_id },
+        "data": {
+            "posts": {
+                "disconnect": [{ "__id": p1_id }]
+            }
+        }
+    })).await;
+    assert_eq!(s, StatusCode::OK, "Failed to disconnect: {:?}", r);
+
+    // 3. Verify Post 1 is deleted (not just disconnected)
+    conn.interact(move |db| {
+        let post_count: i64 = db.query_row("SELECT count(*) FROM Post", [], |r| r.get(0)).unwrap();
+        assert_eq!(post_count, 0, "Post 1 should be completely deleted");
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_schema_on_disconnect_restrict() {
+    let schema = r#"
+        model User {
+            name: String
+            profile: Profile? @relation(onDisconnect: Restrict)
+            @@id(uuid)
+        }
+        
+        model Profile {
+            bio: String
+            userId: String?
+            user: User?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+
+    let (s, r) = post_query(&app, json!({
+        "action": "create",
+        "model": "User",
+        "data": {
+            "name": "Bob",
+            "profile": {
+                "create": { "bio": "My Profile" }
+            }
+        }
+    })).await;
+    assert_eq!(s, StatusCode::OK);
+    let bob_id = r["data"]["__id"].as_str().unwrap().to_string();
+
+    let conn = pool.get().await.unwrap();
+    let prof_id: String = conn.interact(|db| db.query_row("SELECT __id FROM Profile", [], |r| r.get(0))).await.unwrap().unwrap();
+
+    // 1. Try to disconnect
+    let (s, r) = post_query(&app, json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": bob_id },
+        "data": {
+            "profile": {
+                "disconnect": { "__id": prof_id }
+            }
+        }
+    })).await;
+    assert_ne!(s, StatusCode::OK);
+    assert!(r["error"].as_str().unwrap().contains("Semantics Error: Cannot disconnect"));
+
+    // 2. Try to set a new profile (which implicitly disconnects the old one)
+    let (s, r) = post_query(&app, json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": bob_id },
+        "data": {
+            "profile": {
+                "set": [{ "__id": prof_id }]
+            }
+        }
+    })).await;
+    assert_ne!(s, StatusCode::OK);
+    assert!(r["error"].as_str().unwrap().contains("Semantics Error: Cannot use 'set'"));
+}
+
+#[tokio::test]
+async fn test_schema_on_disconnect_delete_override_false() {
+    let schema = r#"
+        model User {
+            name: String
+            posts: Post[] @relation(onDisconnect: Delete)
+            @@id(uuid)
+        }
+        
+        model Post {
+            title: String
+            userId: String?
+            user: User?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+
+    let (s, r) = post_query(&app, json!({
+        "action": "create",
+        "model": "User",
+        "data": {
+            "name": "Bob",
+            "posts": {
+                "create": [{ "title": "Post 1" }]
+            }
+        }
+    })).await;
+    assert_eq!(s, StatusCode::OK);
+    let bob_id = r["data"]["__id"].as_str().unwrap().to_string();
+
+    // Set posts to empty, but explicitly pass deleteDropped: false
+    let (s, _r) = post_query(&app, json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": bob_id },
+        "data": {
+            "posts": {
+                "set": [],
+                "deleteDropped": false
+            }
+        }
+    })).await;
+    assert_eq!(s, StatusCode::OK);
+
+    let conn = pool.get().await.unwrap();
+    conn.interact(move |db| {
+        let post_count: i64 = db.query_row("SELECT count(*) FROM Post", [], |r| r.get(0)).unwrap();
+        assert_eq!(post_count, 1, "Post should not be deleted because of deleteDropped: false override");
+
+        let null_fk: i64 = db.query_row("SELECT count(*) FROM Post WHERE userId IS NULL", [], |r| r.get(0)).unwrap();
+        assert_eq!(null_fk, 1, "Post should only be disconnected");
+    }).await.unwrap();
+}

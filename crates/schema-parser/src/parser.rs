@@ -65,7 +65,8 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> Result<FieldNode,
                 "relation" => {
                     let mut name = None;
                     let mut on_delete = None;
-                    
+                    let mut on_disconnect = None;
+
                     if let Some(args_rule) = attr_inner.next() {
                         for param_rule in args_rule.into_inner() {
                             let actual_param = param_rule.into_inner().next().unwrap();
@@ -73,7 +74,7 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> Result<FieldNode,
                                 let mut param_inner = actual_param.clone().into_inner();
                                 let key = param_inner.next().unwrap().as_str();
                                 let val_pair = param_inner.next().unwrap();
-                                
+
                                 if key == "name" {
                                     let val_rule = val_pair.into_inner().next().unwrap();
                                     if val_rule.as_rule() == Rule::string_lit {
@@ -82,6 +83,9 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> Result<FieldNode,
                                 } else if key == "onDelete" {
                                     let val_rule = val_pair.into_inner().next().unwrap();
                                     on_delete = Some(val_rule.as_str().to_string());
+                                } else if key == "onDisconnect" {
+                                    let val_rule = val_pair.into_inner().next().unwrap();
+                                    on_disconnect = Some(val_rule.as_str().to_string());
                                 } else {
                                     return Err(pest::error::Error::new_from_span(
                                         pest::error::ErrorVariant::CustomError {
@@ -98,9 +102,8 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> Result<FieldNode,
                             }
                         }
                     }
-                    attributes.push(FieldAttribute::Relation { name, on_delete });
-                },
-                _ => {}
+                    attributes.push(FieldAttribute::Relation { name, on_delete, on_disconnect });
+                },                _ => {}
             }
         }
     }

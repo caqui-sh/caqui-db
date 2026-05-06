@@ -1543,3 +1543,138 @@ async fn test_polymorphic_invalid_kind_rejection() {
     assert!(error_msg.contains("undefined"), "Actual error: {}", error_msg);
 }
 
+#[tokio::test]
+async fn test_array_polymorphic_delete_dropped() {
+    let schema = r#"
+        base Content { user: User? }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorites: Content[]
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+
+    // 1. Seed User with 1 Article and 1 Video
+    let seed_payload = json!({
+        "action": "create",
+        "model": "User",
+        "data": {
+            "name": "Bob",
+            "favorites": {
+                "create": [
+                    { "__kind": "Article", "title": "My Article" },
+                    { "__kind": "Video", "duration": 120 }
+                ]
+            }
+        }
+    });
+    let (status_seed, response_seed) = post_query(&app, seed_payload).await;
+    assert_eq!(status_seed, StatusCode::OK);
+    
+    let bob_id = response_seed["data"]["__id"].as_str().unwrap();
+
+    let conn = pool.get().await.unwrap();
+    let (art_id, _vid_id) = conn.interact(|db| {
+        let art_id: String = db.query_row("SELECT __id FROM Article WHERE title = 'My Article'", [], |r| r.get(0)).unwrap();
+        let vid_id: String = db.query_row("SELECT __id FROM Video WHERE duration = 120", [], |r| r.get(0)).unwrap();
+        (art_id, vid_id)
+    }).await.unwrap();
+
+    // 2. Update User to SET favorites to ONLY the Article using deleteDropped
+    let set_payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": bob_id },
+        "data": {
+            "favorites": {
+                "set": [{ "__kind": "Article", "__id": art_id }],
+                "deleteDropped": true
+            }
+        }
+    });
+
+    let (status_set, _) = post_query(&app, set_payload).await;
+    assert_eq!(status_set, StatusCode::OK);
+
+    // 3. Verify Video was DELETED and Article remains connected
+    conn.interact(move |db| {
+        let art_count: i64 = db.query_row("SELECT count(*) FROM Article WHERE userId IS NOT NULL", [], |r| r.get(0)).unwrap();
+        assert_eq!(art_count, 1, "Article should still be connected");
+        
+        let vid_count: i64 = db.query_row("SELECT count(*) FROM Video", [], |r| r.get(0)).unwrap();
+        assert_eq!(vid_count, 0, "Video should have been physically deleted");
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_polymorphic_explicit_disconnect_delete() {
+    let schema = r#"
+        base Content { user: User? }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorites: Content[] @relation(onDisconnect: Delete)
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+
+    // 1. Seed User with 1 Article and 1 Video
+    let seed_payload = json!({
+        "action": "create",
+        "model": "User",
+        "data": {
+            "name": "Bob",
+            "favorites": {
+                "create": [
+                    { "__kind": "Article", "title": "My Article" },
+                    { "__kind": "Video", "duration": 120 }
+                ]
+            }
+        }
+    });
+    let (status_seed, response_seed) = post_query(&app, seed_payload).await;
+    assert_eq!(status_seed, StatusCode::OK);
+    
+    let bob_id = response_seed["data"]["__id"].as_str().unwrap();
+
+    let conn = pool.get().await.unwrap();
+    let (art_id, _vid_id) = conn.interact(|db| {
+        let art_id: String = db.query_row("SELECT __id FROM Article WHERE title = 'My Article'", [], |r| r.get(0)).unwrap();
+        let vid_id: String = db.query_row("SELECT __id FROM Video WHERE duration = 120", [], |r| r.get(0)).unwrap();
+        (art_id, vid_id)
+    }).await.unwrap();
+
+    // 2. Explicitly disconnect the Article
+    let disconnect_payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": bob_id },
+        "data": {
+            "favorites": {
+                "disconnect": [{ "__kind": "Article", "__id": art_id }]
+            }
+        }
+    });
+
+    let (status_disc, _) = post_query(&app, disconnect_payload).await;
+    assert_eq!(status_disc, StatusCode::OK);
+
+    // 3. Verify Article was physically DELETED (onDisconnect: Delete) and Video remains
+    conn.interact(move |db| {
+        let art_count: i64 = db.query_row("SELECT count(*) FROM Article", [], |r| r.get(0)).unwrap();
+        assert_eq!(art_count, 0, "Article should have been physically deleted");
+        
+        let vid_count: i64 = db.query_row("SELECT count(*) FROM Video", [], |r| r.get(0)).unwrap();
+        assert_eq!(vid_count, 1, "Video should still be connected");
+    }).await.unwrap();
+}
+
