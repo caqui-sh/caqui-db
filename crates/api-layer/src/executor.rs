@@ -64,6 +64,7 @@ fn execute_steps(
     for step in steps {
         match step {
             ExecutionStep::Query { id, sql, params } => {
+                println!("DEBUG: Executing Query {}: {}", id, sql);
                 let mut stmt = tx.prepare_cached(sql)?;
                 let sql_params = resolve_params(params, None, returned_values)?;
 
@@ -121,6 +122,7 @@ fn execute_steps(
                 returned_values.insert(id.clone(), returned_id);
             },
             ExecutionStep::DeleteBranch { id, sql, params, parent_ref } => {
+                println!("DEBUG: Executing DeleteBranch {}: {}", id, sql);
                 let mut stmt = tx.prepare_cached(sql)?;
                 let sql_params = resolve_params(params, Some(parent_ref), returned_values)?;
                 let borrowed_params: Vec<&dyn rusqlite::ToSql> = sql_params.iter().map(|b| &**b).collect();

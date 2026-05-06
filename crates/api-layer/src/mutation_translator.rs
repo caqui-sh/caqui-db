@@ -1400,18 +1400,16 @@ fn process_deferred_children(
                     update_params.push(Parameter::Reference { step_id: child_create_step_id, column: child_pk_col.to_string() });
 
                     let sql = format!(
-                        "UPDATE {} SET {}, {} WHERE {} RETURNING {};",
+                        "UPDATE {} SET {}, {} WHERE {};",
                         parent_model_name,
                         type_set,
                         id_set,
-                        where_clause,
-                        parent_pk_col
+                        where_clause
                     );
                     
-                    steps.push(ExecutionStep::Query {
+                    steps.push(ExecutionStep::UpdateMany {
                         id: update_step_id,
-                        sql,
-                        params: update_params,
+                        queries: vec![(sql, update_params)],
                     });
                 },
                 DeferredAction::Update(concrete_target_model, child_where, child_data) => {
@@ -1478,8 +1476,147 @@ fn process_deferred_children(
                             });
                         }
                     }
+
+                    // Parent cleanup
+                    let cleanup_step_id = format!("step_{}_poly_cleanup_{}", parent_model_name.to_lowercase(), *alias_counter);
+                    *alias_counter += 1;
+                    
+                    let mut cleanup_params = Vec::new();
+                    let mut cp_idx = 1;
+                    let parent_where = match &parent_constraint {
+                        ParentConstraint::Singular { step_id } => {
+                            cleanup_params.push(Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() });
+                            let sql = format!("{} = ?{}", parent_pk_col, cp_idx);
+                            cp_idx += 1;
+                            sql
+                        },
+                        ParentConstraint::Bulk { sql, params: bulk_params } => {
+                            cleanup_params.extend(bulk_params.clone());
+                            cp_idx += bulk_params.len();
+                            format!("{} IN ({})", parent_pk_col, sql)
+                        }
+                    };
+                    
+                    let cleanup_sql = format!(
+                        "UPDATE {} SET {} = NULL, {} = NULL WHERE {} AND {} = '{}' AND NOT EXISTS (SELECT 1 FROM {} WHERE {}.__id = {}.{});",
+                        parent_model_name,
+                        type_col,
+                        id_col,
+                        parent_where,
+                        type_col,
+                        concrete_target_model,
+                        concrete_target_model,
+                        concrete_target_model,
+                        parent_model_name,
+                        id_col
+                    );
+                    
+                    steps.push(ExecutionStep::UpdateMany {
+                        id: cleanup_step_id,
+                        queries: vec![(cleanup_sql, cleanup_params)],
+                    });
                 },
-                _ => return Err(format!("Unsupported deferred action for polymorphic relation '{}'", child.relation_field_name)),
+                DeferredAction::Connect(child_where) => {
+                    let update_step_id = format!("step_{}_poly_connect_{}", parent_model_name.to_lowercase(), *alias_counter);
+                    *alias_counter += 1;
+                    
+                    let child_model_def = ast.models.get(&child.target_model).unwrap();
+                    let where_clause_ir = parse_where_clause(ast, &child_where, child_model_def)?;
+                    
+                    let mut update_params = Vec::new();
+                    let mut param_idx = 1;
+                    
+                    let type_set = format!("{} = ?{}", type_col, param_idx);
+                    update_params.push(Parameter::Literal(serde_json::Value::String(child.target_model.clone())));
+                    param_idx += 1;
+                    
+                    let (child_where_sql, child_where_params) = compile_parameterized_where(&where_clause_ir, &child.target_model, &mut param_idx);
+                    update_params.extend(child_where_params);
+                    
+                    let id_set = format!("{} = (SELECT __id FROM {} WHERE {})", id_col, child.target_model, child_where_sql);
+                    
+                    let parent_where = match &parent_constraint {
+                        ParentConstraint::Singular { step_id } => {
+                            update_params.push(Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() });
+                            let sql = format!("{} = ?{}", parent_pk_col, param_idx);
+                            param_idx += 1;
+                            sql
+                        },
+                        ParentConstraint::Bulk { sql, params: bulk_params } => {
+                            update_params.extend(bulk_params.clone());
+                            param_idx += bulk_params.len();
+                            format!("{} IN ({})", parent_pk_col, sql)
+                        }
+                    };
+                    
+                    let sql = format!(
+                        "UPDATE {} SET {}, {} WHERE {};",
+                        parent_model_name,
+                        type_set,
+                        id_set,
+                        parent_where
+                    );
+                    
+                    steps.push(ExecutionStep::UpdateMany {
+                        id: update_step_id,
+                        queries: vec![(sql, update_params)],
+                    });
+                },
+                DeferredAction::Disconnect(disconnect_where) => {
+                    let update_step_id = format!("step_{}_poly_disconnect_{}", parent_model_name.to_lowercase(), *alias_counter);
+                    *alias_counter += 1;
+                    
+                    let mut update_params = Vec::new();
+                    let mut param_idx = 1;
+                    
+                    let parent_where = match &parent_constraint {
+                        ParentConstraint::Singular { step_id } => {
+                            update_params.push(Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() });
+                            let sql = format!("{} = ?{}", parent_pk_col, param_idx);
+                            param_idx += 1;
+                            sql
+                        },
+                        ParentConstraint::Bulk { sql, params: bulk_params } => {
+                            update_params.extend(bulk_params.clone());
+                            param_idx += bulk_params.len();
+                            format!("{} IN ({})", parent_pk_col, sql)
+                        }
+                    };
+                    
+                    if disconnect_where.is_empty() {
+                        let sql = format!(
+                            "UPDATE {} SET {} = NULL, {} = NULL WHERE {};",
+                            parent_model_name,
+                            type_col,
+                            id_col,
+                            parent_where
+                        );
+                        steps.push(ExecutionStep::UpdateMany { id: update_step_id, queries: vec![(sql, update_params)] });
+                    } else {
+                        let child_model_def = ast.models.get(&child.target_model).unwrap();
+                        let where_clause_ir = parse_where_clause(ast, &disconnect_where, child_model_def)?;
+                        let (child_where_sql, child_where_params) = compile_parameterized_where(&where_clause_ir, &child.target_model, &mut param_idx);
+                        update_params.extend(child_where_params);
+                        
+                        let sql = format!(
+                            "UPDATE {} SET {} = NULL, {} = NULL WHERE {} AND EXISTS (SELECT 1 FROM {} WHERE {}.__id = {}.{} AND {}.{} = '{}' AND {});",
+                            parent_model_name,
+                            type_col,
+                            id_col,
+                            parent_where,
+                            child.target_model,
+                            child.target_model,
+                            parent_model_name,
+                            id_col,
+                            parent_model_name,
+                            type_col,
+                            child.target_model,
+                            child_where_sql
+                        );
+                        steps.push(ExecutionStep::UpdateMany { id: update_step_id, queries: vec![(sql, update_params)] });
+                    }
+                },
+                                _ => return Err(format!("Unsupported deferred action for polymorphic relation '{}'", child.relation_field_name)),
             }
             continue;
         }
@@ -1581,17 +1718,15 @@ fn process_deferred_children(
                     update_params.push(Parameter::Reference { step_id: child_create_step_id, column: child_pk_col.to_string() });
 
                     let sql = format!(
-                        "UPDATE {} SET {} WHERE {} RETURNING {};",
+                        "UPDATE {} SET {} WHERE {};",
                         parent_model_name,
                         set_clause,
-                        where_clause,
-                        parent_pk_col
+                        where_clause
                     );
                     
-                    steps.push(ExecutionStep::Query {
+                    steps.push(ExecutionStep::UpdateMany {
                         id: update_step_id,
-                        sql,
-                        params: update_params,
+                        queries: vec![(sql, update_params)],
                     });
                 } else {
                     translate_create_node(ast, &child.target_model, &child_data, steps, alias_counter, Some(ParentRel {
@@ -3270,6 +3405,7 @@ mod tests {
         
         assert_eq!(steps.len(), 1);
         if let ExecutionStep::DeleteBranch { id: _, sql, params, parent_ref } = &steps[0] {
+            println!("DEBUG: {}", sql);
             assert!(sql.contains("DELETE FROM User WHERE (User.__id = ?1 AND User.dummyId = ?2) RETURNING __id;"));
             assert_eq!(params.len(), 1);
             if let Parameter::Reference { step_id, column } = parent_ref {

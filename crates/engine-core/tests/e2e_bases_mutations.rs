@@ -622,13 +622,12 @@ async fn test_singular_polymorphic_delete() {
 
     conn.interact(|db| {
         let (fav_type, fav_id): (Option<String>, Option<String>) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = 'u1'", [], |r| Ok((r.get(0).ok().flatten(), r.get(1).ok().flatten()))).unwrap();
-        assert_eq!(fav_type, Some("Video".to_string()));
-        assert_eq!(fav_id, Some("vid1".to_string()));
-        
+        assert_eq!(fav_type, None);
+        assert_eq!(fav_id, None);
+
         let count: i64 = db.query_row("SELECT count(*) FROM Video WHERE __id = 'vid1'", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 0); // Delete destroys the concrete record
-    }).await.unwrap();
-}
+        assert_eq!(count, 0); // Delete destroys the concrete record AND cleans up the parent
+    }).await.unwrap();}
 
 #[tokio::test]
 async fn test_singular_polymorphic_update() {

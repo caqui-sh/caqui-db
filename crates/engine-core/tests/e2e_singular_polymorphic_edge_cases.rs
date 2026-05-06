@@ -488,3 +488,165 @@ async fn test_nested_deletes_under_batch_operations() {
         assert_eq!(count2, 1); // Unharmed
     }).await.unwrap();
 }
+
+#[tokio::test]
+async fn test_unconditional_singular_polymorphic_deletion() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { duration: Int @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid1', 120)", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'Video', 'vid1')", []).unwrap();
+    }).await.unwrap();
+
+    // Perform successful nested delete with empty where (unconditional)
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": { 
+            "favorite": { 
+                "delete": { "where": { "__kind": "Video" } }
+            } 
+        }
+    });
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    // Verify record was deleted AND parent cleaned up
+    conn.interact(|db| {
+        let count: i64 = db.query_row("SELECT count(*) FROM Video WHERE __id = 'vid1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 0);
+        let (ftype, fid): (Option<String>, Option<String>) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = 'u1'", [], |r| Ok((r.get(0).unwrap_or(None), r.get(1).unwrap_or(None)))).unwrap();
+        assert!(ftype.is_none());
+        assert!(fid.is_none());
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_cascading_deletions_from_singular_polymorphic() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { 
+            duration: Int 
+            comments: Comment[]
+            @@id(uuid) 
+        }
+        
+        model Comment {
+            text: String
+            video: Video @relation(onDelete: Cascade)
+            @@id(uuid)
+        }
+
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid1', 120)", []).unwrap();
+        db.execute("INSERT INTO Comment (__id, text, videoId) VALUES ('c1', 'first!', 'vid1')", []).unwrap();
+        db.execute("INSERT INTO Comment (__id, text, videoId) VALUES ('c2', 'second!', 'vid1')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'Video', 'vid1')", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": { 
+            "favorite": { 
+                "delete": { "where": { "__kind": "Video" } }
+            } 
+        }
+    });
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    conn.interact(|db| {
+        let count_vid: i64 = db.query_row("SELECT count(*) FROM Video WHERE __id = 'vid1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count_vid, 0); // Video deleted
+        
+        let count_com: i64 = db.query_row("SELECT count(*) FROM Comment WHERE videoId = 'vid1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count_com, 0); // Cascaded to comments!
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_restrict_constraint_rollback_from_singular_polymorphic() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        model Video extends Content { 
+            duration: Int 
+            comments: Comment[]
+            @@id(uuid) 
+        }
+        
+        model Comment {
+            text: String
+            video: Video @relation(onDelete: Restrict)
+            @@id(uuid)
+        }
+
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Video (__id, duration) VALUES ('vid1', 120)", []).unwrap();
+        db.execute("INSERT INTO Comment (__id, text, videoId) VALUES ('c1', 'cant delete me!', 'vid1')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'Video', 'vid1')", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": { 
+            "favorite": { 
+                "delete": { "where": { "__kind": "Video" } }
+            } 
+        }
+    });
+    let (status, response) = post_query(&app, payload).await;
+    // Transaction errors and Foreign Key constraint failures might return 500 or 400 depending on exact router configuration, but checking for the correct error message is key
+    assert!(status.is_client_error() || status.is_server_error());
+    assert!(response["error"].as_str().unwrap().contains("FOREIGN KEY constraint failed"), "Error: {:?}", response);
+
+    conn.interact(|db| {
+        // Verify Video was not deleted
+        let count_vid: i64 = db.query_row("SELECT count(*) FROM Video WHERE __id = 'vid1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count_vid, 1);
+        
+        // Verify User pointers were NOT cleaned up (transaction rollback)
+        let (ftype, fid): (String, String) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = 'u1'", [], |r| Ok((r.get(0).unwrap(), r.get(1).unwrap()))).unwrap();
+        assert_eq!(ftype, "Video");
+        assert_eq!(fid, "vid1");
+    }).await.unwrap();
+}
