@@ -753,7 +753,7 @@ mod tests {
 
         let response = app.oneshot(request).await.unwrap();
         // Since we don't have upfront validation yet, it should fail during SQL binding/execution
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

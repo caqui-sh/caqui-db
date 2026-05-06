@@ -94,7 +94,7 @@ Use the `__kind` attribute in your payload to explicitly resolve the target:
 ```json
 {
   "update": {
-    "__kind": "Article",
+    "where": { "__kind": "Article" },
     "data": { "status": "PUBLISHED" }
   }
 }

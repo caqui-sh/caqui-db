@@ -212,8 +212,8 @@ async fn test_array_polymorphic_create_connect() {
         "data": {
             "name": "Bob",
             "favorites": {
-                "create": [ { "Article": { "title": "New Art" } } ],
-                "connect": [ { "Video": { "__id": "vid1" } } ]
+                "create": [ { "__kind": "Article", "title": "New Art" } ],
+                "connect": [ { "__kind": "Video", "__id": "vid1" } ]
             }
         }
     });
@@ -261,7 +261,7 @@ async fn test_array_polymorphic_disconnect() {
         "where": { "__id": "u2" },
         "data": {
             "favorites": {
-                "disconnect": [ { "Article": { "__id": "art2" } } ]
+                "disconnect": [ { "__kind": "Article", "__id": "art2" } ]
             }
         }
     });
@@ -310,7 +310,7 @@ async fn test_array_polymorphic_set() {
         "where": { "__id": "u3" },
         "data": {
             "favorites": {
-                "set": [ { "Article": { "__id": "art4" } } ]
+                "set": [ { "__kind": "Article", "__id": "art4" } ]
             }
         }
     });
@@ -376,7 +376,7 @@ async fn test_e2e_polymorphic_reparent_and_disconnect() {
         "where": { "__id": generated_c_id },
         "data": {
             "parent": {
-                "Video": { "create": { "__id": "v1", "duration": 120 } }
+                "create": { "__kind": "Video", "__id": "v1", "duration": 120 }
             }
         }
     });
@@ -397,9 +397,7 @@ async fn test_e2e_polymorphic_reparent_and_disconnect() {
         "where": { "__id": generated_c_id },
         "data": {
             "parent": {
-                "Video": {
-                    "disconnect": true
-                }
+                "disconnect": true
             }
         }
     });
@@ -574,7 +572,7 @@ async fn test_singular_polymorphic_disconnect() {
         "action": "update",
         "model": "User",
         "where": { "__id": "u1" },
-        "data": { "favorite": { "Article": { "disconnect": true } } }
+        "data": { "favorite": { "disconnect": true } }
     });
 
     let (status, response) = post_query(&app, payload).await;
@@ -616,7 +614,7 @@ async fn test_singular_polymorphic_delete() {
         "action": "update",
         "model": "User",
         "where": { "__id": "u1" },
-        "data": { "favorite": { "Video": { "delete": { "where": {} } } } }
+        "data": { "favorite": { "delete": { "where": { "__kind": "Video" } } } }
     });
 
     let (status, response) = post_query(&app, payload).await;
@@ -658,7 +656,7 @@ async fn test_singular_polymorphic_update() {
         "action": "update",
         "model": "User",
         "where": { "__id": "u2" },
-        "data": { "favorite": { "Article": { "update": { "where": {}, "data": { "title": "New Title" } } } } }
+        "data": { "favorite": { "update": { "where": { "__kind": "Article" }, "data": { "title": "New Title" } } } }
     });
 
     let (status, response) = post_query(&app, payload).await;
@@ -701,7 +699,7 @@ async fn test_singular_polymorphic_type_mismatch_safety() {
         "action": "update",
         "model": "User",
         "where": { "__id": "u_test" },
-        "data": { "favorite": { "Article": { "update": { "where": {}, "data": { "title": "Hacked" } } } } }
+        "data": { "favorite": { "update": { "where": { "__kind": "Article" }, "data": { "title": "New Title" } } } }
     });
 
     let (status, response) = post_query(&app, payload).await;
@@ -1184,8 +1182,8 @@ async fn test_array_polymorphic_update_nested_create_connect() {
         "where": { "__id": "u1" },
         "data": {
             "favorites": {
-                "create": [ { "Article": { "title": "New" } } ],
-                "connect": [ { "Video": { "__id": "v1" } } ]
+                "create": [ { "__kind": "Article", "title": "New" } ],
+                "connect": [ { "__kind": "Video", "__id": "v1" } ]
             }
         }
     });
@@ -1201,3 +1199,4 @@ async fn test_array_polymorphic_update_nested_create_connect() {
         assert_eq!(count_vid, 1);
     }).await.unwrap();
 }
+

@@ -721,18 +721,17 @@ fn translate_create_node(
                     if let Some(arr) = create_payload.as_array() {
                         for item in arr {
                             if let Some(item_obj) = item.as_object() {
-                                for (concrete_model_name, child_data_val) in item_obj {
-                                    if !ast.models.contains_key(concrete_model_name) {
-                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
-                                    }
-                                    if let Some(child_data) = child_data_val.as_object() {
-                                        deferred_children.push(DeferredChild {
-                                            target_model: concrete_model_name.clone(),
-                                            action: DeferredAction::Create(child_data.clone()),
-                                            relation_field_name: key.clone()
-                                        });
-                                    }
+                                let kind_val = item_obj.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic create array requires '__kind'")?;
+                                if !ast.models.contains_key(kind_val) {
+                                    return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
                                 }
+                                let mut child_data = item_obj.clone();
+                                child_data.remove("__kind");
+                                deferred_children.push(DeferredChild {
+                                    target_model: kind_val.to_string(),
+                                    action: DeferredAction::Create(child_data),
+                                    relation_field_name: key.clone()
+                                });
                             }
                         }
                     }
@@ -742,18 +741,17 @@ fn translate_create_node(
                     if let Some(arr) = connect_payload.as_array() {
                         for item in arr {
                             if let Some(item_obj) = item.as_object() {
-                                for (concrete_model_name, child_where_val) in item_obj {
-                                    if !ast.models.contains_key(concrete_model_name) {
-                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
-                                    }
-                                    if let Some(child_where) = child_where_val.as_object() {
-                                        deferred_children.push(DeferredChild {
-                                            target_model: concrete_model_name.clone(),
-                                            action: DeferredAction::Connect(child_where.clone()),
-                                            relation_field_name: key.clone()
-                                        });
-                                    }
+                                let kind_val = item_obj.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic connect array requires '__kind'")?;
+                                if !ast.models.contains_key(kind_val) {
+                                    return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
                                 }
+                                let mut child_where = item_obj.clone();
+                                child_where.remove("__kind");
+                                deferred_children.push(DeferredChild {
+                                    target_model: kind_val.to_string(),
+                                    action: DeferredAction::Connect(child_where),
+                                    relation_field_name: key.clone()
+                                });
                             }
                         }
                     }
@@ -763,18 +761,17 @@ fn translate_create_node(
                     if let Some(arr) = disconnect_payload.as_array() {
                         for item in arr {
                             if let Some(item_obj) = item.as_object() {
-                                for (concrete_model_name, child_where_val) in item_obj {
-                                    if !ast.models.contains_key(concrete_model_name) {
-                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
-                                    }
-                                    if let Some(child_where) = child_where_val.as_object() {
-                                        deferred_children.push(DeferredChild {
-                                            target_model: concrete_model_name.clone(),
-                                            action: DeferredAction::Disconnect(child_where.clone()),
-                                            relation_field_name: key.clone()
-                                        });
-                                    }
+                                let kind_val = item_obj.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic disconnect array requires '__kind'")?;
+                                if !ast.models.contains_key(kind_val) {
+                                    return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
                                 }
+                                let mut child_where = item_obj.clone();
+                                child_where.remove("__kind");
+                                deferred_children.push(DeferredChild {
+                                    target_model: kind_val.to_string(),
+                                    action: DeferredAction::Disconnect(child_where),
+                                    relation_field_name: key.clone()
+                                });
                             }
                         }
                     }
@@ -801,11 +798,13 @@ fn translate_create_node(
                         let mut sets_by_model: std::collections::HashMap<String, Vec<serde_json::Map<String, Value>>> = std::collections::HashMap::new();
                         for item in arr {
                             if let Some(item_obj) = item.as_object() {
-                                for (concrete_model_name, child_where_val) in item_obj {
-                                    if let Some(child_where) = child_where_val.as_object() {
-                                        sets_by_model.entry(concrete_model_name.clone()).or_default().push(child_where.clone());
-                                    }
+                                let kind_val = item_obj.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic set array requires '__kind'")?;
+                                if !ast.models.contains_key(kind_val) {
+                                    return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
                                 }
+                                let mut child_where = item_obj.clone();
+                                child_where.remove("__kind");
+                                sets_by_model.entry(kind_val.to_string()).or_default().push(child_where);
                             }
                         }
                         
@@ -2474,24 +2473,16 @@ fn parse_update_data_block(
                 let type_col = format!("{}_type", key);
                 let id_col = format!("{}_id", key);
 
-                // Expecting exactly one target type key (e.g. { "ModelA": { "connect": { "__id": "1" } } })
-                if nested_mutations.len() != 1 {
-                    return Err(format!("Polymorphic field '{}' requires exactly one target type in the mutation payload.", key));
-                }
-                
-                let (target_model, actions) = nested_mutations.iter().next().unwrap();
-                let actions_obj = actions.as_object().ok_or(format!("Expected object for target type '{}' in field '{}'", target_model, key))?;
-
-                // Validate target model exists
-                if !ast.models.contains_key(target_model) {
-                    return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
-                }
-
-                if let Some(connect_payload) = actions_obj.get("connect") {
-                    if let Some(connect_id) = connect_payload.as_object().and_then(|o| o.get("__id")) {
+                if let Some(connect_payload) = nested_mutations.get("connect") {
+                    let connect_obj = connect_payload.as_object().ok_or("Expected object for 'connect'")?;
+                    let target_model = connect_obj.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic connect requires '__kind'")?;
+                    if !ast.models.contains_key(target_model) {
+                        return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
+                    }
+                    if let Some(connect_id) = connect_obj.get("__id") {
                         // 1. Set type column
                         set_clauses.push(format!("{} = ?{}", type_col, *param_idx));
-                        params.push(Parameter::Literal(serde_json::Value::String(target_model.clone())));
+                        params.push(Parameter::Literal(serde_json::Value::String(target_model.to_string())));
                         *param_idx += 1;
                         
                         // 2. Set id column
@@ -2499,11 +2490,17 @@ fn parse_update_data_block(
                         params.push(Parameter::Literal(connect_id.clone()));
                         *param_idx += 1;
                     }
-                } else if let Some(create_payload) = actions_obj.get("create") {
+                } else if let Some(create_payload) = nested_mutations.get("create") {
                     if let Some(child_data) = create_payload.as_object() {
-                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(child_data.clone()), relation_field_name: key.clone() });
+                        let target_model = child_data.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic create requires '__kind'")?;
+                        if !ast.models.contains_key(target_model) {
+                            return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
+                        }
+                        let mut cw = child_data.clone();
+                        cw.remove("__kind");
+                        deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Create(cw), relation_field_name: key.clone() });
                     }
-                } else if let Some(disconnect_val) = actions_obj.get("disconnect") {
+                } else if let Some(disconnect_val) = nested_mutations.get("disconnect") {
                     if disconnect_val.as_bool().unwrap_or(false) {
                         set_clauses.push(format!("{} = ?{}", type_col, *param_idx));
                         params.push(Parameter::Literal(serde_json::Value::Null));
@@ -2513,21 +2510,32 @@ fn parse_update_data_block(
                         params.push(Parameter::Literal(serde_json::Value::Null));
                         *param_idx += 1;
                     }
-                } else if let Some(update_payload) = actions_obj.get("update") {
+                } else if let Some(update_payload) = nested_mutations.get("update") {
                     let child_update = update_payload.as_object().ok_or("Expected object in 'update'")?;
                     let child_where = child_update.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update'")?;
                     let child_data = child_update.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update'")?;
-                    
+                    let target_model = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic update requires '__kind' in 'where' block")?;
+                    if !ast.models.contains_key(target_model) {
+                        return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
+                    }
+                    let mut cw = child_where.clone();
+                    cw.remove("__kind");
                     deferred_children.push(DeferredChild {
-                        target_model: target_model.clone(),
-                        action: DeferredAction::Update(target_model.clone(), child_where.clone(), child_data.clone()),
+                        target_model: target_model.to_string(),
+                        action: DeferredAction::Update(target_model.to_string(), cw, child_data.clone()),
                         relation_field_name: key.clone()
                     });
-                } else if let Some(delete_payload) = actions_obj.get("delete") {
+                } else if let Some(delete_payload) = nested_mutations.get("delete") {
                     let child_where = delete_payload.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'delete'")?;
+                    let target_model = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic delete requires '__kind' in 'where' block")?;
+                    if !ast.models.contains_key(target_model) {
+                        return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
+                    }
+                    let mut cw = child_where.clone();
+                    cw.remove("__kind");
                     deferred_children.push(DeferredChild {
-                        target_model: target_model.clone(),
-                        action: DeferredAction::Delete(target_model.clone(), child_where.clone()),
+                        target_model: target_model.to_string(),
+                        action: DeferredAction::Delete(target_model.to_string(), cw),
                         relation_field_name: key.clone()
                     });
                 } else {
@@ -2541,18 +2549,17 @@ fn parse_update_data_block(
                     if let Some(arr) = create_payload.as_array() {
                         for item in arr {
                             if let Some(item_obj) = item.as_object() {
-                                for (concrete_model_name, child_data_val) in item_obj {
-                                    if !ast.models.contains_key(concrete_model_name) {
-                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
-                                    }
-                                    if let Some(child_data) = child_data_val.as_object() {
-                                        deferred_children.push(DeferredChild {
-                                            target_model: concrete_model_name.clone(),
-                                            action: DeferredAction::Create(child_data.clone()),
-                                            relation_field_name: key.clone()
-                                        });
-                                    }
+                                let kind_val = item_obj.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic create array requires '__kind'")?;
+                                if !ast.models.contains_key(kind_val) {
+                                    return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
                                 }
+                                let mut child_data = item_obj.clone();
+                                child_data.remove("__kind");
+                                deferred_children.push(DeferredChild {
+                                    target_model: kind_val.to_string(),
+                                    action: DeferredAction::Create(child_data),
+                                    relation_field_name: key.clone()
+                                });
                             }
                         }
                     }
@@ -2562,18 +2569,17 @@ fn parse_update_data_block(
                     if let Some(arr) = connect_payload.as_array() {
                         for item in arr {
                             if let Some(item_obj) = item.as_object() {
-                                for (concrete_model_name, child_where_val) in item_obj {
-                                    if !ast.models.contains_key(concrete_model_name) {
-                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
-                                    }
-                                    if let Some(child_where) = child_where_val.as_object() {
-                                        deferred_children.push(DeferredChild {
-                                            target_model: concrete_model_name.clone(),
-                                            action: DeferredAction::Connect(child_where.clone()),
-                                            relation_field_name: key.clone()
-                                        });
-                                    }
+                                let kind_val = item_obj.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic connect array requires '__kind'")?;
+                                if !ast.models.contains_key(kind_val) {
+                                    return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
                                 }
+                                let mut child_where = item_obj.clone();
+                                child_where.remove("__kind");
+                                deferred_children.push(DeferredChild {
+                                    target_model: kind_val.to_string(),
+                                    action: DeferredAction::Connect(child_where),
+                                    relation_field_name: key.clone()
+                                });
                             }
                         }
                     }
@@ -2583,18 +2589,17 @@ fn parse_update_data_block(
                     if let Some(arr) = disconnect_payload.as_array() {
                         for item in arr {
                             if let Some(item_obj) = item.as_object() {
-                                for (concrete_model_name, child_where_val) in item_obj {
-                                    if !ast.models.contains_key(concrete_model_name) {
-                                        return Err(format!("Security Exception: Target model '{}' undefined.", concrete_model_name));
-                                    }
-                                    if let Some(child_where) = child_where_val.as_object() {
-                                        deferred_children.push(DeferredChild {
-                                            target_model: concrete_model_name.clone(),
-                                            action: DeferredAction::Disconnect(child_where.clone()),
-                                            relation_field_name: key.clone()
-                                        });
-                                    }
+                                let kind_val = item_obj.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic disconnect array requires '__kind'")?;
+                                if !ast.models.contains_key(kind_val) {
+                                    return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
                                 }
+                                let mut child_where = item_obj.clone();
+                                child_where.remove("__kind");
+                                deferred_children.push(DeferredChild {
+                                    target_model: kind_val.to_string(),
+                                    action: DeferredAction::Disconnect(child_where),
+                                    relation_field_name: key.clone()
+                                });
                             }
                         }
                     }
@@ -2621,11 +2626,13 @@ fn parse_update_data_block(
                         let mut sets_by_model: std::collections::HashMap<String, Vec<serde_json::Map<String, Value>>> = std::collections::HashMap::new();
                         for item in arr {
                             if let Some(item_obj) = item.as_object() {
-                                for (concrete_model_name, child_where_val) in item_obj {
-                                    if let Some(child_where) = child_where_val.as_object() {
-                                        sets_by_model.entry(concrete_model_name.clone()).or_default().push(child_where.clone());
-                                    }
+                                let kind_val = item_obj.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic set array requires '__kind'")?;
+                                if !ast.models.contains_key(kind_val) {
+                                    return Err(format!("Security Exception: Target model '{}' undefined.", kind_val));
                                 }
+                                let mut child_where = item_obj.clone();
+                                child_where.remove("__kind");
+                                sets_by_model.entry(kind_val.to_string()).or_default().push(child_where);
                             }
                         }
                         
