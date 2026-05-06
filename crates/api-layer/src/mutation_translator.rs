@@ -918,28 +918,20 @@ fn translate_create_node(
             AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicBase(_) => {
                 let nested_mutations = val.as_object().ok_or(format!("Expected object for polymorphic field '{}'", key))?;
                 
-                // Expecting exactly one target type key (e.g. { "ModelA": { "connect": { "__id": "1" } } })
-                if nested_mutations.len() != 1 {
-                    return Err(format!("Polymorphic field '{}' requires exactly one target type in the mutation payload.", key));
-                }
-                
-                let (target_model, actions) = nested_mutations.iter().next().unwrap();
-                let actions_obj = actions.as_object().ok_or(format!("Expected object for target type '{}' in field '{}'", target_model, key))?;
-
-                // Validate target model exists
-                if !ast.models.contains_key(target_model) {
-                    return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
-                }
-                
                 let type_col = format!("{}_type", key);
                 let id_col = format!("{}_id", key);
 
-                if let Some(connect_payload) = actions_obj.get("connect") {
-                    if let Some(connect_id) = connect_payload.as_object().and_then(|o| o.get("__id")) {
+                if let Some(connect_payload) = nested_mutations.get("connect") {
+                    let connect_obj = connect_payload.as_object().ok_or("Expected object for 'connect'")?;
+                    let target_model = connect_obj.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic connect requires '__kind'")?;
+                    if !ast.models.contains_key(target_model) {
+                        return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
+                    }
+                    if let Some(connect_id) = connect_obj.get("__id") {
                         // 1. Set type column
                         columns.push(type_col.clone());
                         placeholders.push(format!("?{}", param_idx));
-                        params.push(Parameter::Literal(serde_json::Value::String(target_model.clone())));
+                        params.push(Parameter::Literal(serde_json::Value::String(target_model.to_string())));
                         param_idx += 1;
                         
                         // 2. Set id column
@@ -948,11 +940,17 @@ fn translate_create_node(
                         params.push(Parameter::Literal(connect_id.clone()));
                         param_idx += 1;
                     }
-                } else if let Some(create_payload) = actions_obj.get("create") {
+                } else if let Some(create_payload) = nested_mutations.get("create") {
                     if let Some(child_data) = create_payload.as_object() {
-                        deferred_children.push(DeferredChild { target_model: target_model.clone(), action: DeferredAction::Create(child_data.clone()), relation_field_name: key.clone() });
+                        let target_model = child_data.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic create requires '__kind'")?;
+                        if !ast.models.contains_key(target_model) {
+                            return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
+                        }
+                        let mut cw = child_data.clone();
+                        cw.remove("__kind");
+                        deferred_children.push(DeferredChild { target_model: target_model.to_string(), action: DeferredAction::Create(cw), relation_field_name: key.clone() });
                     }
-                } else if let Some(disconnect_val) = actions_obj.get("disconnect") {
+                } else if let Some(disconnect_val) = nested_mutations.get("disconnect") {
                     if disconnect_val.as_bool().unwrap_or(false) {
                         columns.push(type_col.clone());
                         placeholders.push(format!("?{}", param_idx));
@@ -964,21 +962,32 @@ fn translate_create_node(
                         params.push(Parameter::Literal(serde_json::Value::Null));
                         param_idx += 1;
                     }
-                } else if let Some(update_payload) = actions_obj.get("update") {
+                } else if let Some(update_payload) = nested_mutations.get("update") {
                     let child_update = update_payload.as_object().ok_or("Expected object in 'update'")?;
                     let child_where = child_update.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'update'")?;
                     let child_data = child_update.get("data").and_then(|v| v.as_object()).ok_or("Expected 'data' object in 'update'")?;
-                    
+                    let target_model = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic update requires '__kind' in 'where' block")?;
+                    if !ast.models.contains_key(target_model) {
+                        return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
+                    }
+                    let mut cw = child_where.clone();
+                    cw.remove("__kind");
                     deferred_children.push(DeferredChild {
-                        target_model: target_model.clone(),
-                        action: DeferredAction::Update(target_model.clone(), child_where.clone(), child_data.clone()),
+                        target_model: target_model.to_string(),
+                        action: DeferredAction::Update(target_model.to_string(), cw, child_data.clone()),
                         relation_field_name: key.clone()
                     });
-                } else if let Some(delete_payload) = actions_obj.get("delete") {
+                } else if let Some(delete_payload) = nested_mutations.get("delete") {
                     let child_where = delete_payload.get("where").and_then(|v| v.as_object()).ok_or("Expected 'where' object in 'delete'")?;
+                    let target_model = child_where.get("__kind").and_then(|v| v.as_str()).ok_or("Polymorphic delete requires '__kind' in 'where' block")?;
+                    if !ast.models.contains_key(target_model) {
+                        return Err(format!("Security Exception: Target model '{}' undefined.", target_model));
+                    }
+                    let mut cw = child_where.clone();
+                    cw.remove("__kind");
                     deferred_children.push(DeferredChild {
-                        target_model: target_model.clone(),
-                        action: DeferredAction::Delete(target_model.clone(), child_where.clone()),
+                        target_model: target_model.to_string(),
+                        action: DeferredAction::Delete(target_model.to_string(), cw),
                         relation_field_name: key.clone()
                     });
                 } else {
