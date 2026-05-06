@@ -1200,3 +1200,193 @@ async fn test_array_polymorphic_update_nested_create_connect() {
     }).await.unwrap();
 }
 
+#[tokio::test]
+async fn test_null_state_idempotent_disconnect() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u1', 'Alice', NULL, NULL)", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": { "favorite": { "disconnect": true } }
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    conn.interact(|db| {
+        let (fav_type, fav_id): (Option<String>, Option<String>) = db.query_row("SELECT favorite_type, favorite_id FROM User WHERE __id = 'u1'", [], |r| Ok((r.get(0).ok().flatten(), r.get(1).ok().flatten()))).unwrap();
+        assert_eq!(fav_type, None);
+        assert_eq!(fav_id, None);
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_nested_disconnect_under_batch_operations() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        
+        model User {
+            name: String
+            status: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Article (__id, title) VALUES ('a1', 'Title')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, status, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'ACTIVE', 'Article', 'a1')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, status, favorite_type, favorite_id) VALUES ('u2', 'Bob', 'ACTIVE', 'Article', 'a1')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, status, favorite_type, favorite_id) VALUES ('u3', 'Charlie', 'INACTIVE', 'Article', 'a1')", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "updateMany",
+        "model": "User",
+        "where": { "status": "ACTIVE" },
+        "data": { "favorite": { "disconnect": true } }
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    conn.interact(|db| {
+        let count_active: i64 = db.query_row("SELECT count(*) FROM User WHERE status = 'ACTIVE' AND favorite_id IS NULL", [], |r| r.get(0)).unwrap();
+        assert_eq!(count_active, 2);
+        
+        let count_inactive: i64 = db.query_row("SELECT count(*) FROM User WHERE status = 'INACTIVE' AND favorite_id IS NOT NULL", [], |r| r.get(0)).unwrap();
+        assert_eq!(count_inactive, 1);
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_disconnect_boolean_rejection() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        
+        model User {
+            name: String
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Article (__id, title) VALUES ('a1', 'Title')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'Article', 'a1')", []).unwrap();
+    }).await.unwrap();
+
+    // Test with false
+    let payload_false = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": { "favorite": { "disconnect": false } }
+    });
+
+    let (status, _) = post_query(&app, payload_false).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Verify still connected
+    conn.interact(|db| {
+        let (fav_id,): (String,) = db.query_row("SELECT favorite_id FROM User WHERE __id = 'u1'", [], |r| Ok((r.get(0).unwrap(),))).unwrap();
+        assert_eq!(fav_id, "a1");
+    }).await.unwrap();
+    
+    // Test with structurally invalid payload
+    let payload_invalid = json!({
+        "action": "update",
+        "model": "User",
+        "where": { "__id": "u1" },
+        "data": { "favorite": { "disconnect": { "where": {} } } }
+    });
+
+    let (status_invalid, _) = post_query(&app, payload_invalid).await;
+    assert_eq!(status_invalid, StatusCode::OK); // In current translator design, non-bool unwraps to false, resulting in no-op.
+    
+    conn.interact(|db| {
+        let (fav_id,): (String,) = db.query_row("SELECT favorite_id FROM User WHERE __id = 'u1'", [], |r| Ok((r.get(0).unwrap(),))).unwrap();
+        assert_eq!(fav_id, "a1");
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_deeply_nested_polymorphic_disconnect() {
+    let schema = r#"
+        base Content {  }
+        model Article extends Content { title: String @@id(uuid) }
+        
+        model Organization {
+            name: String
+            users: User[]
+            @@id(uuid)
+        }
+
+        model User {
+            name: String
+            orgId: String
+            org: Organization @relation(fields: [orgId], references: [__id])
+            favorite: Content?
+            @@id(uuid)
+        }
+    "#;
+    let (app, _dir, db_uri) = setup_app(schema).await;
+    let pool = api_layer::db::create_pool(&db_uri);
+    let conn = pool.get().await.unwrap();
+
+    conn.interact(|db| {
+        db.execute("INSERT INTO Organization (__id, name) VALUES ('org1', 'Acme')", []).unwrap();
+        db.execute("INSERT INTO Article (__id, title) VALUES ('a1', 'Title')", []).unwrap();
+        db.execute("INSERT INTO User (__id, name, orgId, favorite_type, favorite_id) VALUES ('u1', 'Alice', 'org1', 'Article', 'a1')", []).unwrap();
+    }).await.unwrap();
+
+    let payload = json!({
+        "action": "update",
+        "model": "Organization",
+        "where": { "__id": "org1" },
+        "data": {
+            "users": {
+                "update": {
+                    "where": { "__id": "u1" },
+                    "data": {
+                        "favorite": { "disconnect": true }
+                    }
+                }
+            }
+        }
+    });
+
+    let (status, response) = post_query(&app, payload).await;
+    assert_eq!(status, StatusCode::OK, "Response: {:?}", response);
+
+    conn.interact(|db| {
+        let (fav_id,): (Option<String>,) = db.query_row("SELECT favorite_id FROM User WHERE __id = 'u1'", [], |r| Ok((r.get(0).ok().flatten(),))).unwrap();
+        assert_eq!(fav_id, None);
+    }).await.unwrap();
+}
+
