@@ -349,7 +349,7 @@ mod tests {
             model User {
                 email: String @unique
                 bio: String
-                posts: Post[] @relation(fields: [__id], references: [authorId], onDelete: Cascade)
+                posts: Post[] @relation(onDelete: Cascade)
     @@id(uuid)
             }
             model Post {
@@ -363,7 +363,7 @@ mod tests {
         let user = ast.models.get("User").unwrap();
         
         // Block attributes
-        let block_id = user.block_attributes.iter().find(|a| matches!(a, ModelAttribute::Id(_))).unwrap();
+        assert!(user.block_attributes.iter().any(|a| matches!(a, ModelAttribute::Id(_))));
         
         // @unique
         let email_field = user.fields.iter().find(|f| f.name == "email").unwrap();
@@ -580,5 +580,33 @@ mod tests {
         let result_references = parse_schema(input_references);
         assert!(result_references.is_err());
         assert!(result_references.unwrap_err().to_string().contains("Unsupported property 'references' in @relation attribute. Use implicit relation bindings instead."));
+
+        let input_mixed_name = r#"
+            model User {
+                posts: Post[] @relation("AuthorToPost", fields: [authorId], references: [__id])
+            }
+        "#;
+        let result_mixed_name = parse_schema(input_mixed_name);
+        assert!(result_mixed_name.is_err());
+        // Since attributes are processed in order, we expect 'fields' error to hit first.
+        assert!(result_mixed_name.unwrap_err().to_string().contains("Unsupported property 'fields'"));
+
+        let input_mixed_on_delete = r#"
+            model User {
+                posts: Post[] @relation(fields: [authorId], references: [__id], onDelete: Cascade)
+            }
+        "#;
+        let result_mixed_on_delete = parse_schema(input_mixed_on_delete);
+        assert!(result_mixed_on_delete.is_err());
+        assert!(result_mixed_on_delete.unwrap_err().to_string().contains("Unsupported property 'fields'"));
+
+        let input_kitchen_sink = r#"
+            model User {
+                posts: Post[] @relation("AuthorToPost", fields: [authorId], references: [__id], onDelete: Cascade)
+            }
+        "#;
+        let result_kitchen_sink = parse_schema(input_kitchen_sink);
+        assert!(result_kitchen_sink.is_err());
+        assert!(result_kitchen_sink.unwrap_err().to_string().contains("Unsupported property 'fields'"));
     }
 }
