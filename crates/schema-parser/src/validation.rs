@@ -501,11 +501,16 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
         }
     }
 
-    // explicit_mappings removed.
-    for model in ast.models.values() {
-        for field in &model.resolved_fields {
-            if let Some(FieldAttribute::Relation { .. }) = field.attributes.iter().find(|a| matches!(a, FieldAttribute::Relation { .. })) {
-                // ignore
+    // Ensure every relation field has at least an empty @relation attribute
+    for model in ast.models.values_mut() {
+        for field in &mut model.resolved_fields {
+            if matches!(field.field_type, AstFieldType::Relation(_) | AstFieldType::RelationArray(_)) {
+                if !field.attributes.iter().any(|a| matches!(a, FieldAttribute::Relation { .. })) {
+                    field.attributes.push(FieldAttribute::Relation {
+                        name: None,
+                        on_delete: None,
+                    });
+                }
             }
         }
     }

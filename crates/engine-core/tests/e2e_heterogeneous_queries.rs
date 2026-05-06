@@ -222,7 +222,7 @@ async fn test_e2e_polymorphic_filtering() {
         
         model Comment {
             text: String
-            parent: Content @relation(fields: [parent_type, parent_id], references: [__kind, __id])
+            parent: Content @relation
             @@id(uuid)
         }
     "#;

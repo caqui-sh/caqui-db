@@ -441,7 +441,7 @@ mod tests {
             model User {
 
                 bio: String?
-                manager: User? @relation(fields: [managerId], references: [__id])
+                manager: User? @relation
                 managerId: String?
     @@id(uuid)
             }
@@ -563,14 +563,22 @@ mod tests {
 
     #[test]
     fn test_parse_relation_unsupported_properties() {
-        let input = r#"
+        let input_fields = r#"
             model User {
                 posts: Post[] @relation(fields: [__id])
             }
         "#;
-        let result = parse_schema(input);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Unsupported property \"fields\" in @relation attribute. Use implicit relation bindings instead."));
+        let result_fields = parse_schema(input_fields);
+        assert!(result_fields.is_err());
+        assert!(result_fields.unwrap_err().to_string().contains("Unsupported property 'fields' in @relation attribute. Use implicit relation bindings instead."));
+        
+        let input_references = r#"
+            model User {
+                posts: Post[] @relation(references: [authorId])
+            }
+        "#;
+        let result_references = parse_schema(input_references);
+        assert!(result_references.is_err());
+        assert!(result_references.unwrap_err().to_string().contains("Unsupported property 'references' in @relation attribute. Use implicit relation bindings instead."));
     }
 }

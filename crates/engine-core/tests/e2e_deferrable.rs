@@ -31,17 +31,19 @@ async fn test_e2e_deferrable() {
     run_cmd(cmd);
 
     // 2. Define schema with circular dependency using 
-    let schema = "
+    let schema = r#"
         model User {
-            profileId: String
-            profile: Profile 
+            teamId: String
+            team: Team @relation("TeamUsers")
+            adminTeams: Team[] @relation("TeamAdmin")
             comments: Comment[]
             @@id(uuid)
         }
         
-        model Profile {
-            userId: String
-            user: User 
+        model Team {
+            adminId: String
+            admin: User @relation("TeamAdmin")
+            users: User[] @relation("TeamUsers")
             @@id(uuid)
         }
         
@@ -51,7 +53,7 @@ async fn test_e2e_deferrable() {
             user: User 
             @@id(uuid)
         }
-    ";
+    "#;
     fs::write(workspace.join("schema.cq"), schema).unwrap();
 
     // 3. Push schema
@@ -76,8 +78,8 @@ async fn test_e2e_deferrable() {
     conn.interact(|db| {
         db.execute_batch("
             BEGIN TRANSACTION;
-            INSERT INTO User (__id, profileId) VALUES ('u1', 'p1');
-            INSERT INTO Profile (__id, userId) VALUES ('p1', 'u1');
+            INSERT INTO User (__id, teamId) VALUES ('u1', 'g1');
+            INSERT INTO Team (__id, adminId) VALUES ('g1', 'u1');
             COMMIT;
         ").unwrap();
         Ok::<(), rusqlite::Error>(())
@@ -88,7 +90,7 @@ async fn test_e2e_deferrable() {
     conn.interact(|db| {
         let result = db.execute_batch("
             BEGIN TRANSACTION;
-            INSERT INTO User (__id, profileId) VALUES ('u2', 'non-existent-profile');
+            INSERT INTO User (__id, teamId) VALUES ('u2', 'non-existent-group');
             COMMIT;
         ");
         
@@ -110,26 +112,26 @@ async fn test_e2e_deferrable() {
         // Setup a second valid pair
         db.execute_batch("
             BEGIN TRANSACTION;
-            INSERT INTO User (__id, profileId) VALUES ('u3', 'p3');
-            INSERT INTO Profile (__id, userId) VALUES ('p3', 'u3');
+            INSERT INTO User (__id, teamId) VALUES ('u3', 't3');
+            INSERT INTO Team (__id, adminId) VALUES ('t3', 'u3');
             COMMIT;
         ").unwrap();
         
         // Swap them!
         db.execute_batch("
             BEGIN TRANSACTION;
-            UPDATE User SET profileId = 'p3' WHERE __id = 'u1';
-            UPDATE User SET profileId = 'p1' WHERE __id = 'u3';
+            UPDATE User SET teamId = 't3' WHERE __id = 'u1';
+            UPDATE User SET teamId = 'g1' WHERE __id = 'u3';
             
-            UPDATE Profile SET userId = 'u3' WHERE __id = 'p1';
-            UPDATE Profile SET userId = 'u1' WHERE __id = 'p3';
+            UPDATE Team SET adminId = 'u3' WHERE __id = 'g1';
+            UPDATE Team SET adminId = 'u1' WHERE __id = 't3';
             COMMIT;
         ").unwrap();
         
         // Verify Swap Succeeded
-        let mut stmt = db.prepare("SELECT profileId FROM User WHERE __id = 'u1'").unwrap();
+        let mut stmt = db.prepare("SELECT teamId FROM User WHERE __id = 'u1'").unwrap();
         let p_id: String = stmt.query_row([], |row| row.get(0)).unwrap();
-        assert_eq!(p_id, "p3");
+        assert_eq!(p_id, "t3");
         Ok::<(), rusqlite::Error>(())
     }).await.unwrap().unwrap();
     
@@ -139,8 +141,8 @@ async fn test_e2e_deferrable() {
         // Setup User and Comment
         db.execute_batch("
             BEGIN TRANSACTION;
-            INSERT INTO User (__id, profileId) VALUES ('u4', 'p4');
-            INSERT INTO Profile (__id, userId) VALUES ('p4', 'u4');
+            INSERT INTO User (__id, teamId) VALUES ('u4', 'g4');
+            INSERT INTO Team (__id, adminId) VALUES ('g4', 'u4');
             INSERT INTO Comment (__id, text, userId) VALUES ('c4', 'hello', 'u4');
             COMMIT;
         ").unwrap();
@@ -151,7 +153,7 @@ async fn test_e2e_deferrable() {
             BEGIN TRANSACTION;
             DELETE FROM User WHERE __id = 'u4';
             DELETE FROM Comment WHERE __id = 'c4';
-            DELETE FROM Profile WHERE __id = 'p4';
+            DELETE FROM Team WHERE __id = 'g4';
             COMMIT;
         ").unwrap();
         
