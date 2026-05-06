@@ -226,9 +226,9 @@ pub fn hydrate_mutation_to_plan(
                 let (c_set_clauses, c_params, c_deferred, _) = parse_update_data_block(
                     ast, child_model_def, model_name, &required_bases, data, &mut param_idx
                 )?;
-                let mut set_clauses = c_set_clauses;
+                let set_clauses = c_set_clauses;
                 let mut params = c_params;
-                let mut deferred_children = c_deferred;
+                let deferred_children = c_deferred;
 
                 if set_clauses.is_empty() && deferred_children.is_empty() {
                     continue;
@@ -461,7 +461,7 @@ fn translate_create_node(
     
     if let Some(rel) = &parent_rel {
         let parent_model_def = ast.models.get(&rel.parent_model).unwrap();
-        let parent_pk_col = parent_model_def.resolved_fields.iter()
+        let _parent_pk_col = parent_model_def.resolved_fields.iter()
             .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
             .map(|f| f.name.as_str())
             .unwrap_or("__id");
@@ -1057,7 +1057,7 @@ fn translate_create_node(
         }
     }
 
-    let sql = if let Some((parent_model, parent_sql)) = bulk_parent {
+    let sql = if let Some((_parent_model, parent_sql)) = bulk_parent {
         let fk = fk_col_name.unwrap();
         if columns.is_empty() {
             format!(
@@ -1139,7 +1139,7 @@ fn translate_update_node(
     }
     
     let where_clause_ir = parse_where_clause(ast, where_obj, model_def)?;
-    let (mut where_sql, mut where_params) = compile_parameterized_where(&where_clause_ir, model_name, &mut param_idx);
+    let (mut where_sql, where_params) = compile_parameterized_where(&where_clause_ir, model_name, &mut param_idx);
     
     for (target_model, id_col, type_col) in singular_poly_actions {
         let fetch_step_id = format!("step_{}_fetch_poly_id_{}", model_name.to_lowercase(), *alias_counter);
@@ -1169,7 +1169,7 @@ fn translate_update_node(
     
     if let Some(rel) = &parent_rel {
         let parent_model_def = ast.models.get(&rel.parent_model).unwrap();
-        let parent_pk_col = parent_model_def.resolved_fields.iter()
+        let _parent_pk_col = parent_model_def.resolved_fields.iter()
             .find(|f| f.attributes.iter().any(|a| matches!(a, FieldAttribute::Id)))
             .map(|f| f.name.as_str())
             .unwrap_or("__id");
@@ -1247,7 +1247,6 @@ fn translate_update_node(
                     return Err("Semantics Error: Cannot execute singular 'update' nested under a bulk operation. Use 'updateMany' instead.".to_string());
                 }
             }
-            param_idx += 1;
         } else if let Some(col) = fk_col {
             where_sql = format!("({} AND {}.{} = ?{})", where_sql, model_name, col, param_idx);
             match &rel.constraint {
@@ -1258,7 +1257,6 @@ fn translate_update_node(
                     return Err("Semantics Error: Cannot execute singular 'update' nested under a bulk operation. Use 'updateMany' instead.".to_string());
                 }
             }
-            param_idx += 1;
         }
         
         params.extend(where_params);
@@ -1337,7 +1335,7 @@ fn process_deferred_children(
         } else { "__id" };
         
         let parent_field_def = parent_model_def.resolved_fields.iter().find(|f| f.name == child.relation_field_name).unwrap();
-        let is_polymorphic = matches!(parent_field_def.field_type, AstFieldType::PolymorphicBase(_) | AstFieldType::PolymorphicBaseArray(_) | AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicUnionArray(_));
+        let _is_polymorphic = matches!(parent_field_def.field_type, AstFieldType::PolymorphicBase(_) | AstFieldType::PolymorphicBaseArray(_) | AstFieldType::PolymorphicUnion(_) | AstFieldType::PolymorphicUnionArray(_));
         let is_singular_polymorphic = matches!(parent_field_def.field_type, AstFieldType::PolymorphicBase(_) | AstFieldType::PolymorphicUnion(_));
 
         if is_singular_polymorphic {
@@ -1571,9 +1569,8 @@ fn process_deferred_children(
                 params.extend(where_params);
                 
                 let combined_where_sql = match parent_constraint {
-                    ParentConstraint::Singular { step_id } => {
+                    ParentConstraint::Singular { step_id: _ } => {
                         let sql = format!("({} AND {}.{} = ?{})", where_sql, concrete_target_model, fk_col, param_idx);
-                        param_idx += 1;
                         sql
                     },
                     ParentConstraint::Bulk { sql: bulk_sql, .. } => {
@@ -1643,7 +1640,7 @@ fn process_deferred_children(
                 });
                 
                 let mut queries = Vec::new();
-                let parent_ref = match parent_constraint {
+                let _parent_ref = match parent_constraint {
                     ParentConstraint::Singular { step_id } => Some(Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() }),
                     ParentConstraint::Bulk { .. } => None,
                 };
@@ -1849,7 +1846,6 @@ fn process_deferred_children(
                             ParentConstraint::Singular { step_id } => {
                                 let sql = format!("({} AND {}.{} = ?{})", where_sql, c_model, fk_col, param_idx);
                                 params.push(Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() });
-                                param_idx += 1;
                                 sql
                             },
                             ParentConstraint::Bulk { sql: bulk_sql, .. } => {
@@ -1878,7 +1874,7 @@ fn process_deferred_children(
                             };
                             let (sub_where_sql, sub_where_params) = compile_parameterized_where(&where_clause_ir, &c_model, &mut sub_idx);
                             
-                            let mut final_subquery_params = match parent_constraint {
+                            let final_subquery_params = match parent_constraint {
                                 ParentConstraint::Singular { .. } => sub_where_params,
                                 ParentConstraint::Bulk { params: prev_params, .. } => {
                                     let mut p = prev_params.clone();
@@ -1939,7 +1935,7 @@ fn process_deferred_children(
                 });
                 
                 let mut queries = Vec::new();
-                let parent_ref = match parent_constraint {
+                let _parent_ref = match parent_constraint {
                     ParentConstraint::Singular { step_id } => Some(Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() }),
                     ParentConstraint::Bulk { .. } => None,
                 };
@@ -1964,7 +1960,6 @@ fn process_deferred_children(
                             ParentConstraint::Singular { step_id } => {
                                 let sql = format!("({} AND {}.{} = ?{})", where_sql, c_model, fk_col, param_idx);
                                 params.push(Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() });
-                                param_idx += 1;
                                 sql
                             },
                             ParentConstraint::Bulk { sql: bulk_sql, .. } => {
@@ -2006,7 +2001,6 @@ fn process_deferred_children(
                         ParentConstraint::Singular { step_id } => {
                             let sql = format!("({} AND {}.{} IN (SELECT {} FROM {} WHERE {})) AND {}.{} = ?{}", where_sql, parent_model_name, fk_col, child_pk_col, child.target_model, where_sql, parent_model_name, parent_pk_col, param_idx);
                             params.push(Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() });
-                            param_idx += 1;
                             sql
                         },
                         ParentConstraint::Bulk { sql: bulk_sql, .. } => {
@@ -2032,7 +2026,6 @@ fn process_deferred_children(
                         ParentConstraint::Singular { step_id } => {
                             let sql = format!("({} AND {}.{} = ?{})", where_sql, child.target_model, fk_col, param_idx);
                             params.push(Parameter::Reference { step_id: step_id.clone(), column: target_pk.clone() });
-                            param_idx += 1;
                             sql
                         },
                         ParentConstraint::Bulk { sql: bulk_sql, .. } => {
@@ -2268,7 +2261,7 @@ fn parse_update_data_block(
     let mut set_clauses = Vec::new();
     let mut params = Vec::new();
     let mut deferred_children = Vec::new();
-    let mut singular_poly_actions = Vec::new();
+    let singular_poly_actions = Vec::new();
 
     for (key, val) in data {
         if key.starts_with("__") { continue; }

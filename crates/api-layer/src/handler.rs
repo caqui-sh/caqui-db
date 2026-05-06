@@ -1524,6 +1524,7 @@ mod tests {
         assert_eq!(tags[2].as_str().unwrap(), "new_tag");
     }
 
+    #[tokio::test]
     async fn test_api_nested_update_not_found_safety() {
         let state = build_test_state().await;
         let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());
@@ -1556,6 +1557,7 @@ mod tests {
         assert!(body_str.contains("Scoped Security Violation"));
     }
 
+    #[tokio::test]
     async fn test_api_relational_filtering_some() {
         let state = build_test_state().await;
         let app = Router::new().route("/", post(api_execution_handler)).with_state(state.clone());

@@ -83,7 +83,7 @@ fn generate_create_table_sql(name: &str, table: &PhysicalTable) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PhysicalColumn, PhysicalIndex, PhysicalTrigger};
+    use crate::PhysicalColumn;
 
     #[test]
     fn test_generate_create_table_sql() {

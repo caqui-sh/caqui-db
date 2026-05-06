@@ -310,7 +310,7 @@ async fn test_polymorphic_disambiguation() {
         "collectionId": collection_id.clone()
     })).await;
 
-    let conn = pool.get().await.unwrap();
+    let _conn = pool.get().await.unwrap();
     let payload = serde_json::json!({
         "action": "update",
         "model": "Collection",
@@ -560,7 +560,7 @@ async fn test_unique_constraint_violations_in_nested_updates() {
         "profile": { "create": { "bio": "Bio 1" } }
     })).await;
 
-    let user2_id = create_test_record(&app, "User", serde_json::json!({
+    let _user2_id = create_test_record(&app, "User", serde_json::json!({
         "email": "unique2@test.com",
         "profile": { "create": { "bio": "Bio 2" } }
     })).await;

@@ -5,7 +5,6 @@ use std::env;
 use std::sync::Arc;
 use axum::{body::Body, http::{self, Request, StatusCode}};
 use tower::util::ServiceExt;
-use serde_json::Value;
 
 fn run_cmd(mut cmd: Command) -> String {
     let output = cmd.output().expect("Failed to execute command");

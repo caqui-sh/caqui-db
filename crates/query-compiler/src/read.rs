@@ -330,7 +330,7 @@ pub fn compile_select(node: &QueryNode, parent_ref: Option<(&str, &str)>, ctx: &
         }
 
         // Root query: Wrap execution in a final SELECT returning a JSON array
-            let mut source_table = match &node.source {
+            let source_table = match &node.source {
                 QueryIrSource::Table(t) => t.clone(),
                 QueryIrSource::Polymorphic { alias: _, branches } => {
                     let mut inner_branch_sqls = Vec::new();

@@ -82,8 +82,8 @@ pub fn compute_diff(desired: &[PhysicalTable], live: &HashMap<String, LiveTable>
                 }
 
                 // Check Foreign Keys
-                let mut des_fks_set: std::collections::HashSet<&String> = des_table.foreign_keys.iter().collect();
-                let mut live_fks_set: std::collections::HashSet<&String> = live_table.foreign_keys.iter().collect();
+                let des_fks_set: std::collections::HashSet<&String> = des_table.foreign_keys.iter().collect();
+                let live_fks_set: std::collections::HashSet<&String> = live_table.foreign_keys.iter().collect();
                 if des_fks_set != live_fks_set {
                     requires_rebuild = true;
                 }
@@ -179,7 +179,7 @@ pub fn compute_diff(desired: &[PhysicalTable], live: &HashMap<String, LiveTable>
 mod tests {
     use super::*;
     use crate::introspection::LiveColumn;
-    use crate::PhysicalIndex;
+    
 
     #[test]
     fn test_compute_diff_create_table() {

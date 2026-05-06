@@ -427,7 +427,7 @@ async fn test_advanced_string_filtering() {
 
 #[tokio::test]
 async fn test_fulltext_search() {
-    let (app, _dir) = setup_app().await;
+    let (_app, _dir) = setup_app().await;
 
     // The User model in setup_app() doesn't have @@fulltext yet, so we need a dedicated setup
     let dir = tempdir().unwrap();

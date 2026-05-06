@@ -12,7 +12,7 @@ pub fn register_custom_functions(conn: &rusqlite::Connection) -> rusqlite::Resul
         "gen_cuid",
         0,
         FunctionFlags::SQLITE_UTF8,
-        |_ctx| Ok(cuid::cuid().unwrap_or_else(|_| uuid::Uuid::new_v4().to_string())),
+        |_ctx| Ok(cuid::cuid1().unwrap_or_else(|_| uuid::Uuid::new_v4().to_string())),
     )?;
     Ok(())
 }
