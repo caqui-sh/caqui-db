@@ -1482,17 +1482,14 @@ fn process_deferred_children(
                     *alias_counter += 1;
                     
                     let mut cleanup_params = Vec::new();
-                    let mut cp_idx = 1;
+                    let cp_idx = 1;
                     let parent_where = match &parent_constraint {
                         ParentConstraint::Singular { step_id } => {
                             cleanup_params.push(Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() });
-                            let sql = format!("{} = ?{}", parent_pk_col, cp_idx);
-                            cp_idx += 1;
-                            sql
+                            format!("{} = ?{}", parent_pk_col, cp_idx)
                         },
                         ParentConstraint::Bulk { sql, params: bulk_params } => {
                             cleanup_params.extend(bulk_params.clone());
-                            cp_idx += bulk_params.len();
                             format!("{} IN ({})", parent_pk_col, sql)
                         }
                     };
@@ -1538,13 +1535,10 @@ fn process_deferred_children(
                     let parent_where = match &parent_constraint {
                         ParentConstraint::Singular { step_id } => {
                             update_params.push(Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() });
-                            let sql = format!("{} = ?{}", parent_pk_col, param_idx);
-                            param_idx += 1;
-                            sql
+                            format!("{} = ?{}", parent_pk_col, param_idx)
                         },
                         ParentConstraint::Bulk { sql, params: bulk_params } => {
                             update_params.extend(bulk_params.clone());
-                            param_idx += bulk_params.len();
                             format!("{} IN ({})", parent_pk_col, sql)
                         }
                     };
@@ -1572,13 +1566,10 @@ fn process_deferred_children(
                     let parent_where = match &parent_constraint {
                         ParentConstraint::Singular { step_id } => {
                             update_params.push(Parameter::Reference { step_id: step_id.clone(), column: parent_pk_col.to_string() });
-                            let sql = format!("{} = ?{}", parent_pk_col, param_idx);
-                            param_idx += 1;
-                            sql
+                            format!("{} = ?{}", parent_pk_col, param_idx)
                         },
                         ParentConstraint::Bulk { sql, params: bulk_params } => {
                             update_params.extend(bulk_params.clone());
-                            param_idx += bulk_params.len();
                             format!("{} IN ({})", parent_pk_col, sql)
                         }
                     };
