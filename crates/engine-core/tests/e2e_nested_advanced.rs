@@ -102,7 +102,7 @@ async fn test_reject_connect_set_in_updatemany() {
     // CONNECT
     let payload = json!({
         "model": "User", "action": "updateMany", "where": { "status": "active" },
-        "data": { "config": { "connect": { "__id": "c1" } } }
+        "data": { "config": { "set": { "__id": "c1" } } }
     });
     let (status, res) = post_query(&app, payload).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -111,7 +111,7 @@ async fn test_reject_connect_set_in_updatemany() {
     // SET
     let payload_set = json!({
         "model": "User", "action": "updateMany", "where": { "status": "active" },
-        "data": { "config": { "set": [{ "__id": "c1" }] } }
+        "data": { "config": { "set": { "__id": "c1" } } }
     });
     let (status_set, res_set) = post_query(&app, payload_set).await;
     assert_eq!(status_set, StatusCode::BAD_REQUEST);

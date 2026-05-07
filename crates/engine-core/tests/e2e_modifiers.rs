@@ -93,7 +93,7 @@ async fn test_nested_connect_disconnect() {
         "data": {
             "title": "Connected Post",
             "author": {
-                "connect": { "__id": user_id }
+                "set": { "__id": user_id }
             }
         }
     });
@@ -118,7 +118,7 @@ async fn test_nested_connect_disconnect() {
         "where": { "title": "Connected Post" },
         "data": {
             "author": {
-                "disconnect": true
+                "set": null
             }
         }
     });

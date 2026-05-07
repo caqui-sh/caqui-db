@@ -166,7 +166,7 @@ async fn test_e2e_polymorphic_mutations() {
             "__id": "c2",
             "text": "Also great!",
             "parent": {
-                "connect": { "__kind": "Article", "__id": "a1" }
+                "set": { "__kind": "Article", "__id": "a1" }
             }
         }
     });
@@ -397,7 +397,7 @@ async fn test_e2e_polymorphic_reparent_and_disconnect() {
         "where": { "__id": generated_c_id },
         "data": {
             "parent": {
-                "disconnect": true
+                "set": null
             }
         }
     });
@@ -572,7 +572,7 @@ async fn test_singular_polymorphic_disconnect() {
         "action": "update",
         "model": "User",
         "where": { "__id": "u1" },
-        "data": { "favorite": { "disconnect": true } }
+        "data": { "favorite": { "set": null } }
     });
 
     let (status, response) = post_query(&app, payload).await;
@@ -785,7 +785,7 @@ async fn test_singular_polymorphic_root_create_nested_connect() {
         "model": "User",
         "data": {
             "name": "Connecting User",
-            "favorite": { "connect": { "__kind": "Video", "__id": "vid_connect_1" } }
+            "favorite": { "set": { "__kind": "Video", "__id": "vid_connect_1" } }
         }
     });
 
@@ -1223,7 +1223,7 @@ async fn test_null_state_idempotent_disconnect() {
         "action": "update",
         "model": "User",
         "where": { "__id": "u1" },
-        "data": { "favorite": { "disconnect": true } }
+        "data": { "favorite": { "set": null } }
     });
 
     let (status, response) = post_query(&app, payload).await;
@@ -1264,7 +1264,7 @@ async fn test_nested_disconnect_under_batch_operations() {
         "action": "updateMany",
         "model": "User",
         "where": { "status": "ACTIVE" },
-        "data": { "favorite": { "disconnect": true } }
+        "data": { "favorite": { "set": null } }
     });
 
     let (status, response) = post_query(&app, payload).await;
@@ -1305,7 +1305,7 @@ async fn test_disconnect_boolean_rejection() {
         "action": "update",
         "model": "User",
         "where": { "__id": "u1" },
-        "data": { "favorite": { "disconnect": false } }
+        "data": { "favorite": { "set": false } }
     });
 
     let (status, _) = post_query(&app, payload_false).await;
@@ -1322,7 +1322,7 @@ async fn test_disconnect_boolean_rejection() {
         "action": "update",
         "model": "User",
         "where": { "__id": "u1" },
-        "data": { "favorite": { "disconnect": { "where": {} } } }
+        "data": { "favorite": { "set": { "where": {} } } }
     });
 
     let (status_invalid, _) = post_query(&app, payload_invalid).await;
@@ -1373,7 +1373,7 @@ async fn test_deeply_nested_polymorphic_disconnect() {
                 "update": {
                     "where": { "__id": "u1" },
                     "data": {
-                        "favorite": { "disconnect": true }
+                        "favorite": { "set": null }
                     }
                 }
             }

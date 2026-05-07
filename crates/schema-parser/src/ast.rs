@@ -72,6 +72,7 @@ pub enum FieldAttribute {
         name: Option<String>,
         on_delete: Option<String>,
         on_disconnect: Option<String>,
+        owner: bool,
     },    InternalRelation { fields: Vec<String>, references: Vec<String> },
 }
 

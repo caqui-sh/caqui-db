@@ -509,6 +509,7 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                     field.attributes.push(FieldAttribute::Relation {
                         name: None,
                         on_delete: None, on_disconnect: None,
+                        owner: false,
                     });
                 }
             }
@@ -538,12 +539,13 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                         field.attributes.push(FieldAttribute::Relation {
                             name: None,
                             on_delete: None, on_disconnect: None,
+                            owner: false,
                         });
                         relation_attr_idx = Some(field.attributes.len() - 1);
                     }
 
-                    let rel_name = match &field.attributes[relation_attr_idx.unwrap()] {
-                        FieldAttribute::Relation { name, .. } => name.clone(),
+                    let (rel_name, rel_owner) = match &field.attributes[relation_attr_idx.unwrap()] {
+                        FieldAttribute::Relation { name, owner, .. } => (name.clone(), *owner),
                         _ => unreachable!(),
                     };
 
@@ -567,13 +569,30 @@ pub fn validate_schema(mut ast: SchemaAst) -> Result<SchemaAst, ValidationError>
                                         if rev_is_array {
                                             is_owning = true;
                                         } else {
-                                            if model_name_str <= target_model.name {
+                                            let this_fk = format!("{}Id", field.name);
+                                            let rev_fk = format!("{}Id", f.name);
+                                            
+                                            let this_has_explicit = model_field_names.contains(&this_fk);
+                                            let rev_has_explicit = target_model.resolved_fields.iter().any(|tf| tf.name == rev_fk);
+                                            
+                                            println!("DEBUG VALIDATION: {}.{} -> {}.{} | this_fk={}, rev_fk={} | this_explicit={}, rev_explicit={}", model_name_str, field.name, target_model.name, f.name, this_fk, rev_fk, this_has_explicit, rev_has_explicit);
+                                            
+                                            if this_has_explicit && !rev_has_explicit {
                                                 is_owning = true;
-                                            } else {
-                                                fk_name = format!("{}Id", f.name);
+                                                fk_name = this_fk;
+                                            } else if rev_has_explicit && !this_has_explicit {
                                                 is_owning = false;
+                                                fk_name = rev_fk;
+                                            } else {
+                                                if model_name_str <= target_model.name {
+                                                    is_owning = true;
+                                                } else {
+                                                    fk_name = rev_fk;
+                                                    is_owning = false;
+                                                }
                                             }
                                         }
+                                        println!("RELATION {}.{} -> {} (is_owning: {}, fk_name: {})", model_name_str, field.name, target_model.name, is_owning, fk_name);
                                         break;
                                     }
                                 }
@@ -930,10 +949,10 @@ mod tests {
         assert_eq!(reviewer_id_field.field_type, AstFieldType::Scalar("String".to_string()));
         
         let author_rel = post.resolved_fields.iter().find(|f| f.name == "author").unwrap();
-        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: Some("AuthorToPost".to_string()), on_delete: None, on_disconnect: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: Some("AuthorToPost".to_string()), on_delete: None, on_disconnect: None, owner: false }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
 
         let reviewer_rel = post.resolved_fields.iter().find(|f| f.name == "reviewer").unwrap();
-        assert_eq!(reviewer_rel.attributes, vec![FieldAttribute::Relation { name: Some("ReviewerToPost".to_string()), on_delete: None, on_disconnect: None }, FieldAttribute::InternalRelation { fields: vec!["reviewerId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(reviewer_rel.attributes, vec![FieldAttribute::Relation { name: Some("ReviewerToPost".to_string()), on_delete: None, on_disconnect: None, owner: false }, FieldAttribute::InternalRelation { fields: vec!["reviewerId".to_string()], references: vec!["__id".to_string()] }]);
     }
 
     #[test]
@@ -955,7 +974,7 @@ mod tests {
         assert_eq!(post.resolved_fields.len(), 5);
         
         let author_rel = post.resolved_fields.iter().find(|f| f.name == "author").unwrap();
-        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: None, on_delete: None, on_disconnect: None }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(author_rel.attributes, vec![FieldAttribute::Relation { name: None, on_delete: None, on_disconnect: None, owner: false }, FieldAttribute::InternalRelation { fields: vec!["authorId".to_string()], references: vec!["__id".to_string()] }]);
     }
 
     #[test]
@@ -1008,7 +1027,7 @@ mod tests {
         assert_eq!(manager_id_field.field_type, AstFieldType::Scalar("String".to_string()));
         
         let manager_rel = employee.resolved_fields.iter().find(|f| f.name == "manager").unwrap();
-        assert_eq!(manager_rel.attributes, vec![FieldAttribute::Relation { name: Some("Management".to_string()), on_delete: None, on_disconnect: None }, FieldAttribute::InternalRelation { fields: vec!["managerId".to_string()], references: vec!["__id".to_string()] }]);
+        assert_eq!(manager_rel.attributes, vec![FieldAttribute::Relation { name: Some("Management".to_string()), on_delete: None, on_disconnect: None, owner: false }, FieldAttribute::InternalRelation { fields: vec!["managerId".to_string()], references: vec!["__id".to_string()] }]);
     }
 #[test]
 fn test_explicit_at_id_rejected() {

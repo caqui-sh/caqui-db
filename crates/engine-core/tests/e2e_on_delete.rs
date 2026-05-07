@@ -584,12 +584,12 @@ async fn test_schema_on_disconnect_restrict() {
         "where": { "__id": bob_id },
         "data": {
             "profile": {
-                "disconnect": { "__id": prof_id }
+                "set": null
             }
         }
     })).await;
     assert_ne!(s, StatusCode::OK);
-    assert!(r["error"].as_str().unwrap().contains("Semantics Error: Cannot disconnect"));
+    assert!(r["error"].as_str().unwrap().contains("Semantics Error: Cannot use 'set'"));
 
     // 2. Try to set a new profile (which implicitly disconnects the old one)
     let (s, r) = post_query(&app, json!({
@@ -598,7 +598,7 @@ async fn test_schema_on_disconnect_restrict() {
         "where": { "__id": bob_id },
         "data": {
             "profile": {
-                "set": [{ "__id": prof_id }]
+                "set": { "__id": prof_id }
             }
         }
     })).await;

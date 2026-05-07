@@ -441,7 +441,7 @@ async fn test_singular_relation_delete_dropped() {
         "where": { "email": "user1@test.com" },
         "data": {
             "profile": { 
-                "set": [{ "__id": profile_b_id }],
+                "set": { "__id": profile_b_id },
                 "deleteDropped": true 
             }
         }

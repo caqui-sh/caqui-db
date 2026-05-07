@@ -66,6 +66,7 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> Result<FieldNode,
                     let mut name = None;
                     let mut on_delete = None;
                     let mut on_disconnect = None;
+                    let mut owner = false;
 
                     if let Some(args_rule) = attr_inner.next() {
                         for param_rule in args_rule.into_inner() {
@@ -86,6 +87,8 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> Result<FieldNode,
                                 } else if key == "onDisconnect" {
                                     let val_rule = val_pair.into_inner().next().unwrap();
                                     on_disconnect = Some(val_rule.as_str().to_string());
+                                } else if key == "owner" {
+                                    owner = val_pair.as_str() == "true";
                                 } else {
                                     return Err(pest::error::Error::new_from_span(
                                         pest::error::ErrorVariant::CustomError {
@@ -102,7 +105,7 @@ fn parse_field_def(field_rule: pest::iterators::Pair<Rule>) -> Result<FieldNode,
                             }
                         }
                     }
-                    attributes.push(FieldAttribute::Relation { name, on_delete, on_disconnect });
+                    attributes.push(FieldAttribute::Relation { name, on_delete, on_disconnect, owner });
                 },                _ => {}
             }
         }
@@ -383,6 +386,8 @@ mod tests {
         assert_eq!(posts_field.attributes, vec![FieldAttribute::Relation {
             name: None,
             on_delete: Some("Cascade".to_string()),
+            on_disconnect: None,
+            owner: false,
         }]);    }
 
     #[test]
@@ -424,17 +429,20 @@ mod tests {
         
         let ast = parse_schema(input).unwrap();
         let post = ast.models.get("Post").unwrap();
-        
         let author_field = post.fields.iter().find(|f| f.name == "author").unwrap();
         assert_eq!(author_field.attributes, vec![FieldAttribute::Relation { 
             name: Some("AuthorToPost".to_string()), 
             on_delete: None, 
+            on_disconnect: None,
+            owner: false,
         }]);
 
         let reviewer_field = post.fields.iter().find(|f| f.name == "reviewer").unwrap();
         assert_eq!(reviewer_field.attributes, vec![FieldAttribute::Relation { 
             name: Some("ReviewerToPost".to_string()), 
             on_delete: None, 
+            on_disconnect: None,
+            owner: false,
         }]);
     }
 
